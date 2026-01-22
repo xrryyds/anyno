@@ -3,7 +3,7 @@ from scripts import TakeExam, TeacherCorrecter
 from utils import FileIOUtils, remove_null_hints
 from configs import GRPOConfig
 from data_math import Math_500, GSM8K
-from utils import extract_KNOWN, filter_json_by_question_idx
+from utils import extract_KNOWN, filter_json_by_question_idx, generate_irdcl_dataset
 
 exam_paper = FileIOUtils()
 
@@ -189,19 +189,25 @@ def student_take_exam_Gsm8k_test():
     print(take_exam.exam_test(question, solution, answer, question_idx))
 
 
+def gen_IRDCL_dataset():
+    generate_irdcl_dataset(exam_paper.corr_path,
+                        exam_paper.adv_hints_dataset_path,
+                        exam_paper.disadv_hints_dataset_path,
+                        exam_paper.irdcl_dataset_path)
+
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam()
+
     # #2. teacher judges and gives hints
     # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    # student_first_take_exam_Gsm8k()
     # teacher.teacher_hints()
-    student_correct()
-    # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    #3. teacher correct
-    # student_first_take_exam_Gsm8k()
-    # student_take_exam_Gsm8k_test()
-    # remove_null_hints(exam_paper.hints_file_path)
+    # student_correct()
 
+    #3. gen dataset
+    filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
+    gen_IRDCL_dataset()
+
+    
 

@@ -13,5 +13,6 @@ __all__= [
     "extract_KNOWN",
     "extract_answer",
     "remove_null_hints",
-    "filter_json_by_question_idx"
+    "filter_json_by_question_idx",
+    "generate_irdcl_dataset"
 ]

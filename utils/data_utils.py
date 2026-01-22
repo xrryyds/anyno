@@ -3,6 +3,7 @@ from typing import Optional
 import prompt
 import os
 import json
+import random
 
 
 def extract_KNOWN(text: str) -> Optional[str]:
@@ -160,3 +161,73 @@ def filter_json_by_question_idx(exam_path, hints_exam_result_path, corr_path):
             'success': False,
             'error': error_msg
         }
+    
+
+
+
+def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path):
+    # 1. 读取本地数据
+    with open(corr_path, 'r', encoding='utf-8') as f:
+        corr_data = json.load(f)
+    
+    with open(adv_hints_path, 'r', encoding='utf-8') as f:
+        adv_data = json.load(f)
+        
+    with open(disadv_hints_path, 'r', encoding='utf-8') as f:
+        disadv_data = json.load(f)
+
+    # 2. 合并 hints 数据并计算数量
+    combined_hints_data = adv_data + disadv_data
+    target_count = len(combined_hints_data)
+    print(f"Adv/Disadv total count: {target_count}")
+
+    # 3. 抽取 corr 数据
+    if len(corr_data) < target_count:
+        sampled_corr_data = corr_data
+    else:
+        sampled_corr_data = random.sample(corr_data, target_count)
+    print(f"Corr sampled count: {len(sampled_corr_data)}")
+
+    final_dataset = []
+
+    # 4. 处理 hints 数据 (answer=student_answer, hints=原值)
+    for item in combined_hints_data:
+        entry = {
+            "question_idx": item.get("question_idx"),
+            "question": item.get("question"),
+            "answer": item.get("student_answer"), 
+            "ref_answer": item.get("ref_answer"),
+            "ref_solution": item.get("ref_solution"),
+            "hints": item.get("hints") 
+        }
+        final_dataset.append(entry)
+
+    # 5. 处理 corr 数据 (answer=原值, hints=None)
+    for item in sampled_corr_data:
+        entry = {
+            "question_idx": item.get("question_idx"),
+            "question": item.get("question"),
+            "answer": item.get("answer"),
+            "ref_answer": item.get("ref_answer"),
+            "ref_solution": item.get("ref_solution"),
+            "hints": None
+        }
+        final_dataset.append(entry)
+
+    # 6. 打乱最终结果的顺序
+    random.shuffle(final_dataset)
+
+    # 7. 写入文件
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(final_dataset, f, ensure_ascii=False, indent=4)
+
+    print(f"Done. Saved {len(final_dataset)} items to {output_path}")
+
+
+
+
+    

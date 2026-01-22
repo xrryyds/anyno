@@ -103,8 +103,8 @@ class HintDropoutCollator:
 
         for item in batch:
             q = item['question']
-            b = item.get('hints', "") # 获取 hints，可能为空
-            c = item['ref_solution']
+            b = item.get('hints', "")
+            c = item['answer']
 
             # ====================================================
             # 论文对齐点: Data Replay Strategy
@@ -379,12 +379,14 @@ def verify_collator(collator, dataset, tokenizer):
 def main():
     SEED = 42
     set_seed(SEED)
+
+    ###################################### set model path
     model_name_or_path = "/root/project/data/xrr/OREAL-7B" 
     
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     project_root = os.getcwd()
     output_dir = os.path.join(project_root, "outputs", "hint_sft", timestamp)
-    data_path= os.path.join(project_root, "datasets", "exam", "adv_hints.json")
+    data_path= os.path.join(project_root, "datasets", "exam", "irdcl_data.json")
 
     metrics_log_path = setup_logging(output_dir)
     snapshot_log_path = os.path.join(output_dir, "debug_snapshots.jsonl")
@@ -396,30 +398,11 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ====================================================
-    # 论文对齐点: 构造混合数据集 D_mix = D_err + D_corr
-    # ====================================================
+
+
     if not os.path.exists(data_path):
-        logger.warning(f"Data file {data_path} not found. Creating mixed dummy data.")
-        
-        # D_err: 困难样本，有 Hint
-        error_set = [
-            {"question": "Hard Q1", "hints": "Hint for Q1", "ref_solution": "Ans1"},
-            {"question": "Hard Q2", "hints": "Hint for Q2", "ref_solution": "Ans2"}
-        ] * 25
-        
-        # D_corr: 简单样本 (Anchor)，没有 Hint (空字符串或None)
-        correct_set = [
-            {"question": "Easy Q1", "hints": "", "ref_solution": "EasyAns1"},
-            {"question": "Easy Q2", "hints": "", "ref_solution": "EasyAns2"}
-        ] * 25
-        
-        # 混合
-        mixed_data = error_set + correct_set
-        random.shuffle(mixed_data)
-        dataset = Dataset.from_list(mixed_data)
+        raise TypeError(f"Data file {data_path} not found. Creating mixed dummy data.")
     else:
-        # 实际加载时，确保 json 中 D_corr 的 hints 字段为空
         dataset = Dataset.from_json(data_path)
 
     hint_config = HintSFTConfig(
