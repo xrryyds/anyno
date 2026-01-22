@@ -8,7 +8,7 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "module": "data_math.MATH_util",
+            "module": "scripts.train.student_train",
             // "module": "celpo.celpo_train", 
             // "program": "${file}",
             "console": "integratedTerminal",
