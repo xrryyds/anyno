@@ -21,7 +21,7 @@ class TakeExam:
         set_seed(42)
 
         print(exam_result_json_path)
-        self.BATCH_SIZE = 64  
+        self.BATCH_SIZE = 8  
         self.MAX_NEW_TOKENS = 4096
         self.MAX_SEQ_LENGTH = 6000
     
@@ -296,7 +296,7 @@ class TakeExam:
 
 
 
-    def exam_multi_answer(self, question, solution, answer, question_idx, num_samples=8, temperature=0.7):
+    def exam_multi_answer(self, question, solution, answer, question_idx, num_samples=2, temperature=0.7):
         results = []
         
         total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
