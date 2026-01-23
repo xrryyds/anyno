@@ -14,7 +14,7 @@ def student_correct():
    
 
     student_exam = TakeExam()
-    student_exam.exam(question_with_hint, ref_solution, ref_answer, question_idx)
+    student_exam.exam_multi_answer(question_with_hint, ref_solution, ref_answer, question_idx, 8, 0.7)
 
     # teacher correct
     teacher = TeacherCorrecter()
@@ -22,6 +22,16 @@ def student_correct():
     incorrect_data, correct_data = teacher.teacher_mark_paper()
     
     err_question_idx, _, err_answers, _, _  = incorrect_data
+    seen_idxs = set()
+    dedup_idx = []
+    dedup_ans = []
+    for idx, ans in zip(err_question_idx, err_answers):
+        if idx not in seen_idxs:
+            seen_idxs.add(idx)
+            dedup_idx.append(idx)
+            dedup_ans.append(ans)
+    err_question_idx = dedup_idx
+    err_answers = dedup_ans
     correct_question_idx, _, correct_answers, _, _ = correct_data
 
     answers_map = {}
@@ -203,11 +213,11 @@ if __name__ == "__main__":
     # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
     # teacher.teacher_hints()
-    # student_correct()
+    student_correct()
 
     #3. gen dataset
-    filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    gen_IRDCL_dataset()
+    # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
+    # gen_IRDCL_dataset()
 
     
 
