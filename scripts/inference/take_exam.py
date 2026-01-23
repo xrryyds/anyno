@@ -241,13 +241,10 @@ class TakeExam:
                         temperature=0.1, 
                         top_p=0.9,
                         use_cache=True
-                        # output_scores=True,  # 🔧 注释掉：不计算 entropy
-                        # return_dict_in_generate=True  # 🔧 注释掉：不需要返回字典
                     )
 
                 input_ids_len = inputs["input_ids"].shape[1]
                 
-                # 🔧 修改：直接使用 outputs（现在是 tensor 而不是字典）
                 generated_sequences = outputs[:, input_ids_len:]
                 
                 decoded_outputs = self.tokenizer.batch_decode(
@@ -255,12 +252,6 @@ class TakeExam:
                     skip_special_tokens=True
                 )
                 
-                # 🔧 注释掉：不计算 entropy
-                # if outputs.scores:
-                #     scores_tensor = torch.stack(outputs.scores, dim=1)  # (batch, L, |V|)
-                #     entropies = self.compute_shannon_entropy(scores_tensor, normalize=True)
-                # else:
-                #     entropies = [None] * len(decoded_outputs)
 
                 for idx, generated_text in enumerate(decoded_outputs):
                     results.append({
@@ -269,7 +260,6 @@ class TakeExam:
                         "ref_answer": batch_ref_answers[idx].strip(),
                         "ref_solution": batch_ref_solution[idx].strip(),
                         "question_idx": batch_question_idx[idx]
-                        # "entropy": float(entropies[idx]) if entropies[idx] is not None else None  # 🔧 注释掉
                     })
                     
                 if (i // self.BATCH_SIZE) % 10 == 0:
@@ -283,36 +273,122 @@ class TakeExam:
                 torch.cuda.empty_cache()
                 continue
 
-        # 最终保存
         with open(self.OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
         
-        # 🔧 注释掉：entropy 统计
-        # valid_entropies = [r['entropy'] for r in results if r['entropy'] is not None]
-        # if valid_entropies:
-        #     print(f"\nEntropy Statistics:")
-        #     print(f"  Mean: {np.mean(valid_entropies):.4f}")
-        #     print(f"  Std:  {np.std(valid_entropies):.4f}")
-        #     print(f"  Min:  {np.min(valid_entropies):.4f}")
-        #     print(f"  Max:  {np.max(valid_entropies):.4f}")
         
         print(f"Done! Results saved to {self.OUTPUT_JSON_PATH}")
 
 
+        with open(self.OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+        
+        print(f"Done! Results saved to {self.OUTPUT_JSON_PATH}")
+
+
+
+
+
+
+
+
+
+
+
+
+    def exam_multi_answer(self, question, solution, answer, question_idx, num_samples=8, temperature=0.7):
+        results = []
+        
+        total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        
+        for i in tqdm(range(0, len(question), self.BATCH_SIZE), total=total_batches, desc="Inferencing"):
+            batch_questions = question[i:i+self.BATCH_SIZE]
+            batch_ref_answers = answer[i:i+self.BATCH_SIZE]
+            batch_ref_solution = solution[i:i+self.BATCH_SIZE]
+            batch_question_idx = question_idx[i:i+self.BATCH_SIZE]
+
+            try:
+                batch_prompts = []
+                for q in batch_questions:
+                    q_text = str(q)
+                    prompt = self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": q_text}],
+                        tokenize=False,
+                        add_generation_prompt=True
+                    )
+                    batch_prompts.append(prompt)
+
+                inputs = self.tokenizer(
+                    batch_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.MAX_SEQ_LENGTH
+                ).to(self.model.device)
+
+                input_ids_len = inputs["input_ids"].shape[1]
+
+                with torch.inference_mode():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.MAX_NEW_TOKENS,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        do_sample=True, # 必须开启采样才能生成多样化结果
+                        
+                        # === 修改点 1: 传入控制参数 ===
+                        temperature=temperature, 
+                        num_return_sequences=num_samples, # 关键参数：一次生成多条
+                        
+                        top_p=0.9,
+                        use_cache=True
+                    )
+
+                # outputs 的 shape 变成了 [batch_size * num_samples, seq_len]
+                generated_sequences = outputs[:, input_ids_len:]
+                
+                decoded_outputs = self.tokenizer.batch_decode(
+                    generated_sequences, 
+                    skip_special_tokens=True
+                )
+                
+                # === 修改点 2: 结果匹配逻辑 ===
+                # HuggingFace 的 generate 输出顺序是：
+                # [Q1_A1, Q1_A2, ..., Q1_An, Q2_A1, Q2_A2, ...]
+                # 所以我们需要两层循环来对应回原始数据
+                for batch_idx in range(len(batch_questions)):
+                    # 当前问题对应的所有答案在 decoded_outputs 中的起始位置
+                    start_pos = batch_idx * num_samples
+                    
+                    for sample_idx in range(num_samples):
+                        # 获取具体的某一个生成结果
+                        generated_text = decoded_outputs[start_pos + sample_idx]
+                        
+                        results.append({
+                            "question": batch_questions[batch_idx],
+                            "answer": generated_text.strip(),
+                            "ref_answer": batch_ref_answers[batch_idx].strip(),
+                            "ref_solution": batch_ref_solution[batch_idx].strip(),
+                            "question_idx": batch_question_idx[batch_idx]
+                        })
+                    
+                # 定期保存
+                if (i // self.BATCH_SIZE) % 10 == 0:
+                    with open(self.OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
+                        json.dump(results, f, ensure_ascii=False, indent=2)
+
+            except Exception as e:
+                print(f"\n[Error] Batch {i//self.BATCH_SIZE} failed: {e}")
+                if "out of memory" in str(e):
+                    print(f"显存不足提示: 当前 num_samples={num_samples}, 实际负载增加了 {num_samples} 倍。请尝试减小 BATCH_SIZE。")
+                torch.cuda.empty_cache()
+                continue
+
         # 最终保存
         with open(self.OUTPUT_JSON_PATH, 'w', encoding='utf-8') as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
         
-        # 打印统计信息
-        # valid_entropies = [r['entropy'] for r in results if r['entropy'] is not None]
-        # if valid_entropies:
-        #     print(f"\nEntropy Statistics:")
-        #     print(f"  Mean: {np.mean(valid_entropies):.4f}")
-        #     print(f"  Std:  {np.std(valid_entropies):.4f}")
-        #     print(f"  Min:  {np.min(valid_entropies):.4f}")
-        #     print(f"  Max:  {np.max(valid_entropies):.4f}")
-        
         print(f"Done! Results saved to {self.OUTPUT_JSON_PATH}")
+
 
 
 if __name__ == "__main__":
