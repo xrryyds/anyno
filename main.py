@@ -199,11 +199,13 @@ def student_take_exam_Gsm8k_test():
     print(take_exam.exam_test(question, solution, answer, question_idx))
 
 
-def gen_IRDCL_dataset():
+def gen_IRDCL_dataset(batch_size):
     generate_irdcl_dataset(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,
-                        exam_paper.irdcl_dataset_path)
+                        exam_paper.irdcl_dataset_path,
+                        batch_size,
+                        0.5)
 
 if __name__ == "__main__":
     # #1. student first take exam
@@ -213,11 +215,11 @@ if __name__ == "__main__":
     # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
     # teacher.teacher_hints()
-    student_correct()
+    # student_correct()
 
     #3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    # gen_IRDCL_dataset()
+    gen_IRDCL_dataset(8)
 
     
 

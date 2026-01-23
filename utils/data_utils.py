@@ -99,7 +99,7 @@ def remove_null_hints(file_path):
 
 
 
-def filter_json_by_question_idx(exam_path, hints_exam_result_path, corr_path):
+def filter_json_by_question_idx(exam_path, hints_exam_result_path):
     try:
         with open(exam_path, 'r', encoding='utf-8') as f:
             data_a = json.load(f)
@@ -164,9 +164,23 @@ def filter_json_by_question_idx(exam_path, hints_exam_result_path, corr_path):
     
 
 
+def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5):
+    """
+    # Construct IRDCL training data.
+    # Logic: Split the Hints data into chunks, and pair each chunk with randomly sampled Corr data to form a batch.
+    # 
+    # Args:
+    #     anchor_k: The proportion of anchor (corr) data in each batch.
+    """
+    std_num_anchors = int(batch_size * anchor_k)
+    std_num_hints = batch_size - std_num_anchors
+    
+    if std_num_hints <= 0:
+        raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
 
-def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path):
-    # 1. 读取本地数据
+    print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
+
+    print("Loading data...")
     with open(corr_path, 'r', encoding='utf-8') as f:
         corr_data = json.load(f)
     
@@ -176,48 +190,55 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
     with open(disadv_hints_path, 'r', encoding='utf-8') as f:
         disadv_data = json.load(f)
 
-    # 2. 合并 hints 数据并计算数量
     combined_hints_data = adv_data + disadv_data
-    target_count = len(combined_hints_data)
-    print(f"Adv/Disadv total count: {target_count}")
-
-    # 3. 抽取 corr 数据
-    if len(corr_data) < target_count:
-        sampled_corr_data = corr_data
-    else:
-        sampled_corr_data = random.sample(corr_data, target_count)
-    print(f"Corr sampled count: {len(sampled_corr_data)}")
+    total_hints = len(combined_hints_data)
+    print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
 
     final_dataset = []
 
-    # 4. 处理 hints 数据 (answer=student_answer, hints=原值)
-    for item in combined_hints_data:
-        entry = {
-            "question_idx": item.get("question_idx"),
-            "question": item.get("question"),
-            "answer": item.get("student_answer"), 
-            "ref_answer": item.get("ref_answer"),
-            "ref_solution": item.get("ref_solution"),
-            "hints": item.get("hints") 
-        }
-        final_dataset.append(entry)
+    random.shuffle(combined_hints_data)
 
-    # 5. 处理 corr 数据 (answer=原值, hints=None)
-    for item in sampled_corr_data:
-        entry = {
-            "question_idx": item.get("question_idx"),
-            "question": item.get("question"),
-            "answer": item.get("answer"),
-            "ref_answer": item.get("ref_answer"),
-            "ref_solution": item.get("ref_solution"),
-            "hints": None
-        }
-        final_dataset.append(entry)
+    for i in range(0, total_hints, std_num_hints):
+        current_batch = []
+        hints_chunk = combined_hints_data[i : i + std_num_hints]
+        actual_hint_count = len(hints_chunk)
+        
+        for item in hints_chunk:
+            entry = {
+                "question_idx": item.get("question_idx"),
+                "question": item.get("question"),
+                "answer": item.get("student_answer"),
+                "ref_answer": item.get("ref_answer"),
+                "ref_solution": item.get("ref_solution"),
+                "hints": item.get("hints"),
+                "type": "hint_data" 
+            }
+            current_batch.append(entry)
+        
+        if anchor_k >= 1.0 or anchor_k <= 0.0:
+            needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
+        else:
+            ratio_factor = anchor_k / (1.0 - anchor_k)
+            needed_anchor_count = int(round(actual_hint_count * ratio_factor))
+        
+        anchors_chunk = random.choices(corr_data, k=needed_anchor_count)
 
-    # 6. 打乱最终结果的顺序
-    random.shuffle(final_dataset)
+        for item in anchors_chunk:
+            entry = {
+                "question_idx": item.get("question_idx"),
+                "question": item.get("question"),
+                "answer": item.get("answer"),
+                "ref_answer": item.get("ref_answer"),
+                "ref_solution": item.get("ref_solution"),
+                "hints": None,
+                "type": "anchor_data"
+            }
+            current_batch.append(entry)
+        
+        random.shuffle(current_batch)
+        
+        final_dataset.extend(current_batch)
 
-    # 7. 写入文件
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -225,9 +246,5 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(final_dataset, f, ensure_ascii=False, indent=4)
 
-    print(f"Done. Saved {len(final_dataset)} items to {output_path}")
-
-
-
-
-    
+    print(f"Done. Generated {len(final_dataset)} items.")
+    print(f"Saved to {output_path}")
