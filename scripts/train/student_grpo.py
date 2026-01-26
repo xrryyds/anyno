@@ -37,12 +37,12 @@ class GRPOConfig:
     
     # GRPO 参数
     group_size: int = 8          
-    num_train_epochs: int = 1
+    num_train_epochs: int = 2
     learning_rate: float = 1e-6  
     beta: float = 0.04           
     
     # 生成配置
-    max_gen_length: int = 2048   
+    max_gen_length: int = 1024   
     gradient_accumulation_steps: int = 4
     temperature: float = 0.9     
     top_p: float = 0.95
@@ -246,8 +246,26 @@ class GRPOTrainer:
 # ==========================================
 
 def main():
+    sft_adapter_path: str = "/root/autodl-tmp/CELPO/output/hint_sft_0126_1607" 
+
+
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+    project_root = os.path.dirname(os.path.dirname(project_root))
+    model_dir = os.path.join(project_root, "CELPO", "model", "Qwen")
+    model_url = os.path.join(model_dir, "Qwen2.5-Math-7B-Instruct")
+
+    data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "hints.json")
+
+    output_dir = os.path.join(project_root, "CELPO", "output", "hint_grpo")
+
+
+
+
+
+
     set_seed(42)
-    config = GRPOConfig()
+    config = GRPOConfig(base_model_path = model_url, data_path=data_path, output_dir=output_dir, sft_adapter_path=sft_adapter_path)
     setup_logging(config.output_dir)
     
     # 1. Load Tokenizer & Base Model

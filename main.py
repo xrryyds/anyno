@@ -4,6 +4,18 @@ from utils import FileIOUtils, remove_null_hints
 from configs import GRPOConfig
 from data_math import Math_500, GSM8K
 from utils import extract_KNOWN, filter_json_by_question_idx, generate_irdcl_dataset
+from peft import PeftModel
+from debugpy._vendored import project_root
+from builtins import print
+from builtins import print
+import os
+import json
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
+from tqdm import tqdm
+from transformers import set_seed 
+from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_answer
+import numpy as np
 
 exam_paper = FileIOUtils()
 
@@ -192,7 +204,7 @@ def student_take_exam_Gsm8k_test():
     solution = gsm8k.solutions
     answer = gsm8k.answers
     print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    take_exam = TakeExam("/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct")
+    take_exam = TakeExam("/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct")
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -206,6 +218,52 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         0.5)
+    
+
+
+def student_take_exam_Gsm8k_grpo_test():
+    # 1. 准备数据
+    print("Loading Dataset...")
+    gsm8k = GSM8K(False) # 确保这里的 GSM8K 类能正确引入
+    question = gsm8k.problems
+    solution = gsm8k.solutions
+    answer = gsm8k.answers
+    
+    # 为了快速测试，可以只取前几个 (可选)
+    # question = question[:10]
+    # answer = answer[:10]
+    
+    print(f"Dataset Loaded: {len(question)} samples.")
+
+    # 2. 初始化 TakeExam (加载基座模型)
+    # 注意：这里传入基座模型的路径
+    print(f"Loading Base Model from {BASE_MODEL_PATH}...")
+    take_exam = TakeExam(model_path=BASE_MODEL_PATH)
+
+    # 3. 【核心步骤】加载 GRPO LoRA Adapter
+    # 这步操作不会破坏 TakeExam 的其他功能，只是在运行时替换了内部的 model
+    print(f"Loading GRPO Adapter from {GRPO_ADAPTER_PATH}...")
+    try:
+        take_exam.model = PeftModel.from_pretrained(
+            take_exam.model, 
+            GRPO_ADAPTER_PATH,
+            torch_dtype=torch.float16
+        )
+        take_exam.model.eval() # 切换到评估模式
+        print("Successfully loaded GRPO adapter!")
+    except Exception as e:
+        print(f"Error loading adapter: {e}")
+        print("Ensure the path exists and contains adapter_config.json and adapter_model.safetensors")
+        return
+
+    # 4. 生成 Question ID (原有逻辑)
+    question_idx = list(range(len(question)))
+
+    # 5. 运行测试
+    print("Starting Inference...")
+    accuracy = take_exam.exam_test(question, solution, answer, question_idx)
+    
+    print(f"\nFinal GRPO Model Accuracy: {accuracy:.2%}")
 
 if __name__ == "__main__":
     # #1. student first take exam
@@ -219,7 +277,16 @@ if __name__ == "__main__":
 
     #3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    gen_IRDCL_dataset(8)
+    # gen_IRDCL_dataset(8)
+
+    student_take_exam_Gsm8k_test()
+    # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
+    # # GRPO 训练保存的 checkpoint 路径，通常是 epoch_X
+    # GRPO_ADAPTER_PATH = "/root/autodl-tmp/CELPO/output/hint_grpo/epoch_2" 
+    # if not os.path.exists(GRPO_ADAPTER_PATH):
+    #     print(f"Warning: Adapter path {GRPO_ADAPTER_PATH} does not exist. Check if training finished.")
+    # else:
+    #     student_take_exam_Gsm8k_grpo_test()
 
     
 
