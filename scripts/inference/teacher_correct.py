@@ -139,10 +139,10 @@ class TeacherCorrecter:
 
 
     
-# if __name__ == "__main__":
-    # corrector = TeacherCorrecter()
+if __name__ == "__main__":
+    corrector = TeacherCorrecter()
     # corrector.judge_and_gen_hints()
-    # corrector.student_correct()
+    corrector.teacher_mark_paper()
     
 
 

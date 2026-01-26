@@ -185,12 +185,12 @@ def student_first_take_exam_Gsm8k():
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
     exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
     config = GRPOConfig.load_yaml(exam_file_path)
-    gsm8k = GSM8K()
+    gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
     print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    take_exam = TakeExam("/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct")
+    take_exam = TakeExam("/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct")
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -270,7 +270,7 @@ if __name__ == "__main__":
     # student_first_take_exam()
 
     # #2. teacher judges and gives hints
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
     # teacher.teacher_hints()
     # student_correct()
@@ -279,7 +279,7 @@ if __name__ == "__main__":
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
     # gen_IRDCL_dataset(8)
 
-    student_take_exam_Gsm8k_test()
+    # student_first_take_exam_Gsm8k()
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
     # # GRPO 训练保存的 checkpoint 路径，通常是 epoch_X
     # GRPO_ADAPTER_PATH = "/root/autodl-tmp/CELPO/output/hint_grpo/epoch_2" 
