@@ -337,10 +337,20 @@ class EpochLogCallback(TrainerCallback):
 # ==========================================
 
 def main():
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+    project_root = os.path.dirname(os.path.dirname(project_root))
+    model_dir = os.path.join(project_root, "CELPO", "model", "Qwen")
+    model_url = os.path.join(model_dir, "Qwen2.5-Math-7B-Instruct")
+
+    data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
+
+    output_base_dir = os.path.join(project_root, "CELPO", "output")
+
     set_seed(42)
     
     # 初始化配置
-    hint_config = HintSFTConfig()
+    hint_config = HintSFTConfig(model_path=model_url, data_path=data_path, output_base_dir=output_base_dir)
     
     output_dir = f"{hint_config.output_base_dir}/hint_sft_{datetime.now().strftime('%m%d_%H%M')}"
     metric_log_file = setup_logging(output_dir)

@@ -15,12 +15,16 @@ MY_TOKEN = ""
 # )
 # print("下载完成！")
 
+current_file_path = os.path.abspath(__file__)
+project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+model_dir = os.path.join(project_root, "CELPO", "model", "Qwen")
+
 
 print("开始下载模型...")
 snapshot_download(
     repo_id="Qwen/Qwen2.5-7B-Instruct",
-    local_dir="/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct",
+    local_dir= os.path.join(model_dir, "Qwen2.5-Math-7B-Instruct"),
     max_workers=8,
-    token=MY_TOKEN  # <--- 加上这一行
+    token=MY_TOKEN 
 )
 print("下载完成！")
