@@ -42,7 +42,7 @@ class GRPOConfig:
     beta: float = 0.04           
     
     # 生成配置
-    max_gen_length: int = 4096   
+    max_gen_length: int = 2048   
     gradient_accumulation_steps: int = 4
     temperature: float = 0.9     
     top_p: float = 0.95
@@ -254,7 +254,7 @@ def main():
     tokenizer = AutoTokenizer.from_pretrained(config.base_model_path, trust_remote_code=True)
     logger.info("Loading Base Model...")
     model = AutoModelForCausalLM.from_pretrained(
-        config.base_model_path, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True
+        config.base_model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
     )
     
     # 2. Load Policy Adapter
@@ -272,7 +272,7 @@ def main():
     # 3. Load Ref Model
     logger.info("Creating Reference Model...")
     ref_model = AutoModelForCausalLM.from_pretrained(
-        config.base_model_path, torch_dtype=torch.float16, device_map="auto", trust_remote_code=True
+        config.base_model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True
     )
     ref_model = PeftModel.from_pretrained(ref_model, config.sft_adapter_path)
     ref_model.eval()
