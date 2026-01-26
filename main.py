@@ -18,6 +18,7 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
+mode_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
 
 def student_correct():
     # gen question with hints
