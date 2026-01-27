@@ -18,7 +18,7 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
-mode_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
 
 def student_correct():
     # gen question with hints
@@ -136,7 +136,6 @@ def student_correct():
     disadv_hints_dataset_path = exam_paper.disadv_hints_dataset_path
     grpo_dataset_path = exam_paper.grpo_dataset_path
 
-    # 建议：添加 print 确认保存的数据量，方便调试
     print(f"Saving {len(data_for_teacher_grpo)} GRPO samples.")
     print(f"Saving {len(data_for_student_adv_hints)} Advantageous Hint samples.")
     print(f"Saving {len(data_for_student_disadv_hints)} Disadvantageous Hint samples.")
@@ -157,7 +156,7 @@ def teacher_correct():
     del teacher
 
 def single_qusestion(qusetion):
-    student_exam = TakeExam("/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct")
+    student_exam = TakeExam(model_path)
     return student_exam.answer_single_question(qusetion)
 
 
@@ -205,7 +204,7 @@ def student_take_exam_Gsm8k_test():
     solution = gsm8k.solutions
     answer = gsm8k.answers
     print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    take_exam = TakeExam("/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct")
+    take_exam = TakeExam(model_path)
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -267,13 +266,14 @@ def student_take_exam_Gsm8k_grpo_test():
     print(f"\nFinal GRPO Model Accuracy: {accuracy:.2%}")
 
 if __name__ == "__main__":
+    student_take_exam_Gsm8k_test()
     # #1. student first take exam
     # student_first_take_exam()
 
     # #2. teacher judges and gives hints
-    teacher = TeacherCorrecter()
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    # teacher.teacher_hints()
+    # teacher.teacher_hints() 
     # student_correct()
 
     #3. gen dataset

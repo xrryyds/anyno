@@ -1,15 +1,26 @@
-pyyaml==6.0.1
+# --- 基础架构与张量计算 ---
 numpy==1.26.4
-torch==2.4.1
-transformers==4.41.2
-datasets>=2.13.0  # 用于数据加载（代码中虽未直接显示，但data_math可能依赖）
-peft==0.10.0     # 用于LoRA微调
-trl==0.8.6        # 用于强化学习微调（如PPO）或SFT
-bitsandbytes>=0.41.0  # 用于4-bit/8-bit量化训练
-accelerate>=0.25.0    # 用于分布式训练和高效推理
+pyyaml==6.0.1
 tqdm>=4.65.0
 matplotlib
-huggingface_hub
-safetensors
-OpenAI 
 scikit-learn
+
+# --- 深度学习核心 (Torch 2.4.1) ---
+torch==2.4.1
+accelerate>=0.25.0
+safetensors
+
+# --- Hugging Face 生态 (已对齐版本) ---
+# 锁定 pyarrow 防止之前的编译报错，指定与 datasets 2.19+ 兼容的版本
+pyarrow==14.0.1
+datasets==2.19.2
+transformers==4.41.2
+huggingface_hub
+
+# --- 微调与量化 (LLM 专项) ---
+peft==0.10.0
+trl==0.8.6
+bitsandbytes>=0.41.0
+
+# --- 其他服务 ---
+openai

@@ -64,8 +64,11 @@ class GSM8K():
             
 def main():
    gms8k = GSM8K(False)
+   split ="#" * 20
    print("problems:" + gms8k.problems[0])
+   print(split)
    print("train_answer:" + gms8k.answers[0])
+   print(split)
    print("solution:"+ gms8k.solutions[0])
          
 

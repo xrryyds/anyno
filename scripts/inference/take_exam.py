@@ -21,9 +21,9 @@ class TakeExam:
         set_seed(42)
 
         print(exam_result_json_path)
-        self.BATCH_SIZE = 8  
-        self.MAX_NEW_TOKENS = 4096
-        self.MAX_SEQ_LENGTH = 6000
+        self.BATCH_SIZE = 32  
+        self.MAX_NEW_TOKENS = 2048
+        self.MAX_SEQ_LENGTH = 3096
     
         self.LOCAL_MODEL_PATH = model_path
         self.OUTPUT_JSON_PATH = exam_result_json_path
