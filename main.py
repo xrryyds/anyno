@@ -18,7 +18,7 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 
 def student_correct():
     # gen question with hints
@@ -185,12 +185,12 @@ def student_first_take_exam_Gsm8k():
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
     exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
     config = GRPOConfig.load_yaml(exam_file_path)
-    gsm8k = GSM8K(False)
+    gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
     print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    take_exam = TakeExam("/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct")
+    take_exam = TakeExam(model_path)
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -266,9 +266,10 @@ def student_take_exam_Gsm8k_grpo_test():
     print(f"\nFinal GRPO Model Accuracy: {accuracy:.2%}")
 
 if __name__ == "__main__":
-    student_take_exam_Gsm8k_test()
+    # student_take_exam_Gsm8k_test()
     # #1. student first take exam
     # student_first_take_exam()
+    student_first_take_exam_Gsm8k()
 
     # #2. teacher judges and gives hints
     # teacher = TeacherCorrecter()
