@@ -1,0 +1,160 @@
+2026-01-28 21:59:28.970 | INFO     | scripts.inference.take_exam:__init__:54 - Loading tokenizer from /mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B ...
+2026-01-28 21:59:29.197 | INFO     | scripts.inference.take_exam:__init__:62 - Loading model (float16) from /mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B ...
+2026-01-28 21:59:39.935 | SUCCESS  | scripts.inference.take_exam:__init__:77 - Model & Tokenizer loaded successfully.
+2026-01-28 21:59:39.936 | INFO     | scripts.inference.take_exam:exam:116 - Starting Exam: 7473 samples, 234 batches.
+2026-01-28 21:59:39.937 | INFO     | scripts.inference.take_exam:exam:117 - Output File: /mnt/petrelfs/wanhaiyuan/xrr/CELPO/datasets/exam/exam.jsonl
+2026-01-28 22:02:34.924 | ERROR    | scripts.inference.take_exam:exam:193 - Error occurred in Batch 1
+Traceback (most recent call last):
+
+  File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/main.py", line 273, in <module>
+    student_first_take_exam_Gsm8k()
+    └ <function student_first_take_exam_Gsm8k at 0x7f930fc09990>
+
+  File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/main.py", line 198, in student_first_take_exam_Gsm8k
+    take_exam.exam(question, solution, answer, question_idx)
+    │         │    │         │         │       └ [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33...
+    │         │    │         │         └ ['72', '10', '5', '42', '624', '35', '48', '16', '41', '990', '121', '5', '85', '35', '5', '448000', '800', '43', '16', '16',...
+    │         │    │         └ ['Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.\n##...
+    │         │    └ ['Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia s...
+    │         └ <function TakeExam.exam at 0x7f9310e988b0>
+    └ <scripts.inference.take_exam.TakeExam object at 0x7f954be139a0>
+
+> File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/scripts/inference/take_exam.py", line 168, in exam
+    entropies = self._compute_sequence_entropy(gen_ids, outputs.scores)
+                │    │                         │        │       └ (tensor([[-inf, -inf, -inf,  ..., -inf, -inf, -inf],
+                │    │                         │        │                 [-inf, -inf, -inf,  ..., -inf, -inf, -inf],
+                │    │                         │        │                 [-inf, -inf,...
+                │    │                         │        └ GenerateDecoderOnlyOutput(sequences=tensor([[151643, 151643, 151643,  ..., 151643, 151643, 151643],
+                │    │                         │                  [151643, 151643, ...
+                │    │                         └ tensor([[  4416,  41601,    685,  ..., 151643, 151643, 151643],
+                │    │                                   [  4416,    467,    826,  ..., 151643, 151643, 151643...
+                │    └ <function TakeExam._compute_sequence_entropy at 0x7f9310e98820>
+                └ <scripts.inference.take_exam.TakeExam object at 0x7f954be139a0>
+
+  File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/scripts/inference/take_exam.py", line 90, in _compute_sequence_entropy
+    log_probs = torch.log_softmax(logits, dim=-1)
+                │     │           └ tensor([[[-inf, -inf, -inf,  ..., -inf, -inf, -inf],
+                │     │                      [-inf, -inf, -inf,  ..., -inf, -inf, -inf],
+                │     │                      [-inf, -in...
+                │     └ <built-in method log_softmax of type object at 0x7f954a7e7500>
+                └ <module 'torch' from '/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/torch/__init__.py'>
+
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 34.46 GiB. GPU 0 has a total capacity of 79.33 GiB of which 4.07 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 70.61 GiB is allocated by PyTorch, and 4.14 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)
+2026-01-28 22:02:44.144 | ERROR    | scripts.inference.take_exam:exam:193 - Error occurred in Batch 2
+Traceback (most recent call last):
+
+  File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/main.py", line 273, in <module>
+    student_first_take_exam_Gsm8k()
+    └ <function student_first_take_exam_Gsm8k at 0x7f930fc09990>
+
+  File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/main.py", line 198, in student_first_take_exam_Gsm8k
+    take_exam.exam(question, solution, answer, question_idx)
+    │         │    │         │         │       └ [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33...
+    │         │    │         │         └ ['72', '10', '5', '42', '624', '35', '48', '16', '41', '990', '121', '5', '85', '35', '5', '448000', '800', '43', '16', '16',...
+    │         │    │         └ ['Natalia sold 48/2 = <<48/2=24>>24 clips in May.\nNatalia sold 48+24 = <<48+24=72>>72 clips altogether in April and May.\n##...
+    │         │    └ ['Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia s...
+    │         └ <function TakeExam.exam at 0x7f9310e988b0>
+    └ <scripts.inference.take_exam.TakeExam object at 0x7f954be139a0>
+
+> File "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/scripts/inference/take_exam.py", line 151, in exam
+    outputs = self.model.generate(
+              │    │     └ <function GenerationMixin.generate at 0x7f93c7175bd0>
+              │    └ Qwen2ForCausalLM(
+              │        (model): Qwen2Model(
+              │          (embed_tokens): Embedding(152064, 3584)
+              │          (layers): ModuleList(
+              │            (0-27): ...
+              └ <scripts.inference.take_exam.TakeExam object at 0x7f954be139a0>
+
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/torch/utils/_contextlib.py", line 116, in decorate_context
+    return func(*args, **kwargs)
+           │     │       └ {'input_ids': tensor([[151644,   8948,    198,  ..., 151644,  77091,    198],
+           │     │                 [151643, 151643, 151643,  ..., 151644, ...
+           │     └ (Qwen2ForCausalLM(
+           │         (model): Qwen2Model(
+           │           (embed_tokens): Embedding(152064, 3584)
+           │           (layers): ModuleList(
+           │             (0-27):...
+           └ <function GenerationMixin.generate at 0x7f93c7175b40>
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/transformers/generation/utils.py", line 1758, in generate
+    result = self._sample(
+             │    └ <function GenerationMixin._sample at 0x7f93c7175ea0>
+             └ Qwen2ForCausalLM(
+                 (model): Qwen2Model(
+                   (embed_tokens): Embedding(152064, 3584)
+                   (layers): ModuleList(
+                     (0-27): ...
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/transformers/generation/utils.py", line 2397, in _sample
+    outputs = self(
+              └ Qwen2ForCausalLM(
+                  (model): Qwen2Model(
+                    (embed_tokens): Embedding(152064, 3584)
+                    (layers): ModuleList(
+                      (0-27): ...
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1553, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           │    │           │       └ {'input_ids': tensor([[151644,   8948,    198,  ..., 151644,  77091,    198],
+           │    │           │                 [151643, 151643, 151643,  ..., 151644, ...
+           │    │           └ ()
+           │    └ <function Module._call_impl at 0x7f93f7861a20>
+           └ Qwen2ForCausalLM(
+               (model): Qwen2Model(
+                 (embed_tokens): Embedding(152064, 3584)
+                 (layers): ModuleList(
+                   (0-27): ...
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/torch/nn/modules/module.py", line 1562, in _call_impl
+    return forward_call(*args, **kwargs)
+           │             │       └ {'input_ids': tensor([[151644,   8948,    198,  ..., 151644,  77091,    198],
+           │             │                 [151643, 151643, 151643,  ..., 151644, ...
+           │             └ ()
+           └ functools.partial(<function add_hook_to_module.<locals>.new_forward at 0x7f930cb0b130>, Qwen2ForCausalLM(
+               (model): Qwen2Mod...
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/accelerate/hooks.py", line 176, in new_forward
+    return module._hf_hook.post_forward(module, output)
+           │      │        │            │       └ CausalLMOutputWithPast(loss=None, logits=tensor([[[-3.4258,  1.9473,  1.4414,  ..., -7.9219, -7.9219, -7.9219],
+           │      │        │            │                  [-1....
+           │      │        │            └ Qwen2ForCausalLM(
+           │      │        │                (model): Qwen2Model(
+           │      │        │                  (embed_tokens): Embedding(152064, 3584)
+           │      │        │                  (layers): ModuleList(
+           │      │        │                    (0-27): ...
+           │      │        └ <function AlignDevicesHook.post_forward at 0x7f93e084ac20>
+           │      └ AlignDevicesHook(execution_device=0, offload=False, io_same_device=True, offload_buffers=False, place_submodules=False, skip_...
+           └ Qwen2ForCausalLM(
+               (model): Qwen2Model(
+                 (embed_tokens): Embedding(152064, 3584)
+                 (layers): ModuleList(
+                   (0-27): ...
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/accelerate/hooks.py", line 400, in post_forward
+    output = send_to_device(output, self.input_device, skip_keys=self.skip_keys)
+             │              │       │    │                       │    └ 'past_key_values'
+             │              │       │    │                       └ AlignDevicesHook(execution_device=0, offload=False, io_same_device=True, offload_buffers=False, place_submodules=False, skip_...
+             │              │       │    └ device(type='cuda', index=0)
+             │              │       └ AlignDevicesHook(execution_device=0, offload=False, io_same_device=True, offload_buffers=False, place_submodules=False, skip_...
+             │              └ CausalLMOutputWithPast(loss=None, logits=tensor([[[-3.4258,  1.9473,  1.4414,  ..., -7.9219, -7.9219, -7.9219],
+             │                         [-1....
+             └ <function send_to_device at 0x7f93e09df0a0>
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/accelerate/utils/operations.py", line 179, in send_to_device
+    {
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/accelerate/utils/operations.py", line 180, in <dictcomp>
+    k: t if k in skip_keys else send_to_device(t, device, non_blocking=non_blocking, skip_keys=skip_keys)
+    │  │    │    │              │              │  │                    │                       └ ['past_key_values']
+    │  │    │    │              │              │  │                    └ False
+    │  │    │    │              │              │  └ device(type='cuda', index=0)
+    │  │    │    │              │              └ tensor([[[-3.4258,  1.9473,  1.4414,  ..., -7.9219, -7.9219, -7.9219],
+    │  │    │    │              │                         [-1.8311,  1.2686,  2.5547,  ..., -5.6211, -5...
+    │  │    │    │              └ <function send_to_device at 0x7f93e09df0a0>
+    │  │    │    └ ['past_key_values']
+    │  │    └ 'logits'
+    │  └ tensor([[[-3.4258,  1.9473,  1.4414,  ..., -7.9219, -7.9219, -7.9219],
+    │             [-1.8311,  1.2686,  2.5547,  ..., -5.6211, -5...
+    └ 'logits'
+  File "/mnt/petrelfs/wanhaiyuan/miniforge3/envs/xiong/lib/python3.10/site-packages/accelerate/utils/operations.py", line 154, in send_to_device
+    return tensor.to(device, non_blocking=non_blocking)
+           │      │  │                    └ False
+           │      │  └ device(type='cuda', index=0)
+           │      └ <method 'to' of 'torch._C.TensorBase' objects>
+           └ tensor([[[-3.4258,  1.9473,  1.4414,  ..., -7.9219, -7.9219, -7.9219],
+                      [-1.8311,  1.2686,  2.5547,  ..., -5.6211, -5...
+
+torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 10.30 GiB. GPU 0 has a total capacity of 79.33 GiB of which 4.07 GiB is free. Including non-PyTorch memory, this process has 75.24 GiB memory in use. Of the allocated memory 70.64 GiB is allocated by PyTorch, and 4.10 GiB is reserved by PyTorch but unallocated. If reserved but unallocated memory is large try setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True to avoid fragmentation.  See documentation for Memory Management  (https://pytorch.org/docs/stable/notes/cuda.html#environment-variables)

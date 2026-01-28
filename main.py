@@ -18,8 +18,8 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 def student_correct():
     # gen question with hints

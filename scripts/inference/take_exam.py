@@ -2,6 +2,7 @@ import os
 import json
 import torch
 import numpy as np
+import logging
 from tqdm import tqdm
 from transformers import (
     AutoTokenizer,
@@ -15,6 +16,15 @@ from utils import (
     extract_boxed_content,
     normalize_answer
 )
+
+# =====================================================
+# Logger
+# =====================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 class TakeExam:
@@ -34,7 +44,7 @@ class TakeExam:
         # ================== Config ==================
         set_seed(42)
 
-        self.BATCH_SIZE = 8
+        self.BATCH_SIZE = 32
         self.MAX_NEW_TOKENS = 2048
         self.MAX_SEQ_LENGTH = 3096
 
@@ -43,17 +53,16 @@ class TakeExam:
         os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
         # ================== Load tokenizer ==================
-        print(f"Loading tokenizer from {self.LOCAL_MODEL_PATH} ...")
+        logger.info(f"Loading tokenizer from {self.LOCAL_MODEL_PATH}")
 
-        # 🚑 关键修复：强制使用 slow tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.LOCAL_MODEL_PATH,
             trust_remote_code=True,
-            use_fast=False,          # ⭐⭐⭐ 必须
+            use_fast=False,  # ⭐ 必须使用 slow tokenizer
         )
 
         # ================== Load model ==================
-        print(f"Loading model from {self.LOCAL_MODEL_PATH} ...")
+        logger.info(f"Loading model from {self.LOCAL_MODEL_PATH}")
 
         self.model = AutoModelForCausalLM.from_pretrained(
             self.LOCAL_MODEL_PATH,
@@ -70,7 +79,7 @@ class TakeExam:
 
         self.tokenizer.padding_side = "left"
 
-        print("Model & Tokenizer loaded successfully.")
+        logger.info("Model & Tokenizer loaded successfully.")
 
     # =====================================================
     # 单题推理
@@ -109,86 +118,18 @@ class TakeExam:
             return gen_text.strip()
 
         except Exception as e:
-            print(f"[Error] single question failed: {e}")
+            logger.error(f"Single question failed: {e}")
             torch.cuda.empty_cache()
             return ""
 
     # =====================================================
-    # 批量考试（算准确率）
-    # =====================================================
-    def exam_test(self, question, solution, answer, question_idx):
-        correct_count, total_count = 0, 0
-
-        total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
-
-        for i in tqdm(
-            range(0, len(question), self.BATCH_SIZE),
-            total=total_batches,
-            desc="Inferencing",
-        ):
-            try:
-                batch_questions = question[i:i + self.BATCH_SIZE]
-                batch_answers = answer[i:i + self.BATCH_SIZE]
-
-                prompts = [
-                    self.tokenizer.apply_chat_template(
-                        [{"role": "user", "content": str(q)}],
-                        tokenize=False,
-                        add_generation_prompt=True,
-                    )
-                    for q in batch_questions
-                ]
-
-                inputs = self.tokenizer(
-                    prompts,
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True,
-                    max_length=self.MAX_SEQ_LENGTH,
-                ).to(self.model.device)
-
-                with torch.inference_mode():
-                    outputs = self.model.generate(
-                        **inputs,
-                        max_new_tokens=self.MAX_NEW_TOKENS,
-                        pad_token_id=self.tokenizer.pad_token_id,
-                        do_sample=True,
-                        temperature=0.1,
-                        top_p=0.9,
-                        use_cache=True,
-                    )
-
-                input_len = inputs["input_ids"].shape[1]
-                decoded = self.tokenizer.batch_decode(
-                    outputs[:, input_len:],
-                    skip_special_tokens=True,
-                )
-
-                for pred, ref in zip(decoded, batch_answers):
-                    pred_ans = normalize_answer(
-                        extract_boxed_content(pred)
-                    )
-                    ref_ans = normalize_answer(str(ref))
-
-                    if pred_ans == ref_ans:
-                        correct_count += 1
-                    total_count += 1
-
-            except Exception as e:
-                print(f"[Error] batch {i // self.BATCH_SIZE} failed: {e}")
-                torch.cuda.empty_cache()
-
-        acc = correct_count / max(total_count, 1)
-        print(f"\nFinal Accuracy: {acc:.2%}")
-        return acc
-
-    # =====================================================
-    # 批量考试（保存所有结果）
+    # 批量考试（batch 级保存 + entropy）
     # =====================================================
     def exam(self, question, solution, answer, question_idx):
         results = []
 
         total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
 
         for i in tqdm(
             range(0, len(question), self.BATCH_SIZE),
@@ -233,19 +174,17 @@ class TakeExam:
 
                 input_len = inputs["input_ids"].shape[1]
                 generated_ids = outputs.sequences[:, input_len:]
-                
+
                 decoded = self.tokenizer.batch_decode(
                     generated_ids,
                     skip_special_tokens=True,
                 )
 
-                # 计算每个生成序列的熵
                 entropies = self._compute_sequence_entropy(
-                    generated_ids, 
-                    outputs.scores
+                    generated_ids,
+                    outputs.scores,
                 )
-                
-                # ⭐ 释放显存
+
                 del outputs
                 torch.cuda.empty_cache()
 
@@ -263,75 +202,64 @@ class TakeExam:
                         "ref_answer": ra.strip(),
                         "ref_solution": rs.strip(),
                         "question_idx": idx,
-                        "entropy": float(ent),  # 添加熵值
+                        "entropy": float(ent),
                     })
 
+                # ================== ⭐ batch 级保存 ==================
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+
+                logger.info(
+                    f"Batch {i // self.BATCH_SIZE + 1}/{total_batches} saved "
+                    f"({len(results)} samples)"
+                )
+
             except Exception as e:
-                print(f"[Error] batch {i // self.BATCH_SIZE} failed: {e}")
+                logger.error(
+                    f"Batch {i // self.BATCH_SIZE + 1} failed: {e}"
+                )
                 torch.cuda.empty_cache()
 
-        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
-        with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        logger.info(f"All done! Final results saved to {self.OUTPUT_JSON_PATH}")
 
-        print(f"Done! Results saved to {self.OUTPUT_JSON_PATH}")
-
+    # =====================================================
+    # 显存友好的 entropy 计算
+    # =====================================================
     def _compute_sequence_entropy(self, generated_ids, scores):
         """
-        计算生成序列的平均负对数似然 (entropy)
-        优化：向量化 + 内存管理 + 数值稳定性
-        
-        Args:
-            generated_ids: (batch_size, seq_len) 生成的token ids
-            scores: tuple of (batch_size, vocab_size) 每个位置的logits
-        
-        Returns:
-            entropies: (batch_size,) 每个序列的熵值
+        H(a) = -1/L * sum_i log p_{i, y_i}
+        仅对生成 token 计算 log-prob，避免 vocab 级 softmax
         """
         if len(scores) == 0:
             return [0.0] * generated_ids.shape[0]
-        
-        seq_len = len(scores)
+
         batch_size = generated_ids.shape[0]
-        
-        # ⭐ 一次性计算所有softmax（性能优化）
-        all_scores = torch.stack(scores, dim=0)  # (seq_len, batch, vocab)
-        all_probs = torch.softmax(all_scores, dim=-1)
-        
+        seq_len = min(len(scores), generated_ids.shape[1])
+
         entropies = []
-        
+
         for b in range(batch_size):
             total_nll = 0.0
             valid_tokens = 0
-            
-            # ⭐ 修复：只处理有效长度，避免索引越界
-            actual_len = min(seq_len, generated_ids.shape[1])
-            
-            for t in range(actual_len):
-                token_id = generated_ids[b, t].item()
-                
-                # ⭐ 修复：跳过padding和eos token
-                if (token_id == self.tokenizer.pad_token_id or 
-                    token_id == self.tokenizer.eos_token_id):
-                    continue
-                
-                # 直接索引预计算的概率
-                token_prob = all_probs[t, b, token_id].item()
-                
-                # ⭐ 修复：数值稳定性，避免log(0)
-                if token_prob > 1e-10:
-                    total_nll += -np.log(token_prob)
-                    valid_tokens += 1
-            
-            # 计算平均熵
-            avg_entropy = total_nll / valid_tokens if valid_tokens > 0 else 0.0
-            entropies.append(avg_entropy)
-        
-        # ⭐ 清理显存
-        del all_scores, all_probs
-        
-        return entropies
 
+            for t in range(seq_len):
+                token_id = generated_ids[b, t].item()
+
+                if token_id in (
+                    self.tokenizer.pad_token_id,
+                    self.tokenizer.eos_token_id,
+                ):
+                    continue
+
+                log_probs = torch.log_softmax(scores[t][b], dim=-1)
+                total_nll += -log_probs[token_id].item()
+                valid_tokens += 1
+
+            entropies.append(
+                total_nll / valid_tokens if valid_tokens > 0 else 0.0
+            )
+
+        return entropies
 
 
 # =====================================================
@@ -360,7 +288,7 @@ if __name__ == "__main__":
     answer = test_dataset.answers + train_dataset.answers
     question_idx = list(range(len(question)))
 
-    print(f"Dataset size: {len(question)}")
+    logger.info(f"Dataset size: {len(question)}")
 
     take_exam = TakeExam(
         "/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct"
