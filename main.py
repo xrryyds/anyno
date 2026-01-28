@@ -18,7 +18,8 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 def student_correct():
     # gen question with hints
@@ -34,7 +35,7 @@ def student_correct():
     
     incorrect_data, correct_data = teacher.teacher_mark_paper()
     
-    err_question_idx, _, err_answers, _, _  = incorrect_data
+    err_question_idx, _, err_answers, _, _, _ = incorrect_data
     seen_idxs = set()
     dedup_idx = []
     dedup_ans = []
@@ -45,7 +46,7 @@ def student_correct():
             dedup_ans.append(ans)
     err_question_idx = dedup_idx
     err_answers = dedup_ans
-    correct_question_idx, _, correct_answers, _, _ = correct_data
+    correct_question_idx, _, correct_answers, _, _ , _= correct_data
 
     answers_map = {}
     

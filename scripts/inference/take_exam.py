@@ -34,7 +34,7 @@ class TakeExam:
         # ================== Config ==================
         set_seed(42)
 
-        self.BATCH_SIZE = 32
+        self.BATCH_SIZE = 8
         self.MAX_NEW_TOKENS = 2048
         self.MAX_SEQ_LENGTH = 3096
 

@@ -60,13 +60,15 @@ class FileIOUtils:
         answer = []
         ref_answer = []
         ref_solution = []
+        entropy = []
         for idx, item in enumerate(data):
             question_idx.append(item.get("question_idx", "")),
             question.append(item.get("question", ""))
             answer.append(item.get("answer", ""))
             ref_answer.append(item.get("ref_answer", ""))
             ref_solution.append(item.get("ref_solution", ""))
-        return question_idx, question, answer, ref_answer, ref_solution
+            entropy.append(item.get("entropy",""))
+        return question_idx, question, answer, ref_answer, ref_solution, entropy
     
     def parse_hints_exam(self, data: list):
         question_idx = []
@@ -114,14 +116,19 @@ class FileIOUtils:
             return False
         
 
-    def save_mistakes(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list) -> bool:
-        self.save_Q_and_A(question_idx, question, answers, ref_solution, ref_answer, self.mistake_file_path)
+    def save_mistakes(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list, entropy: list) -> bool:
+        self.save_Q_and_A(question_idx, question, answers, ref_solution, ref_answer, entropy, self.mistake_file_path)
+    
+    def save_right(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list, entropy: list) -> bool:
+        self.save_Q_and_A(question_idx, question, answers, ref_solution, ref_answer, entropy, self.corr_path)
+    
+    
 
 
     def save_student_correct(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list) -> bool:
         self.save_Q_and_A(question_idx,question, answers, ref_solution, ref_answer, self.student_correct_output_path)    
 
-    def save_Q_and_A(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list, path:str) -> bool:
+    def save_Q_and_A(self, question_idx: list, question: list, answers: list, ref_solution: list, ref_answer: list, entropy: list, path:str) -> bool:
         try:
             size = len(question)
             data = []
@@ -131,7 +138,8 @@ class FileIOUtils:
                     "question": question[idx],
                     "answer": answers[idx],
                     "ref_solution": ref_solution[idx],
-                    "ref_answer": ref_answer[idx]
+                    "ref_answer": ref_answer[idx],
+                    "entropy": entropy[idx]
                 }
                 data.append(item)
 

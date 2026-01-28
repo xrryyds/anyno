@@ -72,8 +72,11 @@ class TeacherCorrecter:
         return True
        
     def teacher_mark_paper_with_save(self) -> bool:
-        err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers = self.teacher_mark_paper()
-        self.file.save_mistakes(err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers)
+        incorrect_data, correct_data = self.teacher_mark_paper()
+        err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers, err_entropy = incorrect_data
+        correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers, correct_entropy = correct_data
+        self.file.save_mistakes(err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers, err_entropy)
+        self.file.save_right(correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers, correct_entropy)
         return True
             
     def judge_and_gen_hints(self):
@@ -85,7 +88,7 @@ class TeacherCorrecter:
     def teacher_mark_paper(self):
         print("Starting teacher marking...")
         self.file.load_exam()
-        question_idx, question, answer, ref_answer, ref_solution = self.file.parse_data(self.file.data)
+        question_idx, question, answer, ref_answer, ref_solution, entropy = self.file.parse_data(self.file.data)
         size = len(question)
 
         self.acc_count = 0
@@ -97,12 +100,14 @@ class TeacherCorrecter:
         err_answers = []
         err_ref_solutions = []
         err_ref_answers = []
+        err_entropy = []
         
         correct_question_idx = []
         correct_questions = []
         correct_answers = []
         correct_ref_solutions = []
         correct_ref_answers = []
+        correct_entropy = []
         
         print("----- standard request -----")
         for idx in range(size):
@@ -117,6 +122,7 @@ class TeacherCorrecter:
                 correct_answers.append(answer[idx])
                 correct_ref_solutions.append(ref_solution[idx])
                 correct_ref_answers.append(ref_answer[idx])
+                correct_entropy.append(entropy[idx])
             else:
                 self.err_count += 1
                 err_question_idx.append(question_idx[idx])
@@ -124,6 +130,7 @@ class TeacherCorrecter:
                 err_answers.append(answer[idx])
                 err_ref_solutions.append(ref_solution[idx])
                 err_ref_answers.append(ref_answer[idx])
+                err_ref_answers.append(entropy[idx])
             
             if idx % 5 == 0:
                 left = size - idx
@@ -133,8 +140,8 @@ class TeacherCorrecter:
         print(f"Error count: {self.err_count}")
         
         return (
-            (err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers),
-            (correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers)
+            (err_question_idx, err_questions, err_answers, err_ref_solutions, err_ref_answers, err_entropy),
+            (correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers, correct_entropy)
         )
 
 
