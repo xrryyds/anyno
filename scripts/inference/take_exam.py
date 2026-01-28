@@ -227,20 +227,35 @@ class TakeExam:
                         temperature=0.1,
                         top_p=0.9,
                         use_cache=True,
+                        return_dict_in_generate=True,
+                        output_scores=True,
                     )
 
                 input_len = inputs["input_ids"].shape[1]
+                generated_ids = outputs.sequences[:, input_len:]
+                
                 decoded = self.tokenizer.batch_decode(
-                    outputs[:, input_len:],
+                    generated_ids,
                     skip_special_tokens=True,
                 )
 
-                for q, a, ra, rs, idx in zip(
+                # 计算每个生成序列的熵
+                entropies = self._compute_sequence_entropy(
+                    generated_ids, 
+                    outputs.scores
+                )
+                
+                # ⭐ 释放显存
+                del outputs
+                torch.cuda.empty_cache()
+
+                for q, a, ra, rs, idx, ent in zip(
                     batch_questions,
                     decoded,
                     batch_answers,
                     batch_solutions,
                     batch_ids,
+                    entropies,
                 ):
                     results.append({
                         "question": q,
@@ -248,6 +263,7 @@ class TakeExam:
                         "ref_answer": ra.strip(),
                         "ref_solution": rs.strip(),
                         "question_idx": idx,
+                        "entropy": float(ent),  # 添加熵值
                     })
 
             except Exception as e:
@@ -259,6 +275,63 @@ class TakeExam:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
         print(f"Done! Results saved to {self.OUTPUT_JSON_PATH}")
+
+    def _compute_sequence_entropy(self, generated_ids, scores):
+        """
+        计算生成序列的平均负对数似然 (entropy)
+        优化：向量化 + 内存管理 + 数值稳定性
+        
+        Args:
+            generated_ids: (batch_size, seq_len) 生成的token ids
+            scores: tuple of (batch_size, vocab_size) 每个位置的logits
+        
+        Returns:
+            entropies: (batch_size,) 每个序列的熵值
+        """
+        if len(scores) == 0:
+            return [0.0] * generated_ids.shape[0]
+        
+        seq_len = len(scores)
+        batch_size = generated_ids.shape[0]
+        
+        # ⭐ 一次性计算所有softmax（性能优化）
+        all_scores = torch.stack(scores, dim=0)  # (seq_len, batch, vocab)
+        all_probs = torch.softmax(all_scores, dim=-1)
+        
+        entropies = []
+        
+        for b in range(batch_size):
+            total_nll = 0.0
+            valid_tokens = 0
+            
+            # ⭐ 修复：只处理有效长度，避免索引越界
+            actual_len = min(seq_len, generated_ids.shape[1])
+            
+            for t in range(actual_len):
+                token_id = generated_ids[b, t].item()
+                
+                # ⭐ 修复：跳过padding和eos token
+                if (token_id == self.tokenizer.pad_token_id or 
+                    token_id == self.tokenizer.eos_token_id):
+                    continue
+                
+                # 直接索引预计算的概率
+                token_prob = all_probs[t, b, token_id].item()
+                
+                # ⭐ 修复：数值稳定性，避免log(0)
+                if token_prob > 1e-10:
+                    total_nll += -np.log(token_prob)
+                    valid_tokens += 1
+            
+            # 计算平均熵
+            avg_entropy = total_nll / valid_tokens if valid_tokens > 0 else 0.0
+            entropies.append(avg_entropy)
+        
+        # ⭐ 清理显存
+        del all_scores, all_probs
+        
+        return entropies
+
 
 
 # =====================================================
