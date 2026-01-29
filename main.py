@@ -258,7 +258,7 @@ def exam_roll_recheck_mistake():
     
     logger.info(f"mistakes size: {len(m_question)}")
 
-    take_exam = TakeExam()
+    take_exam = TakeExam(model_path)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
