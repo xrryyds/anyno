@@ -18,8 +18,8 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 import numpy as np
 
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-# model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 def student_correct():
     # gen question with hints
@@ -227,7 +227,7 @@ def exam_roll_recheck_mistake():
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     print("mistakes size:", len(m_question))
 
-    take_exam  = TakeExam()
+    take_exam  = TakeExam(model_path=model_path)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
 
