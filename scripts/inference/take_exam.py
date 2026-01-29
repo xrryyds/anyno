@@ -129,7 +129,7 @@ class TakeExam:
     # =====================================================
     # 批量考试（batch 级保存 + entropy）
     # =====================================================
-    def exam(self, question, solution, answer, question_idx):
+    def exam_with_cal_entropy(self, question, solution, answer, question_idx):
         results = []
 
         total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
@@ -389,6 +389,111 @@ class TakeExam:
             )
 
         return entropies
+
+
+
+
+    def exam(self, question, solution, answer, question_idx):
+
+        results = []
+
+        total_batches = (len(question) + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+
+        for i in tqdm(
+            range(0, len(question), self.BATCH_SIZE),
+            total=total_batches,
+            desc="Inferencing",
+        ):
+            try:
+                batch_questions = question[i:i + self.BATCH_SIZE]
+                batch_solutions = solution[i:i + self.BATCH_SIZE]
+                batch_answers = answer[i:i + self.BATCH_SIZE]
+                batch_ids = question_idx[i:i + self.BATCH_SIZE]
+
+                prompts = [
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": str(q)}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for q in batch_questions
+                ]
+
+                inputs = self.tokenizer(
+                    prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.MAX_SEQ_LENGTH,
+                ).to(self.model.device)
+
+                with torch.inference_mode():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.MAX_NEW_TOKENS,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        do_sample=True,
+                        temperature=0.1,
+                        top_p=0.9,
+                        use_cache=True,
+                        # return_dict_in_generate=True,
+                        # ❌ output_scores=True  ← 删除
+                    )
+                input_len = inputs["input_ids"].shape[1]
+                generated_ids = outputs.sequences[:, input_len:]
+
+                decoded = self.tokenizer.batch_decode(
+                    generated_ids,
+                    skip_special_tokens=True,
+                )
+
+                del outputs
+                torch.cuda.empty_cache()
+
+                for q, a, ra, rs, idx in zip(
+                    batch_questions,
+                    decoded,
+                    batch_answers,
+                    batch_solutions,
+                    batch_ids,
+                ):
+                    results.append({
+                        "question": q,
+                        "answer": a.strip(),
+                        "ref_answer": ra.strip(),
+                        "ref_solution": rs.strip(),
+                        "question_idx": idx,
+                        # ❌ "entropy": float(ent)  ← 删除
+                    })
+
+                # ================== ⭐ batch 级保存 ==================
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+
+                logger.info(
+                    f"Batch {i // self.BATCH_SIZE + 1}/{total_batches} saved "
+                    f"({len(results)} samples)"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Batch {i // self.BATCH_SIZE + 1} failed: {e}"
+                )
+                torch.cuda.empty_cache()
+
+        logger.info(f"All done! Final results saved to {self.OUTPUT_JSON_PATH}")
+
+
+
+
+
+
+
+
+
+
+
 
 
 # =====================================================
