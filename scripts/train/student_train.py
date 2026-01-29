@@ -393,8 +393,8 @@ def main():
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=20,             
-        per_device_train_batch_size=2,   
-        gradient_accumulation_steps=4,   
+        per_device_train_batch_size=1,   
+        gradient_accumulation_steps=2,   
         learning_rate=5e-5,
         warmup_ratio=0.1,
         logging_steps=10,

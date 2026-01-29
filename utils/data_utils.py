@@ -187,10 +187,11 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
     with open(adv_hints_path, 'r', encoding='utf-8') as f:
         adv_data = json.load(f)
         
-    with open(disadv_hints_path, 'r', encoding='utf-8') as f:
-        disadv_data = json.load(f)
+    # with open(disadv_hints_path, 'r', encoding='utf-8') as f:
+    #     disadv_data = json.load(f)
 
-    combined_hints_data = adv_data + disadv_data
+    # combined_hints_data = adv_data + disadv_data
+    combined_hints_data = adv_data
     total_hints = len(combined_hints_data)
     print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
 

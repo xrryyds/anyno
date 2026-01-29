@@ -339,7 +339,7 @@ def student_take_exam_Gsm8k_grpo_test():
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    student_first_take_exam_Gsm8k()
+    # student_first_take_exam_Gsm8k()
 
     # #2. teacher judges
     # teacher = TeacherCorrecter()
@@ -355,7 +355,7 @@ if __name__ == "__main__":
 
     # 3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    # gen_IRDCL_dataset(8)
+    gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
     
