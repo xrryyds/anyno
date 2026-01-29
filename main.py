@@ -270,11 +270,11 @@ if __name__ == "__main__":
     # student_take_exam_Gsm8k_test()
     # #1. student first take exam
     # student_first_take_exam()
-    student_first_take_exam_Gsm8k()
+    # student_first_take_exam_Gsm8k()
 
     # #2. teacher judges and gives hints
-    # teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher = TeacherCorrecter()
+    teacher.teacher_mark_paper_with_save()
     # teacher.teacher_hints() 
     # student_correct()
 
