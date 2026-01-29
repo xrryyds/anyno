@@ -41,6 +41,10 @@ class TakeExam:
             project_root, "datasets", "exam", "exam.json"
         )
 
+        self.OUTPUT_JSON_PATH_jsonl = os.path.join(
+            project_root, "datasets", "exam", "exam.jsonl"
+        )
+
         self.OUTPUT_JSON_PATH_ROLL = os.path.join(
             project_root, "datasets", "exam", "exam_roll.json"
         )
@@ -389,6 +393,125 @@ class TakeExam:
             )
 
         return entropies
+    
+
+ 
+    def exam(self, question, solution, answer, question_idx):
+        # 1. 确保输出目录存在
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_jsonl), exist_ok=True)
+        
+        # 2. 建议使用 .jsonl 格式进行流式写入，性能最好且防崩溃
+        # 如果必须是 json 后缀，依然可以按行写 jsonl 内容，后续再处理
+        output_file = self.OUTPUT_JSON_PATH_jsonl 
+        
+        # 清空/新建文件
+        with open(output_file, "w", encoding="utf-8") as f:
+            pass 
+
+        # 3. 关键：Batch 推理时，Decoder-only 模型必须左填充
+        if self.tokenizer.padding_side != "left":
+            self.tokenizer.padding_side = "left"
+            # 确保 pad_token 存在
+            if self.tokenizer.pad_token is None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+                
+        total_len = len(question)
+        total_batches = (total_len + self.BATCH_SIZE - 1) // self.BATCH_SIZE
+        
+        logger.info(f"Start inferencing: {total_len} samples, {total_batches} batches.")
+
+        for i in tqdm(
+            range(0, total_len, self.BATCH_SIZE),
+            total=total_batches,
+            desc="Inferencing",
+        ):
+            try:
+                # 切片数据
+                batch_end = i + self.BATCH_SIZE
+                batch_questions = question[i:batch_end]
+                batch_solutions = solution[i:batch_end]
+                batch_answers = answer[i:batch_end]
+                batch_ids = question_idx[i:batch_end]
+
+                # 4. 构建 Prompt
+                # 注意：如果 tokenizer 处理列表非常慢，这里可以考虑多线程预处理，
+                # 但通常瓶颈在模型 forward，这里串行即可。
+                prompts = [
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": str(q)}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for q in batch_questions
+                ]
+
+                # 5. Tokenize
+                inputs = self.tokenizer(
+                    prompts,
+                    return_tensors="pt",
+                    padding=True,       # 此时应为左填充
+                    truncation=True,
+                    max_length=self.MAX_SEQ_LENGTH,
+                ).to(self.model.device)
+
+                input_len = inputs["input_ids"].shape[1]
+
+                # 6. Generate (移除不需要的 score 返回，移除 dict 返回)
+                with torch.inference_mode():
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.MAX_NEW_TOKENS,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        eos_token_id=self.tokenizer.eos_token_id,
+                        do_sample=False,      # 如果不需要多样性，改为 False (Greedy) 会更快一点点
+                        temperature=0.1,     # 既然 temp 这么低，其实接近 Greedy
+                        top_p=0.9,
+                        use_cache=True,
+                        return_dict_in_generate=False, # 直接返回 Tensor，稍快
+                        output_scores=False,           # 移除熵计算相关
+                    )
+
+                # 7. Decode
+                # 只解码新生成的 token
+                generated_ids = outputs[:, input_len:]
+                decoded = self.tokenizer.batch_decode(
+                    generated_ids,
+                    skip_special_tokens=True,
+                )
+
+                # 8. 结果组装与流式写入 (IO 优化)
+                batch_results = []
+                for q, a, ra, rs, idx in zip(
+                    batch_questions,
+                    decoded,
+                    batch_answers,
+                    batch_solutions,
+                    batch_ids,
+                ):
+                    batch_results.append({
+                        "question": q,
+                        "answer": a.strip(),
+                        "ref_answer": ra.strip(),
+                        "ref_solution": rs.strip(),
+                        "question_idx": idx,
+                    })
+
+                # 使用追加模式 'a'，每次只写当前 batch
+                with open(output_file, "a", encoding="utf-8") as f:
+                    for res in batch_results:
+                        # 写入为 JSONL 格式 (每行一个 JSON)
+                        f.write(json.dumps(res, ensure_ascii=False) + "\n")
+
+                # 9. 移除循环内的 empty_cache()
+                # 只有在显存极其紧张时才需要它，否则它会阻塞 CPU 等待 GPU，显著降低速度。
+                
+            except Exception as e:
+                logger.error(f"Batch {i // self.BATCH_SIZE + 1} failed: {e}")
+                # 出错时才清理缓存
+                torch.cuda.empty_cache()
+
+        logger.info(f"All done! Results saved to {self.OUTPUT_JSON_PATH} (JSONL format)")
+
 
 
 
