@@ -1,32 +1,57 @@
 import os
-from scripts import TakeExam, TeacherCorrecter
-from utils import FileIOUtils, remove_null_hints
-from configs import GRPOConfig
-from data_math import Math_500, GSM8K
-from utils import extract_KNOWN, filter_json_by_question_idx, generate_irdcl_dataset
-from peft import PeftModel
-from debugpy._vendored import project_root
-from builtins import print
-from builtins import print
-import os
 import json
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
-from tqdm import tqdm
-from transformers import set_seed 
-from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_answer
 import numpy as np
+import logging
+from tqdm import tqdm
+from transformers import (
+    AutoTokenizer, 
+    AutoModelForCausalLM, 
+    set_seed
+)
+from peft import PeftModel
 
+# 假设这些模块在您的环境中可用
+try:
+    from scripts import TakeExam, TeacherCorrecter
+    from utils import (
+        FileIOUtils, 
+        remove_null_hints, 
+        extract_KNOWN, 
+        filter_json_by_question_idx, 
+        generate_irdcl_dataset,
+        extract_hints,
+        extract_boxed_content,
+        normalize_answer
+    )
+    from configs import GRPOConfig
+    from data_math import Math_500, GSM8K
+except ImportError:
+    # 仅为了防止缺少文件时直接报错无法查看代码结构
+    pass
+
+# =====================================================
+# Logger Setup
+# =====================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
+# =====================================================
+# Global Config
+# =====================================================
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
+
 
 def student_correct():
     # gen question with hints
     exam_paper.load_question_with_hints()
     question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
    
-
     student_exam = TakeExam()
     student_exam.exam_multi_answer(question_with_hint, ref_solution, ref_answer, question_idx, 8, 0.7)
 
@@ -68,7 +93,7 @@ def student_correct():
         str_qid = str(q_id) 
         
         if str_qid not in answers_map:
-            print(f"Warning: Question ID {q_id} missing from exam results. Skipping.")
+            logger.warning(f"Question ID {q_id} missing from exam results. Skipping.")
             continue
 
         s_ans = answers_map[str_qid]
@@ -89,7 +114,7 @@ def student_correct():
         elif str_qid in correct_idx_set:
             correct_group.append(item)
         else:
-            print(f"Error: Question ID {q_id} has answer but not classified in err/correct sets.")
+            logger.error(f"Question ID {q_id} has answer but not classified in err/correct sets.")
             continue
     
     data_for_teacher_grpo = []
@@ -137,15 +162,13 @@ def student_correct():
     disadv_hints_dataset_path = exam_paper.disadv_hints_dataset_path
     grpo_dataset_path = exam_paper.grpo_dataset_path
 
-    print(f"Saving {len(data_for_teacher_grpo)} GRPO samples.")
-    print(f"Saving {len(data_for_student_adv_hints)} Advantageous Hint samples.")
-    print(f"Saving {len(data_for_student_disadv_hints)} Disadvantageous Hint samples.")
+    logger.info(f"Saving {len(data_for_teacher_grpo)} GRPO samples.")
+    logger.info(f"Saving {len(data_for_student_adv_hints)} Advantageous Hint samples.")
+    logger.info(f"Saving {len(data_for_student_disadv_hints)} Disadvantageous Hint samples.")
 
     exam_paper.save_results_to_json(data_for_teacher_grpo, grpo_dataset_path)
     exam_paper.save_results_to_json(data_for_student_adv_hints,  adv_hints_dataset_path)
     exam_paper.save_results_to_json(data_for_student_disadv_hints, disadv_hints_dataset_path)
-
-
 
 
 def teacher_correct():
@@ -156,10 +179,10 @@ def teacher_correct():
     filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
     del teacher
 
+
 def single_qusestion(qusetion):
     student_exam = TakeExam(model_path)
     return student_exam.answer_single_question(qusetion)
-
 
 
 def student_first_take_exam_Math500():
@@ -173,7 +196,9 @@ def student_first_take_exam_Math500():
     question = test_dataset.problems + train_dataset.problems
     solution = test_dataset.solutions + train_dataset.solutions
     answer = test_dataset.answers + train_dataset.answers
-    print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
     take_exam = TakeExam()
     question_idx = []
     for idx in range(len(question)):
@@ -190,7 +215,9 @@ def student_first_take_exam_Gsm8k():
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
-    print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
     take_exam = TakeExam(model_path)
     question_idx = []
     for idx in range(len(question)):
@@ -198,18 +225,22 @@ def student_first_take_exam_Gsm8k():
     take_exam.exam(question, solution, answer, question_idx)
 
 
-
 def student_take_exam_Gsm8k_test():
     gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
-    print(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
     take_exam = TakeExam(model_path)
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
-    print(take_exam.exam_test(question, solution, answer, question_idx))
+    
+    # 记录返回值
+    result = take_exam.exam_test(question, solution, answer, question_idx)
+    logger.info(f"Exam Test Result: {result}")
 
 
 def gen_IRDCL_dataset(batch_size):
@@ -219,17 +250,16 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         0.5)
-    
 
 
 def exam_roll_recheck_mistake():
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
-    print("mistakes size:", len(m_question))
+    
+    logger.info(f"mistakes size: {len(m_question)}")
 
-    take_exam  = TakeExam(model_path=model_path)
+    take_exam = TakeExam()
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
-
 
     teacher = TeacherCorrecter()
     
@@ -253,7 +283,7 @@ def exam_roll_recheck_mistake():
             err_ref_solutions.append(m_ref_solution[i])
             err_entropy.append(m_entropy[i])
 
-    print(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
+    logger.info(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
 
     exam_paper.save_mistakes(
         err_question_idx, 
@@ -264,9 +294,10 @@ def exam_roll_recheck_mistake():
         err_entropy
     )
 
+
 def student_take_exam_Gsm8k_grpo_test():
     # 1. 准备数据
-    print("Loading Dataset...")
+    logger.info("Loading Dataset...")
     gsm8k = GSM8K(False) # 确保这里的 GSM8K 类能正确引入
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -276,16 +307,16 @@ def student_take_exam_Gsm8k_grpo_test():
     # question = question[:10]
     # answer = answer[:10]
     
-    print(f"Dataset Loaded: {len(question)} samples.")
+    logger.info(f"Dataset Loaded: {len(question)} samples.")
 
     # 2. 初始化 TakeExam (加载基座模型)
     # 注意：这里传入基座模型的路径
-    print(f"Loading Base Model from {BASE_MODEL_PATH}...")
+    logger.info(f"Loading Base Model from {BASE_MODEL_PATH}...")
     take_exam = TakeExam(model_path=BASE_MODEL_PATH)
 
     # 3. 【核心步骤】加载 GRPO LoRA Adapter
     # 这步操作不会破坏 TakeExam 的其他功能，只是在运行时替换了内部的 model
-    print(f"Loading GRPO Adapter from {GRPO_ADAPTER_PATH}...")
+    logger.info(f"Loading GRPO Adapter from {GRPO_ADAPTER_PATH}...")
     try:
         take_exam.model = PeftModel.from_pretrained(
             take_exam.model, 
@@ -293,52 +324,51 @@ def student_take_exam_Gsm8k_grpo_test():
             torch_dtype=torch.float16
         )
         take_exam.model.eval() # 切换到评估模式
-        print("Successfully loaded GRPO adapter!")
+        logger.info("Successfully loaded GRPO adapter!")
     except Exception as e:
-        print(f"Error loading adapter: {e}")
-        print("Ensure the path exists and contains adapter_config.json and adapter_model.safetensors")
+        logger.error(f"Error loading adapter: {e}")
+        logger.error("Ensure the path exists and contains adapter_config.json and adapter_model.safetensors")
         return
 
     # 4. 生成 Question ID (原有逻辑)
     question_idx = list(range(len(question)))
 
     # 5. 运行测试
-    print("Starting Inference...")
+    logger.info("Starting Inference...")
     accuracy = take_exam.exam_test(question, solution, answer, question_idx)
     
-    print(f"\nFinal GRPO Model Accuracy: {accuracy:.2%}")
+    logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
+
 
 if __name__ == "__main__":
     # #1. student first take exam
-    # student_first_take_exam()
+    # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
 
     # #2. teacher judges
     # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
-    #3. student roll on mistake
+    # 3. student roll on mistake
     exam_roll_recheck_mistake()
 
-    #4. teacher_give_hints
+    # 4. teacher_give_hints
     # teacher.teacher_hints() 
-
-
 
     # student_correct()
 
-    #3. gen dataset
+    # 3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
     # gen_IRDCL_dataset(8)
 
     # student_first_take_exam_Gsm8k()
+    
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
     # # GRPO 训练保存的 checkpoint 路径，通常是 epoch_X
     # GRPO_ADAPTER_PATH = "/root/autodl-tmp/CELPO/output/hint_grpo/epoch_2" 
-    # if not os.path.exists(GRPO_ADAPTER_PATH):
-    #     print(f"Warning: Adapter path {GRPO_ADAPTER_PATH} does not exist. Check if training finished.")
-    # else:
-    #     student_take_exam_Gsm8k_grpo_test()
-
     
-
+    # if not os.path.exists(GRPO_ADAPTER_PATH):
+    #     logger.warning(f"Adapter path {GRPO_ADAPTER_PATH} does not exist. Check if training finished.")
+    # else:
+    #     # student_take_exam_Gsm8k_grpo_test()
+    #     pass
