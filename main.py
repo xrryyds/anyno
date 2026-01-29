@@ -274,8 +274,8 @@ if __name__ == "__main__":
 
     # #2. teacher judges and gives hints
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
-    # teacher.teacher_hints() 
+    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_hints() 
     # student_correct()
 
     #3. gen dataset

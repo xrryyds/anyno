@@ -92,7 +92,7 @@ class FileIOUtils:
             question_with_hint.append(GEN_ENHANCE_PROMPT.format(question=question[idx], hints=hints[idx]))
         return question_idx, question, question_with_hint, ref_solution, ref_answer, student_answer, hints
 
-    def save_hints(self, question: list, hints: list, ref_solution: list, ref_answer: list, question_idx: list,student_answer: list) -> bool:
+    def save_hints(self, question: list, hints: list, ref_solution: list, ref_answer: list, question_idx: list, student_answer: list, entropy: list) -> bool:
         try:
             size = len(question)
             data = []
@@ -103,7 +103,8 @@ class FileIOUtils:
                     "hints": hints[idx],
                     "ref_solution": ref_solution[idx],
                     "ref_answer": ref_answer[idx],
-                    "student_answer": student_answer[idx]
+                    "student_answer": student_answer[idx],
+                    "entropy": entropy[idx]
                 }
                 data.append(item)
 
