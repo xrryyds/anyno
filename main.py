@@ -48,127 +48,122 @@ model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 
 
 def student_correct():
-    # gen question with hints
+    logger.info("Step 1: Loading Dataset...")
+    # 1. 加载原始带有提示的数据
     exam_paper.load_question_with_hints()
+    # 解析数据：注意这里最后获取了 from_entropy (原始熵)
     question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
    
-    student_exam = TakeExam()
-    student_exam.exam_multi_answer(question_with_hint, ref_solution, ref_answer, question_idx, 8, 0.7)
+    # 2. 学生考试 (使用带提示的题目进行推理)
+    logger.info("Step 2: Student Taking Exam...")
+    student_exam = TakeExam(model_path=model_path)
+    # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
+    student_exam.exam(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
 
-    # teacher correct
+    # 3. 老师批改
+    logger.info("Step 3: Teacher Grading...")
     teacher = TeacherCorrecter()
-    
     incorrect_data, correct_data = teacher.teacher_mark_paper()
     
-    err_question_idx, _, err_answers, _, _, _ = incorrect_data
-    seen_idxs = set()
-    dedup_idx = []
-    dedup_ans = []
-    for idx, ans in zip(err_question_idx, err_answers):
-        if idx not in seen_idxs:
-            seen_idxs.add(idx)
-            dedup_idx.append(idx)
-            dedup_ans.append(ans)
-    err_question_idx = dedup_idx
-    err_answers = dedup_ans
-    correct_question_idx, _, correct_answers, _, _ , _= correct_data
+    # 解包批改结果
+    # 结构: [ids, questions, student_answers, ref_solutions, ref_answers, entropies]
+    # 这里我们要获取最后一位的 entropies (这是使用 Hints 后的熵)
+    err_question_idx, _, err_answers, _, _, err_entropies = incorrect_data
+    correct_question_idx, _, correct_answers, _, _, correct_entropies = correct_data
 
-    answers_map = {}
+    # 4. 构建映射字典 (Question ID -> {Answer, Entropy})
+    results_map = {}
     
-    correct_idx_set = set(str(x) for x in correct_question_idx)
-    err_idx_set = set(str(x) for x in err_question_idx)
-    
-    for q_id, s_ans in zip(correct_question_idx, correct_answers):
-        answers_map[str(q_id)] = s_ans
+    # 存入错题信息
+    for q_id, s_ans, s_ent in zip(err_question_idx, err_answers, err_entropies):
+        results_map[str(q_id)] = {
+            "answer": s_ans,
+            "entropy": s_ent
+        }
         
-    for q_id, s_ans in zip(err_question_idx, err_answers):
-        answers_map[str(q_id)] = s_ans
+    # 存入对题信息
+    for q_id, s_ans, s_ent in zip(correct_question_idx, correct_answers, correct_entropies):
+        results_map[str(q_id)] = {
+            "answer": s_ans,
+            "entropy": s_ent
+        }
 
+    # 创建错题 ID 集合，用于分类
+    err_ids_set = set(str(x) for x in err_question_idx)
+    # 已处理 ID 集合
+    processed_ids_set = set(results_map.keys())
+
+    # 5. 分类合并
     correct_group = []
     incorrect_group = []
     
-    total_data = zip(question_idx, question, question_with_hint, ref_solution, ref_answer, hints)
-
-    for q_id, q, q_hint, r_sol, r_ans, s_hint in total_data:
-        str_qid = str(q_id) 
+    # 遍历原始数据，加入 from_entropy
+    total_data = zip(question_idx, question, hints, ref_solution, ref_answer, from_entropy)
+    
+    for q_id, q, q_hints, r_sol, r_ans, orig_ent in total_data:
+        str_qid = str(q_id)
         
-        if str_qid not in answers_map:
+        if str_qid not in processed_ids_set:
             logger.warning(f"Question ID {q_id} missing from exam results. Skipping.")
             continue
-
-        s_ans = answers_map[str_qid]
+            
+        # 获取考试结果
+        exam_res = results_map[str_qid]
+        s_ans = exam_res["answer"]
+        hint_ent = exam_res["entropy"]
 
         item = {
             "question_idx": q_id,
             "question": q,
-            "question_with_hints": q_hint, 
+            "hints": q_hints,
+            "student_answer": s_ans,
             "ref_solution": r_sol,
             "ref_answer": r_ans,
-            "student_answer": s_ans,
-            "hints": s_hint
+            "entropy_original": orig_ent,   # 原始熵
+            "entropy_with_hints": hint_ent  # 使用 Hints 后的熵
         }
-        
-        # 严格分类逻辑
-        if str_qid in err_idx_set:
+
+        # 分类逻辑
+        if str_qid in err_ids_set:
             incorrect_group.append(item)
-        elif str_qid in correct_idx_set:
-            correct_group.append(item)
         else:
-            logger.error(f"Question ID {q_id} has answer but not classified in err/correct sets.")
-            continue
-    
+            correct_group.append(item)
+
+    logger.info(f"Classification Done. Correct: {len(correct_group)}, Incorrect: {len(incorrect_group)}")
+
+    # 6. 构造输出列表
+    # 6.1 Teacher GRPO (包含 success 标记)
     data_for_teacher_grpo = []
     for item in correct_group:
         data_for_teacher_grpo.append({
-            "question_idx": item["question_idx"],
-            "question": item["question"],
-            "hints": item["hints"],
-            "student_answer": item["student_answer"],
+            **item, # 包含 entropy 信息
             "success": True
         })
-        
     for item in incorrect_group:
         data_for_teacher_grpo.append({
-            "question_idx": item["question_idx"],
-            "question": item["question"],
-            "hints": item["hints"],
-            "student_answer": item["student_answer"],
+            **item,
             "success": False
         })
     
-    data_for_student_adv_hints = []
-    for item in correct_group:
-        data_for_student_adv_hints.append({
-            "question_idx": item["question_idx"],
-            "question": item["question"],
-            "hints": item["hints"],
-            "student_answer": item["student_answer"],
-            "ref_solution": item["ref_solution"],
-            "ref_answer": item["ref_answer"]
-        })
+    # 6.2 Student Advantageous Hints (对题)
+    data_for_student_adv_hints = correct_group # 结构已满足要求
 
-    data_for_student_disadv_hints = [] 
-    for item in incorrect_group:
-        data_for_student_disadv_hints.append({
-            "question_idx": item["question_idx"],
-            "question": item["question"],
-            "hints": item["hints"],
-            "student_answer": item["student_answer"],
-            "ref_solution": item["ref_solution"],
-            "ref_answer": item["ref_answer"]
-        })   
+    # 6.3 Student Disadvantageous Hints (错题)
+    data_for_student_disadv_hints = incorrect_group # 结构已满足要求
     
+    # 7. 保存
     adv_hints_dataset_path = exam_paper.adv_hints_dataset_path
     disadv_hints_dataset_path = exam_paper.disadv_hints_dataset_path
     grpo_dataset_path = exam_paper.grpo_dataset_path
 
-    logger.info(f"Saving {len(data_for_teacher_grpo)} GRPO samples.")
-    logger.info(f"Saving {len(data_for_student_adv_hints)} Advantageous Hint samples.")
-    logger.info(f"Saving {len(data_for_student_disadv_hints)} Disadvantageous Hint samples.")
+    logger.info(f"Saving {len(data_for_teacher_grpo)} GRPO samples to {grpo_dataset_path}")
+    logger.info(f"Saving {len(data_for_student_adv_hints)} Advantageous Hint samples to {adv_hints_dataset_path}")
+    logger.info(f"Saving {len(data_for_student_disadv_hints)} Disadvantageous Hint samples to {disadv_hints_dataset_path}")
 
     exam_paper.save_results_to_json(data_for_teacher_grpo, grpo_dataset_path)
     exam_paper.save_results_to_json(data_for_student_adv_hints,  adv_hints_dataset_path)
     exam_paper.save_results_to_json(data_for_student_disadv_hints, disadv_hints_dataset_path)
+
 
 
 def teacher_correct():
@@ -258,7 +253,7 @@ def exam_roll_recheck_mistake():
     
     logger.info(f"mistakes size: {len(m_question)}")
 
-    take_exam = TakeExam(model_path)
+    take_exam = TakeExam()
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
@@ -350,12 +345,12 @@ if __name__ == "__main__":
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    # student_correct()
+    student_correct()
 
     # 3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
@@ -372,3 +367,4 @@ if __name__ == "__main__":
     # else:
     #     # student_take_exam_Gsm8k_grpo_test()
     #     pass
+
