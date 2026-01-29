@@ -78,6 +78,7 @@ class FileIOUtils:
         ref_answer = []
         ref_solution = []
         student_answer = []
+        from_entropy = []
         for idx, item in enumerate(data):
             hint = item.get("hints", "")
             if(hint != ""):
@@ -87,10 +88,11 @@ class FileIOUtils:
                 ref_solution.append(item.get("ref_solution", ""))
                 question_idx.append(item.get("question_idx", ""))
                 student_answer.append(item.get("student_answer",""))
+                from_entropy.append(item.get("entropy",""))
 
         for idx in range(len(question)):
             question_with_hint.append(GEN_ENHANCE_PROMPT.format(question=question[idx], hints=hints[idx]))
-        return question_idx, question, question_with_hint, ref_solution, ref_answer, student_answer, hints
+        return question_idx, question, question_with_hint, ref_solution, ref_answer, student_answer, hints, from_entropy
 
     def save_hints(self, question: list, hints: list, ref_solution: list, ref_answer: list, question_idx: list, student_answer: list, entropy: list) -> bool:
         try:

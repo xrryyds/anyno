@@ -24,7 +24,7 @@ model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 def student_correct():
     # gen question with hints
     exam_paper.load_question_with_hints()
-    question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
+    question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
    
 
     student_exam = TakeExam()
