@@ -43,7 +43,8 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 
@@ -338,7 +339,7 @@ def student_take_exam_Gsm8k_grpo_test():
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k()
+    student_first_take_exam_Gsm8k()
 
     # #2. teacher judges
     # teacher = TeacherCorrecter()
@@ -350,7 +351,7 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    student_correct()
+    # student_correct()
 
     # 3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)

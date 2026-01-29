@@ -25,8 +25,8 @@ snapshot_download(
     local_dir= os.path.join(model_dir, "OREAL-32B"),
     token=MY_TOKEN,
     max_workers=1,                 # 🔴 关键
-    resume_download=True,          # 🔴 关键
-    local_dir_use_symlinks=False
+    # resume_download=True,          # 🔴 关键
+    # local_dir_use_symlinks=False
 )
 logger.info("finished！")
 
