@@ -191,9 +191,9 @@ class TeacherCorrecter:
         self.teacher_hints()
         
 
-    def teacher_mark_paper(self):
+    def teacher_mark_paper(self, roll = False):
         print("Starting teacher marking...")
-        self.file.load_exam()
+        self.file.load_exam(roll)
         question_idx, question, answer, ref_answer, ref_solution, entropy = self.file.parse_data(self.file.data)
         size = len(question)
 

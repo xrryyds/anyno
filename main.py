@@ -222,6 +222,48 @@ def gen_IRDCL_dataset(batch_size):
     
 
 
+def exam_roll_recheck_mistake():
+    exam_paper.load_mistakes()
+    m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
+    print("mistakes size:", len(m_question))
+
+    take_exam  = TakeExam()
+    take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
+
+
+    teacher = TeacherCorrecter()
+    
+    _, correct_data = teacher.teacher_mark_paper(roll=True)
+    correct_question_idx, _, _, _, _, _ = correct_data
+    solved_ids = set(correct_question_idx)
+
+    err_question_idx = []
+    err_questions = []
+    err_answers = []
+    err_ref_answers = []
+    err_ref_solutions = []
+    err_entropy = []
+
+    for i, idx in enumerate(m_question_idx):
+        if idx not in solved_ids:
+            err_question_idx.append(idx)
+            err_questions.append(m_question[i])
+            err_answers.append(m_answer[i])          
+            err_ref_answers.append(m_ref_answer[i])
+            err_ref_solutions.append(m_ref_solution[i])
+            err_entropy.append(m_entropy[i])
+
+    print(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
+
+    exam_paper.save_mistakes(
+        err_question_idx, 
+        err_questions, 
+        err_answers, 
+        err_ref_solutions, 
+        err_ref_answers, 
+        err_entropy
+    )
+
 def student_take_exam_Gsm8k_grpo_test():
     # 1. 准备数据
     print("Loading Dataset...")
@@ -267,15 +309,22 @@ def student_take_exam_Gsm8k_grpo_test():
     print(f"\nFinal GRPO Model Accuracy: {accuracy:.2%}")
 
 if __name__ == "__main__":
-    # student_take_exam_Gsm8k_test()
     # #1. student first take exam
     # student_first_take_exam()
     # student_first_take_exam_Gsm8k()
 
-    # #2. teacher judges and gives hints
-    teacher = TeacherCorrecter()
+    # #2. teacher judges
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    teacher.teacher_hints() 
+
+    #3. student roll on mistake
+    exam_roll_recheck_mistake()
+
+    #4. teacher_give_hints
+    # teacher.teacher_hints() 
+
+
+
     # student_correct()
 
     #3. gen dataset

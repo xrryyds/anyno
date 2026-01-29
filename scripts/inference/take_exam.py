@@ -41,6 +41,10 @@ class TakeExam:
             project_root, "datasets", "exam", "exam.json"
         )
 
+        self.OUTPUT_JSON_PATH_ROLL = os.path.join(
+            project_root, "datasets", "exam", "exam_roll.json"
+        )
+
         # ================== Config ==================
         set_seed(42)
 
@@ -223,6 +227,131 @@ class TakeExam:
         logger.info(f"All done! Final results saved to {self.OUTPUT_JSON_PATH}")
 
     # =====================================================
+    # 批量 Roll K 次考试
+    # =====================================================
+    def exam_roll_k(
+        self,
+        question,
+        solution,
+        answer,
+        question_idx,
+        k: int = 8,
+        temperature: float = 0.7
+    ):
+        """
+        对每个问题采样 k 次。
+        结果不合并为列表，而是展平存储，保持与 exam 相同的字典结构（去掉 entropy）。
+        """
+        results = []
+
+        # 动态调整 Batch Size 防止显存爆炸
+        # 如果 k=8, 实际生成序列数会变为原来的8倍，因此输入 batch 需除以 k
+        real_batch_size = max(1, self.BATCH_SIZE // k)
+
+        total_batches = (len(question) + real_batch_size - 1) // real_batch_size
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
+
+        logger.info(
+            f"Starting Roll-K Exam: k={k}, temp={temperature}, "
+            f"real_batch_size={real_batch_size}"
+        )
+
+        for i in tqdm(
+            range(0, len(question), real_batch_size),
+            total=total_batches,
+            desc=f"Rolling (k={k})",
+        ):
+            try:
+                batch_questions = question[i:i + real_batch_size]
+                batch_solutions = solution[i:i + real_batch_size]
+                batch_answers = answer[i:i + real_batch_size]
+                batch_ids = question_idx[i:i + real_batch_size]
+
+                # 构建 Prompts
+                prompts = [
+                    self.tokenizer.apply_chat_template(
+                        [{"role": "user", "content": str(q)}],
+                        tokenize=False,
+                        add_generation_prompt=True,
+                    )
+                    for q in batch_questions
+                ]
+
+                inputs = self.tokenizer(
+                    prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=self.MAX_SEQ_LENGTH,
+                ).to(self.model.device)
+
+                with torch.inference_mode():
+                    # 生成: num_return_sequences=k
+                    outputs = self.model.generate(
+                        **inputs,
+                        max_new_tokens=self.MAX_NEW_TOKENS,
+                        pad_token_id=self.tokenizer.pad_token_id,
+                        do_sample=True,             # 必须开启采样
+                        temperature=temperature,    # 温度
+                        top_p=0.9,
+                        num_return_sequences=k,     # 每个问题返回 k 个回答
+                        use_cache=True,
+                    )
+
+                input_len = inputs["input_ids"].shape[1]
+                generated_ids = outputs[:, input_len:]
+
+                decoded_flat = self.tokenizer.batch_decode(
+                    generated_ids,
+                    skip_special_tokens=True,
+                )
+
+                del outputs, inputs, generated_ids
+                torch.cuda.empty_cache()
+
+                # 整理结果
+                # decoded_flat 的长度是 len(batch_questions) * k
+                # 顺序是: [q1_roll1, q1_roll2... q1_rollk, q2_roll1...]
+                for j, (q, ra, rs, idx) in enumerate(zip(
+                    batch_questions,
+                    batch_answers,
+                    batch_solutions,
+                    batch_ids
+                )):
+                    # 截取属于当前问题的 k 个回答
+                    start_idx = j * k
+                    end_idx = start_idx + k
+                    k_responses = decoded_flat[start_idx:end_idx]
+
+                    # 将这 k 个回答分别作为独立的条目保存
+                    for resp in k_responses:
+                        results.append({
+                            "question": q,
+                            "answer": resp.strip(),  # 这里是具体的某一次 roll 的结果
+                            "ref_answer": ra.strip(),
+                            "ref_solution": rs.strip(),
+                            "question_idx": idx,
+                            # "entropy" 字段不需要
+                        })
+
+                # ================== 实时保存 ==================
+                with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+
+                logger.info(
+                    f"Batch {i // real_batch_size + 1}/{total_batches} saved. "
+                    f"Total entries so far: {len(results)}"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Roll Batch {i // real_batch_size + 1} failed: {e}"
+                )
+                torch.cuda.empty_cache()
+
+        logger.info(f"Roll-K Exam done! Results saved to {self.OUTPUT_JSON_PATH_ROLL}")
+
+    # =====================================================
     # 显存友好的 entropy 计算
     # =====================================================
     def _compute_sequence_entropy(self, generated_ids, scores):
@@ -277,20 +406,35 @@ if __name__ == "__main__":
         project_root, "CELPO", "configs", "celpo_train.yaml"
     )
 
-    config = GRPOConfig.load_yaml(exam_file_path)
-    math_500 = Math_500(config)
+    # 尝试加载配置和数据
+    try:
+        config = GRPOConfig.load_yaml(exam_file_path)
+        math_500 = Math_500(config)
 
-    test_dataset = math_500.get_test_data()
-    train_dataset = math_500.get_train_data()
+        test_dataset = math_500.get_test_data()
+        train_dataset = math_500.get_train_data()
 
-    question = test_dataset.problems + train_dataset.problems
-    solution = test_dataset.solutions + train_dataset.solutions
-    answer = test_dataset.answers + train_dataset.answers
-    question_idx = list(range(len(question)))
+        question = test_dataset.problems + train_dataset.problems
+        solution = test_dataset.solutions + train_dataset.solutions
+        answer = test_dataset.answers + train_dataset.answers
+        question_idx = list(range(len(question)))
 
-    logger.info(f"Dataset size: {len(question)}")
+        logger.info(f"Dataset size: {len(question)}")
 
-    take_exam = TakeExam(
-        "/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct"
-    )
-    take_exam.exam(question, solution, answer, question_idx)
+        take_exam = TakeExam(
+            "/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct"
+        )
+        
+        # 使用 Roll-K 模式
+        # k=8, temperature=0.7
+        take_exam.exam_roll_k(
+            question, 
+            solution, 
+            answer, 
+            question_idx, 
+            k=8, 
+            temperature=0.7
+        )
+
+    except Exception as e:
+        logger.error(f"Initialization or execution failed: {e}")

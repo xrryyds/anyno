@@ -7,6 +7,7 @@ class FileIOUtils:
         current_file_path = os.path.abspath(__file__)
         project_root = os.path.dirname(os.path.dirname(current_file_path)) 
         self.exam_file_path = os.path.join(project_root, "datasets", "exam", "exam.json")
+        self.exam_file_roll_path = os.path.join(project_root, "datasets", "exam", "exam_roll.json")
         self.mistake_file_path = os.path.join(project_root, "datasets", "exam", "mistake_collection_book.json")
         self.hints_file_path = os.path.join(project_root, "datasets", "exam", "hints.json")
         self.student_correct_output_path = os.path.join(project_root, "datasets", "exam", "correct.json")
@@ -26,9 +27,12 @@ class FileIOUtils:
         self.mistakes = []
         self.question_with_hints = []
     
-    def load_exam(self) -> bool:
+    def load_exam(self, roll = False) -> bool:
+        file_path = self.exam_file_path
+        if roll:
+            file_path = self.exam_file_roll_path
         try:
-            with open(self.exam_file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, 'r', encoding='utf-8') as f:
                 self.data = json.load(f)
             return True
         except Exception as e:
