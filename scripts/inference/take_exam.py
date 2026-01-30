@@ -52,7 +52,7 @@ class TakeExam:
         # ================== Config ==================
         set_seed(42)
 
-        self.BATCH_SIZE = 32
+        self.BATCH_SIZE = 16
         self.MAX_NEW_TOKENS = 2048
         self.MAX_SEQ_LENGTH = 3096
 
@@ -564,7 +564,7 @@ class TakeExam:
                         # ❌ output_scores=True  ← 删除
                     )
                 input_len = inputs["input_ids"].shape[1]
-                generated_ids = outputs.sequences[:, input_len:]
+                generated_ids = outputs[:, input_len:]
 
                 decoded = self.tokenizer.batch_decode(
                     generated_ids,
