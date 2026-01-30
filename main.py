@@ -17,12 +17,8 @@ try:
     from utils import (
         FileIOUtils, 
         remove_null_hints, 
-        extract_KNOWN, 
         filter_json_by_question_idx, 
         generate_irdcl_dataset,
-        extract_hints,
-        extract_boxed_content,
-        normalize_answer
     )
     from configs import GRPOConfig
     from data_math import Math_500, GSM8K
@@ -43,8 +39,8 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 
@@ -254,7 +250,7 @@ def exam_roll_recheck_mistake():
     
     logger.info(f"mistakes size: {len(m_question)}")
 
-    take_exam = TakeExam()
+    take_exam = TakeExam(model_path=model_path)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
@@ -336,26 +332,27 @@ def student_take_exam_Gsm8k_grpo_test():
     logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
 
 
+
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake()
+    exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
     # student_correct()
 
     # 3. gen dataset
     # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    gen_IRDCL_dataset(16)
+    # gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
     

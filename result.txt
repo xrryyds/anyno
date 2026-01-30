@@ -1,2 +1,2 @@
 GSM8K       -pass@1     -pass@8 
-EASL7B      501
+EASL7B      501         230
