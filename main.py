@@ -332,7 +332,6 @@ def student_take_exam_Gsm8k_grpo_test():
     logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
 
 
-
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
