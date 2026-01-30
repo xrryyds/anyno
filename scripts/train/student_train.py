@@ -51,7 +51,7 @@ class HintSFTConfig:
     anchor_weight_end: float = 0.01
     
     # 路径配置
-    model_path: str = "/root/autodl-tmp/model/Qwen/Qwen/Qwen2.5-Math-7B-Instruct"
+    model_path: str = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
     data_path: str = "/xrr/CELPO/datasets/exam/irdcl_data.json" 
     output_base_dir: str = "/root/autodl-tmp/output"
 
@@ -340,8 +340,8 @@ def main():
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
     project_root = os.path.dirname(os.path.dirname(project_root))
-    model_dir = os.path.join(project_root, "CELPO", "model", "Qwen")
-    model_url = os.path.join(model_dir, "Qwen2.5-Math-7B-Instruct")
+    model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
+    model_url = os.path.join(model_dir, "OREAL-7B")
 
     data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
 
@@ -350,13 +350,13 @@ def main():
     set_seed(42)
     
     # 初始化配置
-    hint_config = HintSFTConfig(model_path=model_url, data_path=data_path, output_base_dir=output_base_dir)
+    hint_config = HintSFTConfig(model_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B", data_path=data_path, output_base_dir=output_base_dir)
     
     output_dir = f"{hint_config.output_base_dir}/hint_sft_{datetime.now().strftime('%m%d_%H%M')}"
     metric_log_file = setup_logging(output_dir)
     
     # 1. 加载 Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
     
     # 2. 加载预处理好的 Dataset
     dataset = Dataset.from_json(hint_config.data_path)
