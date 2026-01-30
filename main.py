@@ -44,6 +44,121 @@ model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 
+def exam_roll_recheck_hints():
+    try:
+        logger.info("Step 1: Loading Dataset...")
+        # 虽然这里读取了data_a，但在后续逻辑中主要使用 exam_paper.parse_hints_exam 解析出的数据
+        with open(exam_paper.disadv_hints_dataset_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+            
+        # 解析原始输入数据，获取元数据（hints, from_entropy等）
+        question_idx, _, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(data)
+        
+        # 建立元数据映射字典，方便后续根据ID找回 hints 和 原始熵
+        # Key: question_idx, Value: {hints, entropy}
+        meta_map = {}
+        for q_id, h, ent in zip(question_idx, hints, from_entropy):
+            meta_map[q_id] = {'hints': h, 'orig_ent': ent}
+
+        logger.info("Step 2: Student Rolling Exam...")
+        student_exam = TakeExam(model_path=model_path)
+        student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
+        
+        logger.info("Step 3: Teacher Grading...")
+        teacher = TeacherCorrecter()
+        # 获取批改结果
+        _, correct_data = teacher.teacher_mark_paper()
+
+        # Step 4: 处理 Correct Data (去重 + 保留最短答案)
+        # 解包 correct_data: [ids, questions, student_answers, ref_solutions, ref_answers, entropies]
+        c_ids, c_qs, c_ans, c_sols, c_refs, c_ents = correct_data
+        
+        best_candidates = {} # 用于去重的字典: {question_idx: data_item}
+
+        for i in range(len(c_ids)):
+            qid = c_ids[i]
+            curr_ans = c_ans[i]
+            
+            # 构造要保存的数据项
+            item = {
+                "question_idx": qid,
+                "question": c_qs[i],
+                "hints": meta_map.get(qid, {}).get('hints', []),  # 找回对应的提示
+                "student_answer": curr_ans,
+                "ref_solution": c_sols[i],
+                "ref_answer": c_refs[i],
+                "entropy_original": meta_map.get(qid, {}).get('orig_ent', 0.0), # 找回原始熵
+                "entropy_with_hints": c_ents[i],
+                "success": True
+            }
+            
+            # 去重逻辑：如果ID已存在，比较答案长度，保留更短的
+            if qid not in best_candidates:
+                best_candidates[qid] = item
+            else:
+                prev_len = len(best_candidates[qid]["student_answer"])
+                curr_len = len(curr_ans)
+                if curr_len < prev_len:
+                    best_candidates[qid] = item # 更新为更短的答案
+
+        # 将字典转回列表
+        new_data_to_append = list(best_candidates.values())
+        logger.info(f"Filtered {len(c_ids)} correct samples down to {len(new_data_to_append)} unique items (shortest answer strategy).")
+
+        # Step 5: 追加写入文件
+        target_path = exam_paper.adv_hints_dataset_path
+        existing_data = []
+
+        # 读取现有数据
+        if os.path.exists(target_path):
+            try:
+                with open(target_path, 'r', encoding='utf-8') as f:
+                    existing_data = json.load(f)
+                    if not isinstance(existing_data, list):
+                        logger.warning(f"Existing file {target_path} is not a list. Overwriting.")
+                        existing_data = []
+            except json.JSONDecodeError:
+                logger.warning(f"Could not decode {target_path}. Starting with empty list.")
+                existing_data = []
+
+        # 合并数据
+        final_data = existing_data + new_data_to_append
+
+        exam_paper.save_results_to_json(final_data, exam_paper.adv_hints_dataset_path)
+        
+        logger.info(f"Successfully appended {len(new_data_to_append)} items to {target_path}. Total items: {len(final_data)}")
+        
+        return {
+            'success': True,
+            'processed_count': len(new_data_to_append)
+        }
+
+    except FileNotFoundError as e:
+        error_msg = f'file not found: {e.filename}'
+        logger.error(error_msg)
+        return {
+            'success': False,
+            'error': error_msg
+        }
+    
+    except json.JSONDecodeError as e:
+        error_msg = f'JSON decode error: {str(e)}'
+        logger.error(error_msg)
+        return {
+            'success': False,
+            'error': error_msg
+        }
+    
+    except Exception as e:
+        error_msg = f'unknown error: {str(e)}'
+        logger.error(error_msg)
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': error_msg
+        }
+
 def student_correct():
     logger.info("Step 1: Loading Dataset...")
     # 1. 加载原始带有提示的数据
@@ -350,8 +465,7 @@ if __name__ == "__main__":
     # student_correct()
 
     # 3. gen dataset
-    # filter_json_by_question_idx(exam_paper.exam_file_path, exam_paper.hints_file_path, exam_paper.corr_path)
-    # gen_IRDCL_dataset(16)
+    gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
     
