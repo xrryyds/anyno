@@ -336,19 +336,19 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
-    take_exam = NULL
+    take_exam = None
     if use_lora:
-        take_exam = TakeExam(model_path)
-    else:
         take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+    else:
+        take_exam = TakeExam(model_path)
 
-    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_test
+    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
     
-    result = take_exam.exam(question, solution, answer, question_idx)
-    logger.info(f"Exam Test Result: {result}")
+    take_exam.exam(question, solution, answer, question_idx)
+
 
 
 def gen_IRDCL_dataset(batch_size):

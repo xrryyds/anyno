@@ -53,7 +53,7 @@ class TakeExam:
             project_root, "datasets", "exam", "exam_roll.json"
         )
 
-        self.OUTPUT_JSON_PATH_test(
+        self.OUTPUT_JSON_PATH_TEST = os.path.join(
             project_root, "datasets", "exam", "exam_test.json"
         )
 
