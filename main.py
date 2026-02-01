@@ -445,7 +445,7 @@ def student_take_exam_Gsm8k_grpo_test():
 
 
 def take_exam_after_EASL(lora_path:str):
-    exam_paper_easl = TakeExam(use_lora=True, lora_path=lora_path)
+    exam_paper_easl = TakeExam(use_lora=True, adapter_path=lora_path)
     gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -481,7 +481,7 @@ if __name__ == "__main__":
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
 
-    # student_first_take_exam_Gsm8k()
+    take_exam_after_EASL("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
 
 
