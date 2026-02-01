@@ -61,13 +61,13 @@ def exam_roll_recheck_hints():
             meta_map[q_id] = {'hints': h, 'orig_ent': ent}
 
         logger.info("Step 2: Student Rolling Exam...")
-        student_exam = TakeExam(model_path=model_path)
-        student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
+        # student_exam = TakeExam(model_path=model_path)
+        # student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
         
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
         # 获取批改结果
-        _, correct_data = teacher.teacher_mark_paper()
+        _, correct_data = teacher.teacher_mark_paper(True)
 
         # Step 4: 处理 Correct Data (去重 + 保留最短答案)
         # 解包 correct_data: [ids, questions, student_answers, ref_solutions, ref_answers, entropies]
@@ -450,7 +450,8 @@ def student_take_exam_Gsm8k_grpo_test():
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    student_first_take_exam_Gsm8k()
+    # student_first_take_exam_Gsm8k()
+
 
     # #2. teacher judges
     # teacher = TeacherCorrecter()
