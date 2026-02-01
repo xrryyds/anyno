@@ -39,8 +39,8 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
 
 
@@ -463,9 +463,9 @@ if __name__ == "__main__":
     # teacher.teacher_hints() 
 
     # student_correct()
-
+    exam_roll_recheck_hints()
     # 3. gen dataset
-    gen_IRDCL_dataset(16)
+    # gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
     
