@@ -11,7 +11,6 @@ from transformers import (
 )
 from peft import PeftModel
 
-# 假设这些模块在您的环境中可用
 try:
     from scripts import TakeExam, TeacherCorrecter
     from utils import (
