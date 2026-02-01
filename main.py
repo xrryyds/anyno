@@ -19,6 +19,7 @@ try:
         remove_null_hints, 
         filter_json_by_question_idx, 
         generate_irdcl_dataset,
+        remove_null_hints
     )
     from configs import GRPOConfig
     from data_math import Math_500, GSM8K
@@ -351,6 +352,7 @@ def student_take_exam_Gsm8k_test():
 
 
 def gen_IRDCL_dataset(batch_size):
+    remove_null_hints(exam_paper.adv_hints_dataset_path)
     generate_irdcl_dataset(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,

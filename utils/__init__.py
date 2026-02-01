@@ -14,5 +14,6 @@ __all__= [
     "extract_answer",
     "remove_null_hints",
     "filter_json_by_question_idx",
-    "generate_irdcl_dataset"
+    "generate_irdcl_dataset",
+    "remove_null_hints"
 ]

@@ -249,3 +249,39 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
 
     print(f"Done. Generated {len(final_dataset)} items.")
     print(f"Saved to {output_path}")
+
+
+
+
+def remove_null_hints(file_path):
+    if not os.path.exists(file_path):
+        print(f"erro, can not find: {file_path}")
+        return
+
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        if not isinstance(data, list):
+            print("error: JSON not (List)。")
+            return
+
+        original_count = len(data)
+
+        cleaned_data = [item for item in data if item.get("hints") is not None]
+
+        filtered_count = len(cleaned_data)
+
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(cleaned_data, f, ensure_ascii=False, indent=4)
+
+        print(f"finished！")
+        print(f"文件路径: {file_path}")
+        print(f"原始数据条数: {original_count}")
+        print(f"剩余数据条数: {filtered_count}")
+        print(f"删除了 {original_count - filtered_count} 条数据。")
+
+    except json.JSONDecodeError:
+        print("错误: 文件格式不是有效的 JSON。")
+    except Exception as e:
+        print(f"发生未知错误: {e}")
