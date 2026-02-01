@@ -467,9 +467,14 @@ if __name__ == "__main__":
     # student_correct()
     # exam_roll_recheck_hints()
     # 3. gen dataset
-    gen_IRDCL_dataset(16)
+    # gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
+
+
+
+
+    #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
     # # GRPO 训练保存的 checkpoint 路径，通常是 epoch_X
