@@ -328,7 +328,7 @@ def student_first_take_exam_Gsm8k():
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_Gsm8k_test():
+def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -336,13 +336,18 @@ def student_take_exam_Gsm8k_test():
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
-    take_exam = TakeExam(model_path)
+    take_exam = NULL
+    if use_lora:
+        take_exam = TakeExam(model_path)
+    else:
+        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+
+    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_test
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
     
-    # 记录返回值
-    result = take_exam.exam_test(question, solution, answer, question_idx)
+    result = take_exam.exam(question, solution, answer, question_idx)
     logger.info(f"Exam Test Result: {result}")
 
 
@@ -405,16 +410,10 @@ def student_take_exam_Gsm8k_grpo_test():
     gsm8k = GSM8K(False) # 确保这里的 GSM8K 类能正确引入
     question = gsm8k.problems
     solution = gsm8k.solutions
-    answer = gsm8k.answers
-    
-    # 为了快速测试，可以只取前几个 (可选)
-    # question = question[:10]
-    # answer = answer[:10]
+    answer = gsm8k.answers d
     
     logger.info(f"Dataset Loaded: {len(question)} samples.")
 
-    # 2. 初始化 TakeExam (加载基座模型)
-    # 注意：这里传入基座模型的路径
     logger.info(f"Loading Base Model from {BASE_MODEL_PATH}...")
     take_exam = TakeExam(model_path=BASE_MODEL_PATH)
 
