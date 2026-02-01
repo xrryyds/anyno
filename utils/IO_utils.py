@@ -7,6 +7,7 @@ class FileIOUtils:
         current_file_path = os.path.abspath(__file__)
         project_root = os.path.dirname(os.path.dirname(current_file_path)) 
         self.exam_file_path = os.path.join(project_root, "datasets", "exam", "exam.json")
+        self.exam_test_file_path = os.path.join(project_root, "datasets", "exam", "exam_test.json")
         self.exam_file_roll_path = os.path.join(project_root, "datasets", "exam", "exam_roll.json")
         self.mistake_file_path = os.path.join(project_root, "datasets", "exam", "mistake_collection_book.json")
         self.hints_file_path = os.path.join(project_root, "datasets", "exam", "hints.json")
@@ -29,6 +30,7 @@ class FileIOUtils:
     
     def load_exam(self, roll = False) -> bool:
         file_path = self.exam_file_path
+        # file_path = self.exam_test_file_path
         if roll:
             file_path = self.exam_file_roll_path
         try:

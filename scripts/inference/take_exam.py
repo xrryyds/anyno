@@ -57,6 +57,10 @@ class TakeExam:
             project_root, "datasets", "exam", "exam_test.json"
         )
 
+        self.OUTPUT_JSON_PATH_EHC_TEST = os.path.join(
+            project_root, "datasets", "exam", "exam_ehc_test.json"
+        )
+
         # ================== Config ==================
         set_seed(42)
 

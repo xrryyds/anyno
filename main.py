@@ -342,7 +342,8 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     else:
         take_exam = TakeExam(model_path)
 
-    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
+    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
+    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_EHC_TEST
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -410,7 +411,7 @@ def student_take_exam_Gsm8k_grpo_test():
     gsm8k = GSM8K(False) # 确保这里的 GSM8K 类能正确引入
     question = gsm8k.problems
     solution = gsm8k.solutions
-    answer = gsm8k.answers d
+    answer = gsm8k.answers
     
     logger.info(f"Dataset Loaded: {len(question)} samples.")
 
@@ -444,7 +445,7 @@ def student_take_exam_Gsm8k_grpo_test():
 
 
 def take_exam_after_EHC(lora_path:str):
-    exam_paper_easl = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+    exam_paper_easl = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
     gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -466,8 +467,8 @@ if __name__ == "__main__":
 
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher = TeacherCorrecter()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
@@ -480,9 +481,11 @@ if __name__ == "__main__":
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
 
-    take_exam_after_EHC("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
+    # take_exam_after_EHC("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
 
+    # student_take_exam_Gsm8k_test()
+    # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
 
     #####################################################################################################
