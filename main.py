@@ -314,10 +314,6 @@ def student_first_take_exam_Math500():
 
 
 def student_first_take_exam_Gsm8k():
-    current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
-    exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
-    config = GRPOConfig.load_yaml(exam_file_path)
     gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -446,6 +442,22 @@ def student_take_exam_Gsm8k_grpo_test():
     accuracy = take_exam.exam_test(question, solution, answer, question_idx)
     
     logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
+
+
+def take_exam_after_EASL(lora_path:str):
+    exam_paper_easl = TakeExam(use_lora=True, lora_path=lora_path)
+    gsm8k = GSM8K()
+    question = gsm8k.problems
+    solution = gsm8k.solutions
+    answer = gsm8k.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    exam_paper_easl.exam(question, solution, answer, question_idx)
+
 
 
 if __name__ == "__main__":
