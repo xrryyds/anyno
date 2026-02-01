@@ -351,7 +351,7 @@ def student_take_exam_Gsm8k_test():
 
 
 def gen_IRDCL_dataset(batch_size):
-    remove_null_hints(exam_paper.adv_hints_dataset_path)
+    remove_null_hints(exam_paper.adv_hints_dataset_pathgit)
     generate_irdcl_dataset(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,

@@ -21,9 +21,21 @@ from transformers import (
 )
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
+# ==========================================
+# Logger 配置 (模仿参考代码风格)
+# ==========================================
+# 注意：在 main 中会进一步配置 FileHandler 以保存日志到文件
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
+
 # 过滤烦人的警告
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
+# 添加上一轮建议的过滤配置，防止 PEFT save config 警告刷屏
+warnings.filterwarnings("ignore", message="Could not find a config file in")
 
 # 假设 prompt 模块
 try:
@@ -55,19 +67,12 @@ class HintSFTConfig:
     data_path: str = "/xrr/CELPO/datasets/exam/irdcl_data.json" 
     output_base_dir: str = "/root/autodl-tmp/output"
 
-logger = logging.getLogger(__name__)
-
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    log_format = "[%(asctime)s][%(levelname)s] %(message)s"
-    logging.basicConfig(
-        level=logging.INFO,
-        format=log_format,
-        handlers=[
-            logging.StreamHandler(sys.stderr),
-            logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
-        ]
-    )
+    # 添加 FileHandler 到全局 logger
+    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
     return os.path.join(output_dir, "epoch_metrics.jsonl")
 
 # ==========================================
@@ -326,11 +331,12 @@ class EpochLogCallback(TrainerCallback):
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(stats) + "\n")
         
-        print(f"\n[Epoch {state.epoch:.2f} Stats] Loss: {stats['avg_train_loss']:.4f} | "
-              f"Gate: {stats['avg_gate_value']:.4f} | "
-              f"AnchorW: {stats['anchor_weight']:.4f} | " 
-              f"AnchorLoss(Raw): {stats['avg_anchor_loss']:.4f} | "
-              f"ModeBLoss: {stats['avg_mode_b_loss']:.4f}")
+        # ⭐ Modified to use logger instead of print
+        logger.info(f"[Epoch {state.epoch:.2f} Stats] Loss: {stats['avg_train_loss']:.4f} | "
+                    f"Gate: {stats['avg_gate_value']:.4f} | "
+                    f"AnchorW: {stats['anchor_weight']:.4f} | " 
+                    f"AnchorLoss(Raw): {stats['avg_anchor_loss']:.4f} | "
+                    f"ModeBLoss: {stats['avg_mode_b_loss']:.4f}")
 
 # ==========================================
 # 6. Main Execution
@@ -384,7 +390,12 @@ def main():
     )
     model = get_peft_model(model, peft_config)
     model.enable_input_require_grads() 
-    model.print_trainable_parameters()
+    
+    # ⭐ Modified: Use logger to print trainable parameters manually instead of model.print_trainable_parameters()
+    trainable_params, all_param = model.get_nb_trainable_parameters()
+    logger.info(
+        f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
+    )
 
     # 4. 准备 Collator
     collator = FixedModeCollator(tokenizer)
