@@ -464,9 +464,9 @@ if __name__ == "__main__":
     # teacher.teacher_hints() 
 
     # student_correct()
-    exam_roll_recheck_hints()
+    # exam_roll_recheck_hints()
     # 3. gen dataset
-    # gen_IRDCL_dataset(16)
+    gen_IRDCL_dataset(16)
 
     # student_first_take_exam_Gsm8k()
     

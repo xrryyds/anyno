@@ -397,7 +397,7 @@ def main():
         gradient_accumulation_steps=2,   
         learning_rate=5e-5,
         warmup_ratio=0.1,
-        logging_steps=10,
+        logging_steps=5,
         fp16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
