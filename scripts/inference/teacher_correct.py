@@ -53,7 +53,7 @@ class TeacherCorrecter:
                     response = completion.choices[0].message.content
                     break 
                 
-                except openai.RateLimitError:
+                except openai.RateLimitError::
                     print(f"Rate limit reached at idx {idx}. Sleeping for 20 seconds...")
                     time.sleep(20)
                 except Exception as e:
