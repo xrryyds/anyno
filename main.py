@@ -323,7 +323,7 @@ def student_first_take_exam_Gsm8k():
 
 
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
-    gsm8k = GSM8K(False)
+    gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -485,7 +485,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
@@ -493,16 +493,16 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0202_2359")
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
 
     # student_take_exam_Gsm8k_test()
-    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
-    # teacher.teacher_mark_paper_with_save()
+    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"

@@ -1,5 +1,5 @@
 GSM8K(train)       -pass@1     -pass@8      
-EASL7B              336/7473   136
+EASL7B              336/7473   136/7473
 EASL7B(hints)       +26         +59
 EASL7B(EHC)         522       239
 
