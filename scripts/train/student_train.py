@@ -356,7 +356,7 @@ def main():
     set_seed(42)
     
     # 初始化配置
-    hint_config = HintSFTConfig(model_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B", data_path=data_path, output_base_dir=output_base_dir)
+    hint_config = HintSFTConfig(model_path=model_url, data_path=data_path, output_base_dir=output_base_dir)
     
     output_dir = f"{hint_config.output_base_dir}/hint_sft_{datetime.now().strftime('%m%d_%H%M')}"
     metric_log_file = setup_logging(output_dir)

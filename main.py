@@ -59,8 +59,8 @@ def exam_roll_recheck_hints():
             meta_map[q_id] = {'hints': h, 'orig_ent': ent}
 
         logger.info("Step 2: Student Rolling Exam...")
-        # student_exam = TakeExam(model_path=model_path)
-        # student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
+        student_exam = TakeExam(model_path=model_path)
+        student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
         
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
@@ -347,7 +347,7 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
 
 
 def gen_IRDCL_dataset(batch_size):
-    remove_null_hints(exam_paper.adv_hints_dataset_pathgit)
+    remove_null_hints(exam_paper.adv_hints_dataset_path)
     generate_irdcl_dataset(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,
@@ -475,7 +475,7 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    student_correct()
+    # student_correct()
     # exam_roll_recheck_hints()
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
