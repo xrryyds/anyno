@@ -6,7 +6,7 @@ EASL7B(EHC)         522       239
 MATH_500          -pass@1     -pass@8      
 EASL7B             -98/500    -62/500
 EASL7B(hints)      
-EASL7B(EHC 10)        -104/500   -67/239
+EASL7B(EHC 10)        -94/500   -58/239
 
 
 

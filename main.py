@@ -308,7 +308,7 @@ def student_first_take_exam_Math500():
 
 
 def student_first_take_exam_Gsm8k():
-    gsm8k = GSM8K()
+    gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -326,7 +326,7 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
-    answer = gsm8k.answers
+    answer = gsm8k.answersb
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
@@ -478,7 +478,7 @@ if __name__ == "__main__":
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
@@ -493,10 +493,10 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0202_2359")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0122")
     # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0202_2310")
+    # teacher.check_answers_equivalence()
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0202_2359")
 
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")

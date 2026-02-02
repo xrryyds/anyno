@@ -576,7 +576,6 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, set_seed
 
-# ⭐ 改动 1: 导入 vLLM
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
@@ -619,19 +618,19 @@ class TakeExam:
         )
 
         # ================== Config ==================
+        # 1. 设置全局种子 (影响 numpy/torch)
         set_seed(42)
+        # 2. 保存类成员变量供 vLLM 使用 (这是复现的关键)
+        self.seed = 42
 
-        # vLLM 不需要手动控制 BATCH_SIZE，它会自动占满显存
-        # MAX_NEW_TOKENS 和 MAX_SEQ_LENGTH 用于配置 vLLM
         self.MAX_NEW_TOKENS = 2048
-        self.MAX_MODEL_LEN = 4096  # 根据 A100 80G 情况，可适当调大 (如 8192)
+        self.MAX_MODEL_LEN = 4096 
 
         self.LOCAL_MODEL_PATH = model_path
         self.use_lora = use_lora
         self.adapter_path = adapter_path
 
         # ================== Load tokenizer ==================
-        # 即使使用 vLLM，我们仍需加载 Tokenizer 来处理 Chat Template
         logger.info(f"Loading tokenizer from {self.LOCAL_MODEL_PATH}")
         self.tokenizer = AutoTokenizer.from_pretrained(
             self.LOCAL_MODEL_PATH,
@@ -639,25 +638,26 @@ class TakeExam:
             use_fast=False, 
         )
 
-        # ================== ⭐ 改动 2: 初始化 vLLM ==================
+        # ================== Initialize vLLM ==================
         logger.info(f"Initializing vLLM Engine from {self.LOCAL_MODEL_PATH}...")
         
-        # 自动检测 GPU 数量
         num_gpus = torch.cuda.device_count()
         logger.info(f"Detected {num_gpus} GPUs. Setting tensor_parallel_size={num_gpus}")
 
+        # vLLM 初始化时也可以传入 seed，但这主要影响模型权重初始化的随机性
+        # 对采样随机性的控制主要在 SamplingParams
         self.llm = LLM(
             model=self.LOCAL_MODEL_PATH,
             trust_remote_code=True,
-            tensor_parallel_size=num_gpus, # 自动适配卡数
-            gpu_memory_utilization=0.9,    # 显存占用率
+            tensor_parallel_size=num_gpus,
+            gpu_memory_utilization=0.9,
             max_model_len=self.MAX_MODEL_LEN,
-            enable_lora=use_lora,          # 开启 LoRA 支持
-            max_lora_rank=64,              # 设置大一点以防万一
+            enable_lora=use_lora,
+            max_lora_rank=64,
             enforce_eager=False,
+            seed=self.seed, # 建议在这里也加一个，虽然对 generation 影响有限
         )
 
-        # 设置 LoRA 请求对象
         self.lora_request = None
         if use_lora and adapter_path and os.path.exists(adapter_path):
             logger.info(f"LoRA enabled. Adapter path: {adapter_path}")
@@ -678,14 +678,15 @@ class TakeExam:
                 add_generation_prompt=True,
             )
             
+            # ⭐ 修复点 1：传入 self.seed
             sampling_params = SamplingParams(
                 temperature=0.1,
                 top_p=0.9,
                 max_tokens=self.MAX_NEW_TOKENS,
-                stop_token_ids=[self.tokenizer.eos_token_id]
+                stop_token_ids=[self.tokenizer.eos_token_id],
+                seed=self.seed 
             )
 
-            # use_tqdm=False 防止单题输出进度条
             outputs = self.llm.generate(
                 [prompt], 
                 sampling_params, 
@@ -698,10 +699,6 @@ class TakeExam:
             logger.error(f"Single question failed: {e}")
             return ""
 
-    # =====================================================
-    # 批量考试（entropy 计算在 vLLM 中较复杂，此处仅保留基础推理）
-    # 若强需求 entropy，需改写为 logprobs 处理逻辑，但通常 Roll-K 不需要
-    # =====================================================
     def exam_with_cal_entropy(self, question, solution, answer, question_idx):
         logger.warning("exam_with_cal_entropy is running without entropy calculation in vLLM mode to ensure speed.")
         self.exam(question, solution, answer, question_idx)
@@ -720,11 +717,9 @@ class TakeExam:
     ):
         """
         使用 vLLM 进行 Roll K 推理。
-        vLLM 会自动进行 Continuous Batching，速度极快。
         """
         logger.info(f"Starting vLLM Roll-K Exam: k={k}, temp={temperature}, total_questions={len(question)}")
         
-        # 1. 准备所有 Prompts
         logger.info("Preparing prompts...")
         prompts = []
         for q in question:
@@ -735,34 +730,32 @@ class TakeExam:
             )
             prompts.append(text)
 
-        # 2. 设置采样参数 (n=k)
+        # ⭐ 修复点 2：传入 self.seed
+        # 即使 temperature > 0，固定 seed 也能保证每次 Roll 出来的 K 个结果是固定的
         sampling_params = SamplingParams(
-            n=k,                        # 每个 Prompt 生成 k 个输出
+            n=k,
             temperature=temperature,
             top_p=0.9,
             max_tokens=self.MAX_NEW_TOKENS,
-            stop_token_ids=[self.tokenizer.eos_token_id]
+            stop_token_ids=[self.tokenizer.eos_token_id],
+            seed=self.seed
         )
 
-        # 3. 执行推理 (vLLM 接管 Batching)
         outputs = self.llm.generate(
             prompts, 
             sampling_params, 
             lora_request=self.lora_request
         )
 
-        # 4. 整理并保存结果
         results = []
         logger.info("Processing outputs...")
         
-        # outputs 的顺序与 inputs (prompts) 顺序严格一致
         for i, output in enumerate(outputs):
             q_text = question[i]
             ref_ans = answer[i]
             ref_sol = solution[i]
             q_idx = question_idx[i]
 
-            # output.outputs 包含 k 个生成结果
             for sample in output.outputs:
                 results.append({
                     "question": q_text,
@@ -770,10 +763,8 @@ class TakeExam:
                     "ref_answer": ref_ans.strip(),
                     "ref_solution": ref_sol.strip(),
                     "question_idx": q_idx,
-                    # "entropy" 字段不需要
                 })
 
-        # ================== 保存 ==================
         os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
         with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
@@ -794,12 +785,14 @@ class TakeExam:
             ) for q in question
         ]
 
+        # ⭐ 修复点 3：传入 self.seed
         sampling_params = SamplingParams(
             n=1,
-            temperature=0.1,
+            temperature=0,
             top_p=0.9,
             max_tokens=self.MAX_NEW_TOKENS,
-            stop_token_ids=[self.tokenizer.eos_token_id]
+            stop_token_ids=[self.tokenizer.eos_token_id],
+            seed=self.seed
         )
 
         outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
@@ -821,16 +814,10 @@ class TakeExam:
         logger.info(f"Standard Exam done! Saved to {self.OUTPUT_JSON_PATH}")
 
 
-    # =====================================================
-    # 辅助函数：此处保留原函数名但暂时未使用 (vLLM 不需要手动 entropy)
-    # =====================================================
     def _compute_sequence_entropy(self, generated_ids, scores):
         return []
 
 
-# =====================================================
-# Main
-# =====================================================
 if __name__ == "__main__":
     from configs import GRPOConfig
     from data_math import Math_500
@@ -843,7 +830,6 @@ if __name__ == "__main__":
         project_root, "CELPO", "configs", "celpo_train.yaml"
     )
 
-    # 尝试加载配置和数据
     try:
         config = GRPOConfig.load_yaml(exam_file_path)
         math_500 = Math_500(config)
@@ -862,12 +848,10 @@ if __name__ == "__main__":
 
         take_exam = TakeExam(
             model_path="/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct",
-            use_lora=True,          # 开启 LoRA 加载
-            adapter_path=LORA_PATH  # 指定路径
+            use_lora=True,          
+            adapter_path=LORA_PATH  
         )
         
-        # 使用 Roll-K 模式
-        # k=8, temperature=0.7
         take_exam.exam_roll_k(
             question, 
             solution, 
