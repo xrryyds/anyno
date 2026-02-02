@@ -323,7 +323,7 @@ def student_first_take_exam_Gsm8k():
 
 
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
-    gsm8k = GSM8K()
+    gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -357,7 +357,7 @@ def gen_IRDCL_dataset(batch_size):
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
-    exam_paper.load_mistakes()
+    exam_paper.load_mistakes(False)
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
     logger.info(f"mistakes size: {len(m_question)}")
@@ -498,10 +498,9 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
 
-    # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
-    # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
+    teacher.teacher_mark_paper_with_save()
+    # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     #####################################################################################################
     
