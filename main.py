@@ -500,8 +500,8 @@ if __name__ == "__main__":
 
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
-    teacher.teacher_mark_paper_with_save()
-    # teacher.check_answers_equivalence()
+    # teacher.teacher_mark_paper_with_save()
+    teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     #####################################################################################################
     
