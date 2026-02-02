@@ -256,7 +256,6 @@ class TeacherCorrecter:
     def check_answers_equivalence(self) -> int:
         print("Loading mistakes for evaluation...")
         self.file.load_mistakes()
-
         total_questions = len(self.file.mistakes)
         equivalent_count = 0
         
@@ -265,26 +264,33 @@ class TeacherCorrecter:
 
         data = self.file.mistakes
         
-        # 这里的 client 应该是你在类初始化时创建的
-        # 如果没有初始化，请确保 self.client = OpenAI(...) 存在
-        self.client = OpenAI(
-            api_key=api_key,
-            base_url="https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
-        )
+        # ================== 1. 初始化错误数据列表 ==================
+        err_question_idx = []
+        err_questions = []
+        err_answers = []
+        err_ref_solutions = []
+        err_ref_answers = []
+        err_entropy = []
+        # ========================================================
+
+        # 确保 client 初始化
+        if not hasattr(self, 'client'):
+            self.client = OpenAI(
+                api_key=api_key,
+                base_url="https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
+            )
+
         for idx, item in enumerate(data):
             question_idx = item.get("question_idx", idx)
             question_text = item.get("question", "")
-            
-            # 获取参考答案
             ref_answer = item.get("ref_answer", "")
+            ref_solution = item.get("ref_solution", "") # 获取解析，保存需要用
+            entropy = item.get("entropy", 0.0)          # 获取 entropy
             
-            # 获取学生答案并尝试提取 boxed 内容 (如果没有 boxed 则用全文)
-            # 注意：Prompt 中说 "ignore \boxed", 意味着我们可以传带 boxed 的，也可以传提取后的
-            # 这里为了稳妥，传入提取后的核心数值，减少干扰
             raw_answer = item.get("answer", "")
             student_answer_core = extract_boxed_content(raw_answer)
 
-            # 1. 构建 Prompt (注意参数名要和 Prompt 里的占位符一致)
+            # 构建 Prompt
             prompt = OREAL_CORRECT_PROMPT.format(
                 question=question_text,
                 gold_answer=ref_answer,
@@ -294,7 +300,7 @@ class TeacherCorrecter:
             is_equivalent = False
             response_content = ""
             
-            # 2. 调用 API (包含重试逻辑)
+            # 调用 API
             max_retries = 5
             retry_count = 0
             
@@ -306,10 +312,8 @@ class TeacherCorrecter:
                             {"role": "system", "content": "You are a helpful assistant evaluating math answers."},
                             {"role": "user", "content": prompt},
                         ],
-                        # 关键修改：Prompt 要求输出 A/B，不是 JSON，所以去掉 json_object 限制
-                        # response_format={"type": "json_object"}, 
-                        temperature=0.0, # 判题通常需要确定性，设为 0
-                        max_tokens=10    # 我们只需要一个字母，限制 token 节省成本
+                        temperature=0.0,
+                        max_tokens=10 
                     )
                     response_content = completion.choices[0].message.content.strip()
                     break
@@ -326,10 +330,8 @@ class TeacherCorrecter:
                     print(f"[Idx {question_idx}] Unexpected error: {e}")
                     break
             
-            # 3. 解析结果 (文本分类模式)
-            # Prompt 要求返回 "A" 或 "B"
+            # 解析结果
             if response_content:
-                # 处理可能出现的标点符号，例如 "A."
                 clean_resp = response_content.upper().replace(".", "")
                 
                 if "A" == clean_resp or "CORRECT" in clean_resp:
@@ -337,34 +339,55 @@ class TeacherCorrecter:
                 elif "B" == clean_resp or "INCORRECT" in clean_resp:
                     is_equivalent = False
                 else:
-                    # 兜底：如果模型话痨了，检查字符串中是否包含明确判定
                     if "CORRECT" in clean_resp and "INCORRECT" not in clean_resp:
                         is_equivalent = True
                     else:
                         print(f"[Idx {question_idx}] Ambiguous response: {response_content}")
 
-            # 4. 统计与记录
+            # 统计与记录
             if is_equivalent:
                 equivalent_count += 1
                 status = "CORRECT"
             else:
                 status = "WRONG"
+                # ================== 2. 如果错了，收集数据 ==================
+                err_question_idx.append(question_idx)
+                err_questions.append(question_text)
+                err_answers.append(raw_answer)
+                err_ref_solutions.append(ref_solution)
+                err_ref_answers.append(ref_answer)
+                err_entropy.append(entropy)
+                # ========================================================
 
-            # 打印简略日志
-            print(f"Idx {question_idx}: {status} | GPT Says: {response_content} | Ref: {ref_answer}")
+            print(f"Idx {question_idx}: {status} | GPT Says: {response_content}")
 
-            # 可选：将结果回写到 item 中，方便后续保存
-            # item['eval_result'] = status
-
-        # 5. 输出最终统计
+        # 输出最终统计
         print("-" * 30)
         print(f"Evaluation Finished.")
         print(f"Total Questions: {total_questions}")
         print(f"Equivalent (Correct) Answers: {equivalent_count}")
+        print(f"Genuine Mistakes (Saved): {len(err_questions)}")
+        
         if total_questions > 0:
             print(f"Accuracy: {equivalent_count / total_questions * 100:.2f}%")
         
+        # ================== 3. 保存错题 ==================
+        if len(err_questions) > 0:
+            print("Saving verified mistakes to file...")
+            self.file.save_mistakes(
+                err_question_idx, 
+                err_questions, 
+                err_answers, 
+                err_ref_solutions, 
+                err_ref_answers, 
+                err_entropy
+            )
+        else:
+            print("No mistakes found to save!")
+        # ================================================
+
         return equivalent_count
+
 
     
 if __name__ == "__main__":

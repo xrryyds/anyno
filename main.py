@@ -39,10 +39,10 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
-
+model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -300,11 +300,13 @@ def student_first_take_exam_Math500():
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
-    take_exam = TakeExam()
+    take_exam = TakeExam(model_path=model_path)
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
     take_exam.exam(question, solution, answer, question_idx)
+
+
 
 
 def student_first_take_exam_Gsm8k():
@@ -465,8 +467,9 @@ if __name__ == "__main__":
 
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
+    teacher. check_answers_equivalence()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
@@ -485,7 +488,7 @@ if __name__ == "__main__":
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
-    exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
+    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
     #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
