@@ -293,16 +293,10 @@ def single_qusestion(qusetion):
 
 
 def student_first_take_exam_Math500():
-    current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
-    exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
-    config = GRPOConfig.load_yaml(exam_file_path)
-    math_500 = Math_500(config)
-    test_dataset = math_500.get_test_data()
-    train_dataset= math_500.get_train_data()
-    question = test_dataset.problems + train_dataset.problems
-    solution = test_dataset.solutions + train_dataset.solutions
-    answer = test_dataset.answers + train_dataset.answers
+    math_500 = Math_500()
+    question = math_500.problems
+    solution = math_500.solutions
+    answer = math_500.answers
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
