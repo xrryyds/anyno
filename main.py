@@ -490,13 +490,13 @@ if __name__ == "__main__":
     # student_correct()
     # exam_roll_recheck_hints()
     # 3. gen dataset
-    # gen_IRDCL_dataset(16)
-
+    # gen_IRDCL_dataset(8)
+# python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0202_2310")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0202_2359")
     # teacher.teacher_mark_paper_with_save()
     teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0202_2310")
 
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")

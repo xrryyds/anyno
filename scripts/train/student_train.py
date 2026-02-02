@@ -53,7 +53,7 @@ class HintSFTConfig:
     # --- Mode B (Generation) 配置 ---
     # Mode B 权重固定为 1.0
     hint_fixed_weight: float = 1.0 
-    gate_threshold: float = 2.5    
+    gate_threshold: float = 0.8    
     gate_slope: float = 3.0       
     
     # --- Mode A (Anchor) 动态权重衰减配置 ---
@@ -403,12 +403,12 @@ def main():
     # 5. 训练参数
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=20,             
-        per_device_train_batch_size=1,   
+        num_train_epochs=1,             
+        per_device_train_batch_size=4,   
         gradient_accumulation_steps=2,   
         learning_rate=5e-5,
         warmup_ratio=0.1,
-        logging_steps=10,
+        logging_steps=5,
         fp16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
