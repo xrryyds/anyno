@@ -308,7 +308,7 @@ def student_first_take_exam_Math500():
 
 
 def student_first_take_exam_Gsm8k():
-    gsm8k = GSM8K(False)
+    gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -501,7 +501,7 @@ if __name__ == "__main__":
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
     # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
+    # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
     #####################################################################################################
     
