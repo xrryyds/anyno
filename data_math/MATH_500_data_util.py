@@ -6,45 +6,22 @@ from configs import GRPOConfig
 from sklearn.model_selection import train_test_split 
 from .math_dataset import Math_DataSet
 from .math_data_util import Math_data
+from utils import extract_boxed_content
 
 
 logger = logging.getLogger(__name__)
 
 
-class Math_500(Math_data):
-    def __init__(self, config: GRPOConfig):
+class Math_500():
+    def __init__(self):
         dataset_loader = LoadDataset(
             dataset_name='HuggingFaceH4/MATH-500',
             split='test',
             local_path='./datasets/data/MATH-500'
         )
 
-
-        if config.max_samples is not None:
-            total_size = len(dataset_loader)
-            actual_size = min(config.max_samples, total_size)
-            dataset_loader.set_dataset_size(actual_size)
-
-
-
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
             dataset_loader.get_dataset())
-
-
-        # self.gen_prompt(self.problems, max_token=GRPOConfig.thinking_max_tokens)
-        # self.gen_answer()
-        
-        (self.train_problems, self.test_problems,
-         self.train_solutions, self.test_solutions,
-         self.train_answers, self.test_answers) = train_test_split(
-            self.problems, self.solutions, self.answers,
-            test_size=0.2, 
-            random_state=42,  
-            shuffle=True  
-        )
-
-        self.train_data =  Math_DataSet(self.train_problems, self.train_solutions,  self.train_answers)
-        self.test_data = Math_DataSet(self.test_problems, self.test_solutions, self.test_answers)
 
     def extract_data(self, dataset: Dataset) -> tuple[list, list, list, int]:
         problems = []
@@ -71,20 +48,18 @@ class Math_500(Math_data):
             
     
 def main():
-    math_500 = Math_500(config=GRPOConfig)
-    train_data = math_500.get_train_data()
+    math_500 = Math_500()
 
     spilt = "=============================="
 
 
-    print("problems:" + train_data.problems[0])
+    print("problems:" + math_500.problems[0])
     print(spilt)
-    print("train_answer:" + train_data.solutions[0])
+    print("train_solution:" + math_500.solutions[0])
     print(spilt)
-    train_data.enhance_data[0] = "pi = 3.14, the area of a circle is pi*r^2."
-    train_data.gen_enhance_prompt()
+    print("train_answer:" + math_500.answers[0])
+    print(spilt)
 
-    print("enhance_prompt:" + train_data.problems[0])
          
 
 

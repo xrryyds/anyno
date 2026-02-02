@@ -114,6 +114,7 @@ class TeacherCorrecter:
         # 初始化 OpenAI 客户端
         # 建议将 key 放入环境变量 OPENAI_API_KEY 中，或者在这里直接替换字符串
         client = OpenAI(
+            base_url=base_url,
             api_key = api_key,
             # 如果你使用的是国内中转/代理，取消下面这行的注释并填入地址
             # base_url="https://api.openai-proxy.com/v1" 
@@ -135,7 +136,7 @@ class TeacherCorrecter:
                 try:
                     # 调用 GPT-4o
                     completion = client.chat.completions.create(
-                        model="gpt-4o", 
+                        model="app-7c54im-1766977238437488331", 
                         messages=[
                             {"role": "system", "content": "You are a helpful assistant who is good at math."},
                             {"role": "user", "content": prompt},
@@ -251,27 +252,124 @@ class TeacherCorrecter:
         )
 
 
+
+    def check_answers_equivalence(self) -> int:
+        print("Loading mistakes for evaluation...")
+        self.file.load_mistakes()
+
+        total_questions = len(self.file.mistakes)
+        equivalent_count = 0
+        
+        print(f"Total items to check: {total_questions}")
+        print("----- Starting Evaluation (GPT-4o) -----")
+
+        data = self.file.mistakes
+        
+        # 这里的 client 应该是你在类初始化时创建的
+        # 如果没有初始化，请确保 self.client = OpenAI(...) 存在
+        self.client = OpenAI(
+            api_key=api_key,
+            base_url="https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
+        )
+        for idx, item in enumerate(data):
+            question_idx = item.get("question_idx", idx)
+            question_text = item.get("question", "")
+            
+            # 获取参考答案
+            ref_answer = item.get("ref_answer", "")
+            
+            # 获取学生答案并尝试提取 boxed 内容 (如果没有 boxed 则用全文)
+            # 注意：Prompt 中说 "ignore \boxed", 意味着我们可以传带 boxed 的，也可以传提取后的
+            # 这里为了稳妥，传入提取后的核心数值，减少干扰
+            raw_answer = item.get("answer", "")
+            student_answer_core = extract_boxed_content(raw_answer)
+
+            # 1. 构建 Prompt (注意参数名要和 Prompt 里的占位符一致)
+            prompt = OREAL_CORRECT_PROMPT.format(
+                question=question_text,
+                gold_answer=ref_answer,
+                answer=student_answer_core
+            )
+
+            is_equivalent = False
+            response_content = ""
+            
+            # 2. 调用 API (包含重试逻辑)
+            max_retries = 5
+            retry_count = 0
+            
+            while retry_count < max_retries:
+                try:
+                    completion = self.client.chat.completions.create(
+                        model="app-7c54im-1766977238437488331", 
+                        messages=[
+                            {"role": "system", "content": "You are a helpful assistant evaluating math answers."},
+                            {"role": "user", "content": prompt},
+                        ],
+                        # 关键修改：Prompt 要求输出 A/B，不是 JSON，所以去掉 json_object 限制
+                        # response_format={"type": "json_object"}, 
+                        temperature=0.0, # 判题通常需要确定性，设为 0
+                        max_tokens=10    # 我们只需要一个字母，限制 token 节省成本
+                    )
+                    response_content = completion.choices[0].message.content.strip()
+                    break
+                
+                except RateLimitError:
+                    print(f"[Idx {question_idx}] Rate limit reached. Sleeping for 20 seconds...")
+                    time.sleep(20)
+                    retry_count += 1
+                except APIError as e:
+                    print(f"[Idx {question_idx}] OpenAI API Error: {e}. Retrying...")
+                    time.sleep(5)
+                    retry_count += 1
+                except Exception as e:
+                    print(f"[Idx {question_idx}] Unexpected error: {e}")
+                    break
+            
+            # 3. 解析结果 (文本分类模式)
+            # Prompt 要求返回 "A" 或 "B"
+            if response_content:
+                # 处理可能出现的标点符号，例如 "A."
+                clean_resp = response_content.upper().replace(".", "")
+                
+                if "A" == clean_resp or "CORRECT" in clean_resp:
+                    is_equivalent = True
+                elif "B" == clean_resp or "INCORRECT" in clean_resp:
+                    is_equivalent = False
+                else:
+                    # 兜底：如果模型话痨了，检查字符串中是否包含明确判定
+                    if "CORRECT" in clean_resp and "INCORRECT" not in clean_resp:
+                        is_equivalent = True
+                    else:
+                        print(f"[Idx {question_idx}] Ambiguous response: {response_content}")
+
+            # 4. 统计与记录
+            if is_equivalent:
+                equivalent_count += 1
+                status = "CORRECT"
+            else:
+                status = "WRONG"
+
+            # 打印简略日志
+            print(f"Idx {question_idx}: {status} | GPT Says: {response_content} | Ref: {ref_answer}")
+
+            # 可选：将结果回写到 item 中，方便后续保存
+            # item['eval_result'] = status
+
+        # 5. 输出最终统计
+        print("-" * 30)
+        print(f"Evaluation Finished.")
+        print(f"Total Questions: {total_questions}")
+        print(f"Equivalent (Correct) Answers: {equivalent_count}")
+        if total_questions > 0:
+            print(f"Accuracy: {equivalent_count / total_questions * 100:.2f}%")
+        
+        return equivalent_count
+
     
 if __name__ == "__main__":
-    # corrector = TeacherCorrecter()
-    # # corrector.judge_and_gen_hints()
-    # corrector.teacher_mark_paper()
-    client = OpenAI(
-        api_key = api_key,
-        # 如果你使用的是国内中转/代理，取消下面这行的注释并填入地址
-        base_url="https://api.openai-proxy.com/v1" 
-    )
-    completion = client.chat.completions.create(
-        model="gpt-4o", 
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant who is good at math."},
-            {"role": "user", "content": "你好"},
-        ],
-        temperature=0.7, # 适当增加一点随机性，避免过于死板，或设为0保持确定性
-    )
-    response = completion.choices[0].message.content
-    print(response)
-    
+    corrector = TeacherCorrecter()
+    corrector.check_answers_equivalence()
 
 
     
