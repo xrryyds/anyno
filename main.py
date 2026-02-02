@@ -495,7 +495,7 @@ if __name__ == "__main__":
     # 4. check
     # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0202_2310")
     # teacher.teacher_mark_paper_with_save()
-    # teacher.check_answers_equivalence()
+    teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
     # student_take_exam_Gsm8k_test()
