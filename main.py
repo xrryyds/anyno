@@ -442,7 +442,7 @@ def student_take_exam_Gsm8k_grpo_test():
     logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
 
 
-def take_exam_after_EHC(lora_path:str):
+def take_exam_gsm8k_after_EHC(lora_path:str):
     exam_paper_easl = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
     gsm8k = GSM8K()
     question = gsm8k.problems
@@ -456,7 +456,19 @@ def take_exam_after_EHC(lora_path:str):
         question_idx.append(idx)
     exam_paper_easl.exam(question, solution, answer, question_idx)
 
-
+def take_exam_MATH500_after_EHC(lora_path:str):
+    exam_paper_easl = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
+    math_500 = Math_500()
+    question = math_500.problems
+    solution = math_500.solutions
+    answer = math_500.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    exam_paper_easl.exam(question, solution, answer, question_idx)
 
 if __name__ == "__main__":
     # #1. student first take exam
@@ -467,7 +479,7 @@ if __name__ == "__main__":
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    # teacher. check_answers_equivalence()
+    # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
@@ -480,8 +492,11 @@ if __name__ == "__main__":
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
 
-    # take_exam_after_EHC("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
-
+    # 4. check
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0202_2310")
+    # teacher.teacher_mark_paper_with_save()
+    # teacher.check_answers_equivalence()
+    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
