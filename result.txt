@@ -3,6 +3,14 @@ EASL7B              383         230
 EASL7B(hints)       +26         +59
 EASL7B(EHC)         522       239
 
+MATH_500          -pass@1     -pass@8      
+EASL7B             98
+EASL7B(hints)      
+EASL7B(EHC)         
+
+
+
+
 
 
 GSM8K(test 1319)       -pass@1     -pass@8      

@@ -11,20 +11,18 @@ from transformers import (
 )
 from peft import PeftModel
 
-try:
-    from scripts import TakeExam, TeacherCorrecter
-    from utils import (
-        FileIOUtils, 
-        remove_null_hints, 
-        filter_json_by_question_idx, 
-        generate_irdcl_dataset,
-        remove_null_hints
-    )
-    from configs import GRPOConfig
-    from data_math import Math_500, GSM8K
-except ImportError:
-    # 仅为了防止缺少文件时直接报错无法查看代码结构
-    pass
+
+from scripts import TakeExam, TeacherCorrecter
+from utils import (
+    FileIOUtils, 
+    remove_null_hints, 
+    filter_json_by_question_idx, 
+    generate_irdcl_dataset,
+    remove_null_hints
+)
+from configs import GRPOConfig
+from data_math import Math_500, GSM8K
+
 
 # =====================================================
 # Logger Setup
