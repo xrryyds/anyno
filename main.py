@@ -473,9 +473,9 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
-    # student_correct()
+    student_correct()
     # exam_roll_recheck_hints()
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
