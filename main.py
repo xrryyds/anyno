@@ -326,7 +326,7 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
-    answer = gsm8k.answersb
+    answer = gsm8k.answers
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
@@ -336,8 +336,8 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     else:
         take_exam = TakeExam(model_path)
 
-    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
-    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_EHC_TEST
+    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
+    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_EHC_TEST
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -485,7 +485,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
@@ -493,15 +493,16 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0122")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0202_2359")
 
     # student_take_exam_Gsm8k_test()
-    # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
-
-    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
+    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
+    teacher.teacher_mark_paper_with_save()
+    # teacher.check_answers_equivalence()
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0209")
     #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
