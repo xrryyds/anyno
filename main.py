@@ -362,13 +362,17 @@ def gen_IRDCL_dataset(batch_size):
                         0.5)
 
 
-def exam_roll_recheck_mistake():
+def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
     logger.info(f"mistakes size: {len(m_question)}")
 
-    take_exam = TakeExam(model_path=model_path)
+    take_exam = None
+    if use_lora:
+        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+    else:
+        take_exam = TakeExam(model_path)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
@@ -467,8 +471,8 @@ if __name__ == "__main__":
 
 
     # #2. teacher judges
-    teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher = TeacherCorrecter()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
@@ -487,7 +491,7 @@ if __name__ == "__main__":
     # student_take_exam_Gsm8k_test()
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
 
-
+    exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/hint_sft_0201_1955")
     #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"

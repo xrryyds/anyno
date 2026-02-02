@@ -1,6 +1,7 @@
 GSM8K(train)       -pass@1     -pass@8      
 EASL7B              501         230
 EASL7B(hints)       +26         +59
+                    522
 
 
 
