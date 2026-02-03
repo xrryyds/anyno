@@ -307,8 +307,8 @@ def student_first_take_exam_Math500():
 
 
 
-def student_first_take_exam_Gsm8k():
-    gsm8k = GSM8K()
+def student_first_take_exam_Gsm8k(train:bool = True):
+    gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -357,7 +357,7 @@ def gen_IRDCL_dataset(batch_size):
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
-    exam_paper.load_mistakes(False)
+    exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
     logger.info(f"mistakes size: {len(m_question)}")
@@ -473,12 +473,12 @@ def take_exam_MATH500_after_EHC(lora_path:str):
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k()
+    # student_first_take_exam_Gsm8k(False)
 
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
@@ -500,7 +500,7 @@ if __name__ == "__main__":
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
+    # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     #####################################################################################################
     
