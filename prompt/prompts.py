@@ -114,7 +114,8 @@ Provide the student with the necessary "Knowledge Hints" so that, based on their
 1.  **Universal Knowledge Only:** Hints must be provided as **general problem-solving methods, formulas, theorems, or definitions** (e.g., "Recall the formula for the area of a circle: $S = \pi r^2$" or "Use the derivatives of trigonometric functions: $(sin x)' = cos x$").
 2.  **No Specific Calculations:** Do not calculate the result for the specific numbers in the problem. Provide the *tool*, not the *answer*.
 3.  **Targeted:** The hint must directly address the specific step where the student's logic broke down or stopped.
-4.  **Unidentifiable Gap:** If it is impossible to determine if the student lacks specific universal knowledge (e.g., the error is purely a calculation/arithmetic mistake, a typo, the answer is empty/irrelevant, or the reasoning is too unclear to pinpoint a missing theorem), return `null`.
+4.  **Token Limit:** Each individual hint must be strictly limited to **50 tokens maximum**. Keep descriptions concise and focus purely on the core principle.
+5.  **Unidentifiable Gap:** If it is impossible to determine if the student lacks specific universal knowledge (e.g., the error is purely a calculation/arithmetic mistake, a typo, the answer is empty/irrelevant, or the reasoning is too unclear to pinpoint a missing theorem), return `null`.
 
 # Problem:
 {problem}
@@ -127,14 +128,10 @@ Provide the student with the necessary "Knowledge Hints" so that, based on their
 
 **Output Format:**
 
-**Condition A:** If Constraint #4 applies (unable to identify a specific general knowledge gap), output strictly:
+**Condition A:** If Constraint #5 applies (unable to identify a specific general knowledge gap), output strictly:
 `null`
 
 **Condition B:** If a knowledge gap is identified, respond in the following XML format:
-<Logic Gap Analysis>
-[Briefly explain what specific concept or step the student missed.]
-</Logic Gap Analysis>
-
 <hints>
 [Provide the general formula, theorem, or principle. Use LaTeX for math expressions.]
 1. ...
@@ -144,14 +141,11 @@ Provide the student with the necessary "Knowledge Hints" so that, based on their
 **Example:**
 *   **Student's Error:** Calculated probability as $P(A)+P(B)$ but events were not mutually exclusive.
 *   **Your Output:**
-<Logic Gap Analysis>
-The student directly sums the two probabilities but ignores the possibility that these two events may occur simultaneously (i.e., they are not mutually exclusive).
-</Logic Gap Analysis>
-
 <hints>
-1. **Inclusion-Exclusion Principle**: For any two events $A$ and $B$, the formula for the probability of their union is $P(A \cup B) = P(A) + P(B) - P(A \cap B)$.
+1. **Inclusion-Exclusion Principle**: For any two events $A$ and $B$, the probability of their union is $P(A \cup B) = P(A) + P(B) - P(A \cap B)$.
 </hints>
 """
+
 
 
 OREAL_CORRECT_PROMPT = """You are a helpful assistant who evaluates the correctness and quality of models' outputs.

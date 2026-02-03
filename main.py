@@ -506,18 +506,18 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    student_first_take_exam_MATH_ALL(False)
+    # student_first_take_exam_MATH_ALL(False)
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
+    # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
