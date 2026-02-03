@@ -288,7 +288,7 @@ class TeacherCorrecter:
             entropy = item.get("entropy", 0.0)          # 获取 entropy
             
             raw_answer = item.get("answer", "")
-            student_answer_core = raw_answer        
+            student_answer_core = extract_boxed_content(raw_answer)        
 
             # 构建 Prompt
             prompt = OREAL_CORRECT_PROMPT.format(

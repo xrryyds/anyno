@@ -511,7 +511,7 @@ if __name__ == "__main__":
     # #2. teacher judges
     # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    # teacher.check_answers_equivalence()
+    teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
