@@ -21,7 +21,7 @@ from utils import (
     remove_null_hints
 )
 from configs import GRPOConfig
-from data_math import Math_500, GSM8K
+from data_math import Math_500, GSM8K, AIME2024
 
 
 # =====================================================
@@ -322,6 +322,22 @@ def student_first_take_exam_Gsm8k(train:bool = True):
     take_exam.exam(question, solution, answer, question_idx)
 
 
+
+def student_first_take_exam_AIME2024(train:bool = True):
+    data = AIME2024(train=train)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = TakeExam(model_path)
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     gsm8k = GSM8K(False)
     question = gsm8k.problems
@@ -473,12 +489,12 @@ def take_exam_MATH500_after_EHC(lora_path:str):
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k(False)
-
+    # student_first_take_exam_Gsm8k()
+    # student_first_take_exam_AIME2024()
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
@@ -500,8 +516,8 @@ if __name__ == "__main__":
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
     # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
+    # teacher.check_answers_equivalence()
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
     #####################################################################################################
     
     # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
