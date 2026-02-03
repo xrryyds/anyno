@@ -112,7 +112,7 @@ def main():
     # ---------------------------------------------------------
     print("="*20 + " Loading TEST Set " + "="*20)
     try:
-        math_test = Math_All(train=True)
+        math_test = Math_All(train=False)
         split_line = "#" * 20
         print(f"Total Test Data: {math_test.data_len}")
         

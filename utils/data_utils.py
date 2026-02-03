@@ -50,12 +50,36 @@ def extract_reason(text: str) -> Optional[str]:
     return None
 
 def extract_boxed_content(text: str) -> Optional[str]:
-    pattern = r'\\boxed\{(.*?)\}'
-    matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+    """
+    提取 LaTeX 字符串中最后一个 \boxed{...} 里的内容。
+    支持嵌套括号，例如 \boxed{\frac{1}{2}}。
+    """
+    if not text: return ""
     
-    if matches:
-        return matches[-1].strip()
-    return ""
+    # 找到最后一个 \boxed{ 的位置
+    idx = text.rfind("\\boxed{")
+    if idx == -1:
+        return ""
+
+    # 移动索引到 \boxed{ 之后
+    i = idx + 7 
+    content_start = i
+    brace_balance = 0 
+    
+    # 开始遍历字符
+    while i < len(text):
+        char = text[i]
+        
+        if char == '{':
+            brace_balance += 1
+        elif char == '}':
+            if brace_balance == 0:
+                return text[content_start:i].strip()
+            else:
+                brace_balance -= 1
+        
+        i += 1
+    return "" 
 
 def normalize_answer(answer: str) -> str:
     if answer is None: return ""

@@ -22,19 +22,16 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
-# Logger 配置 (模仿参考代码风格)
+# Logger 配置
 # ==========================================
-# 注意：在 main 中会进一步配置 FileHandler 以保存日志到文件
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# 过滤烦人的警告
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
-# 添加上一轮建议的过滤配置，防止 PEFT save config 警告刷屏
 warnings.filterwarnings("ignore", message="Could not find a config file in")
 
 # 假设 prompt 模块
@@ -51,16 +48,15 @@ except ImportError:
 @dataclass
 class HintSFTConfig:
     # --- Mode B (Generation) 配置 ---
-    # Mode B 权重固定为 1.0
     hint_fixed_weight: float = 1.0 
     gate_threshold: float = 0.3   
     gate_slope: float = 3.0       
+
+    # Volume Balance Term: (1-r)/r
+    split_r: float = 0.5
     
-    # --- Mode A (Anchor) 动态权重衰减配置 ---
-    # 随着训练进行，Anchor 的权重从 start 线性衰减到 end
-    # 实验证明：即使降到 0.1，Anchor Loss 依然保持稳定，这是极好的结果
-    anchor_weight_start: float = 1.0
-    anchor_weight_end: float = 0.01
+    # alpha = ((1-r)/r) * (L_gen / beta)
+    beta: float = 0.3 
     
     # 路径配置
     model_path: str = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
@@ -69,7 +65,6 @@ class HintSFTConfig:
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    # 添加 FileHandler 到全局 logger
     file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(file_handler)
@@ -80,7 +75,6 @@ def setup_logging(output_dir):
 # ==========================================
 
 class TrainingMetricsTracker:
-    """用于在内存中累积统计数据，以便按 Epoch 记录"""
     def __init__(self):
         self.reset()
         
@@ -88,18 +82,20 @@ class TrainingMetricsTracker:
         self.total_loss = 0.0
         self.steps = 0
         self.gate_values = []
-        self.anchor_losses = []
+        self.anchor_losses = [] # 记录加权后的 Anchor Loss
         self.mode_b_losses = []
-        self.current_anchor_weight = 0.0 # 记录当前的 anchor 权重
+        self.current_alpha = 0.0 
         self.mode_b_counts = 0
         self.anchor_counts = 0
 
-    def update(self, loss, metadata, debug_info, current_anchor_w):
+    def update(self, loss, metadata, debug_info, current_alpha):
         self.total_loss += loss
         self.steps += 1
-        self.current_anchor_weight = current_anchor_w # 更新当前权重
+        self.current_alpha = current_alpha
         
         for meta, info in zip(metadata, debug_info):
+            if info is None: continue # 应该不会发生，但为了安全
+            
             mode = meta.get("mode")
             if mode == "mode_b_generation":
                 self.mode_b_counts += 1
@@ -117,9 +113,9 @@ class TrainingMetricsTracker:
         return {
             "avg_train_loss": self.total_loss / max(self.steps, 1),
             "avg_gate_value": avg_gate,
-            "avg_anchor_loss": avg_anchor_loss,
+            "avg_anchor_loss_weighted": avg_anchor_loss, # 注意：这是乘了 alpha 后的 loss
             "avg_mode_b_loss": avg_mode_b_loss,
-            "anchor_weight": self.current_anchor_weight, # 记录这一轮结束时的权重
+            "final_alpha": self.current_alpha,
             "sample_counts": {
                 "anchor": self.anchor_counts,
                 "mode_b": self.mode_b_counts
@@ -150,8 +146,6 @@ class FixedModeCollator:
             c = item.get('answer') 
             data_type = item.get('type', 'anchor_data') 
 
-            # --- Logic Branching based on Data Type ---
-            
             if data_type == 'anchor_data':
                 # === Anchor Mode (Pure SFT) ===
                 full_text = GEN_PROMPT.format(question=q) + c 
@@ -211,24 +205,25 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. Sequential Trainer (线性衰减)
+# 4. SIRA Trainer (复现论文算法)
 # ==========================================
 
 class SequentialTrainer(Trainer):
     def __init__(self, hint_config: HintSFTConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
+        # 用于记录平滑的 L_gen，防止某个 micro-batch 没有生成数据导致 Alpha 计算不稳
+        # 初始值设为 beta，保证初始 Alpha = VolumeBalance
+        self.running_gen_loss = self.hint_config.beta 
 
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
-
         train_dataset = self.train_dataset
-        
         return DataLoader(
             train_dataset,
             batch_size=self._train_batch_size,
-            sampler=SequentialSampler(train_dataset), 
+            sampler=SequentialSampler(train_dataset), # 数据已按比例预混
             collate_fn=self.data_collator,
             drop_last=self.args.dataloader_drop_last,
             num_workers=self.args.dataloader_num_workers,
@@ -244,11 +239,11 @@ class SequentialTrainer(Trainer):
         outputs = model(**inputs)
         logits = outputs.get("logits")
         
-        loss, debug_info_list, current_anchor_w = self.adaptive_gating_loss(logits, labels, hint_masks, answer_masks)
+        # 核心算法调用
+        loss, debug_info_list, current_alpha = self.adaptive_gating_loss(logits, labels, hint_masks, answer_masks)
         
-        # 更新全局统计器
         if self.model.training:
-            tracker.update(loss.item(), metadata, debug_info_list, current_anchor_w)
+            tracker.update(loss.item(), metadata, debug_info_list, current_alpha)
             
         return (loss, outputs) if return_outputs else loss
 
@@ -262,55 +257,82 @@ class SequentialTrainer(Trainer):
         token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         token_losses = token_losses.view(shift_labels.shape)
 
-        batch_losses = []
-        debug_info_list = [] 
-        
-        # --- 计算当前的动态 Anchor 权重 ---
-        # 公式: w(t) = start - (t / T) * (start - end)
-        current_step = self.state.global_step
-        max_steps = self.state.max_steps
-        
-        # 防止除零错误 (刚开始训练时 max_steps 可能是 0)
-        if max_steps > 0:
-            progress = min(current_step / max_steps, 1.0)
-        else:
-            progress = 0.0
-            
-        # 线性衰减计算
-        anchor_w = self.hint_config.anchor_weight_start - progress * (self.hint_config.anchor_weight_start - self.hint_config.anchor_weight_end)
+        # 临时存储
+        gen_losses = []     # 存放 Mode B 的 loss Tensor
+        anchor_indices = [] # 存放 Mode A 在 batch 中的下标
+        gen_indices = []    # 存放 Mode B 在 batch 中的下标
+        debug_map = {}      # 存放 debug info，最后按 index 组装
 
+        # --- Step 1: 遍历 Batch，计算 Mode B (Generation) Loss ---
         for i in range(token_losses.size(0)):
-            h_m, a_m = shift_h_masks[i], shift_a_masks[i]
-            h_count, a_count = h_m.sum(), a_m.sum()
+            h_m = shift_h_masks[i]
+            h_count = h_m.sum()
             
             if h_count > 0:
-                # === Mode B (Generation) ===
+                # === Mode B: Knowledge Injection ===
+                gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
                 
-                # Gating Calculation
+                # Gate Calculation: SG[H(h)] (Detach)
                 gate_input = self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
                 gate = torch.sigmoid(gate_input)
                 
+                # Answer Loss
+                a_m = shift_a_masks[i]
+                a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else 0.0
                 
-                # Mode B 权重固定为 1.0 (即 hint_fixed_weight)
-                total_sample_loss = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                # L_gen = L_hint + gate * L_ans
+                l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                gen_losses.append(l_gen)
                 
-                batch_losses.append(total_sample_loss)
-                debug_info_list.append({"gate": gate.item(), "loss_contrib": total_sample_loss.item()})
+                debug_map[i] = {"gate": gate.item(), "loss_contrib": l_gen.item()}
             else:
-                # === Anchor Mode (Pure SFT) ===
-                avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
-                
-                # 应用动态衰减的权重
-                weighted_anchor_loss = anchor_w * avg_a_loss
-                
-                batch_losses.append(weighted_anchor_loss)
-                
-                # 记录原始 loss 供观察，验证它是否保持平稳
-                debug_info_list.append({"gate": 0.0, "loss_contrib": avg_a_loss.item()}) 
+                # === Mode A: Stability Anchor (暂存 Index) ===
+                anchor_indices.append(i)
 
-        return torch.stack(batch_losses).mean(), debug_info_list, anchor_w
+        # --- Step 2: 计算动态 Alpha (Eq. 2) ---
+        if len(gen_losses) > 0:
+            current_gen_loss_tensor = torch.stack(gen_losses).mean()
+            # EMA 更新 running loss (0.9 history + 0.1 current)
+            self.running_gen_loss = 0.9 * self.running_gen_loss + 0.1 * current_gen_loss_tensor.item()
+            scaling_loss = current_gen_loss_tensor.detach() # Detach! Alpha 不回传梯度
+        else:
+            # 极端情况：micro-batch 全是 Anchor，使用历史均值
+            scaling_loss = torch.tensor(self.running_gen_loss, device=logits.device)
+
+        # Alpha = ((1-r)/r) * (L_gen / beta)
+        r = self.hint_config.split_r
+        vol_balance = (1 - r) / r
+        alpha = vol_balance * (scaling_loss / self.hint_config.beta)
+
+        # --- Step 3: 计算 Mode A Loss 并加权，组装最终 Loss ---
+        
+        # 将 Mode B Loss 放入 Map
+        final_losses_map = {}
+        for idx, l_val in zip(gen_indices, gen_losses):
+            final_losses_map[idx] = l_val
+
+        # 处理 Mode A
+        for idx in anchor_indices:
+            a_m = shift_a_masks[idx]
+            a_count = a_m.sum()
+            
+            # L_anchor (Raw)
+            raw_anchor_loss = (token_losses[idx] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
+            
+            # Weighted: alpha * L_anchor
+            weighted_anchor_loss = alpha * raw_anchor_loss
+            final_losses_map[idx] = weighted_anchor_loss
+            
+            # Debug info 记录的是加权后的值，还是原始值？通常记录原始值用于观察，记录加权值用于 Loss
+            debug_map[idx] = {"gate": 0.0, "loss_contrib": weighted_anchor_loss.item()}
+
+        # 按 Batch 顺序还原 Loss 列表
+        batch_loss_list = [final_losses_map[i] for i in range(token_losses.size(0))]
+        debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
+        
+        return torch.stack(batch_loss_list).mean(), debug_info_list, alpha.item()
 
 # ==========================================
 # 5. Callbacks
@@ -331,11 +353,10 @@ class EpochLogCallback(TrainerCallback):
         with open(self.log_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(stats) + "\n")
         
-        # ⭐ Modified to use logger instead of print
-        logger.info(f"[Epoch {state.epoch:.2f} Stats] Loss: {stats['avg_train_loss']:.4f} | "
+        logger.info(f"[Epoch {state.epoch:.2f}] Loss: {stats['avg_train_loss']:.4f} | "
+                    f"Alpha: {stats['final_alpha']:.4f} | " 
                     f"Gate: {stats['avg_gate_value']:.4f} | "
-                    f"AnchorW: {stats['anchor_weight']:.4f} | " 
-                    f"AnchorLoss(Raw): {stats['avg_anchor_loss']:.4f} | "
+                    f"W_AnchorLoss: {stats['avg_anchor_loss_weighted']:.4f} | "
                     f"ModeBLoss: {stats['avg_mode_b_loss']:.4f}")
 
 # ==========================================
@@ -350,34 +371,37 @@ def main():
     model_url = os.path.join(model_dir, "OREAL-7B")
 
     data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
-
     output_base_dir = os.path.join(project_root, "CELPO", "output")
 
     set_seed(42)
     
     # 初始化配置
-    hint_config = HintSFTConfig(model_path=model_url, data_path=data_path, output_base_dir=output_base_dir)
+    hint_config = HintSFTConfig(
+        model_path=model_url, 
+        data_path=data_path, 
+        output_base_dir=output_base_dir,
+        split_r=0.5, # 你的数据混合比例
+        beta=2.0     # 建议值
+    )
     
-    output_dir = f"{hint_config.output_base_dir}/hint_sft_{datetime.now().strftime('%m%d_%H%M')}"
+    output_dir = f"{hint_config.output_base_dir}/sira_sft_{datetime.now().strftime('%m%d_%H%M')}"
     metric_log_file = setup_logging(output_dir)
     
-    # 1. 加载 Tokenizer
+    # 1. Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
     
-    # 2. 加载预处理好的 Dataset
+    # 2. Dataset
     dataset = Dataset.from_json(hint_config.data_path)
     logger.info(f"Loaded dataset from {hint_config.data_path}, size: {len(dataset)}")
 
-    # 3. 加载模型
+    # 3. Model
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path, 
         torch_dtype=torch.float16, 
         device_map="auto", 
         trust_remote_code=True
     )
-    
-    # --- 修复警告的关键代码 ---
-    model.config.use_cache = False  # 禁用 cache 以兼容 gradient checkpointing
+    model.config.use_cache = False  
     
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
     
@@ -391,21 +415,18 @@ def main():
     model = get_peft_model(model, peft_config)
     model.enable_input_require_grads() 
     
-    # ⭐ Modified: Use logger to print trainable parameters manually instead of model.print_trainable_parameters()
     trainable_params, all_param = model.get_nb_trainable_parameters()
-    logger.info(
-        f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}"
-    )
+    logger.info(f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}")
 
-    # 4. 准备 Collator
+    # 4. Collator
     collator = FixedModeCollator(tokenizer)
 
-    # 5. 训练参数
+    # 5. Training Args
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=10,             
-        per_device_train_batch_size=4,   
-        gradient_accumulation_steps=2,   
+        per_device_train_batch_size=4, # micro batch size   
+        gradient_accumulation_steps=2, # total batch size per step = 4*2 = 8 (满足混合要求)
         learning_rate=5e-5,
         warmup_ratio=0.1,
         logging_steps=5,
@@ -420,7 +441,7 @@ def main():
         report_to="none"                 
     )
 
-    # 6. 初始化自定义 Trainer
+    # 6. Trainer
     trainer = SequentialTrainer(
         hint_config=hint_config,
         model=model,
@@ -430,7 +451,7 @@ def main():
         callbacks=[EpochLogCallback(metric_log_file)]
     )
 
-    logger.info("Starting sequential training...")
+    logger.info("Starting SIRA training with dynamic Alpha...")
     trainer.train()
     trainer.save_model(output_dir)
 
