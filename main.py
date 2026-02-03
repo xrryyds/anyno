@@ -506,10 +506,10 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL()
+    student_first_take_exam_MATH_ALL(False)
 
     # #2. teacher judges
-    teacher = TeacherCorrecter()
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
 
