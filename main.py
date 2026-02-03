@@ -21,7 +21,7 @@ from utils import (
     remove_null_hints
 )
 from configs import GRPOConfig
-from data_math import Math_500, GSM8K, AIME2024
+from data_math import Math_500, GSM8K, AIME2024, Math_All
 
 
 # =====================================================
@@ -338,6 +338,21 @@ def student_first_take_exam_AIME2024(train:bool = True):
     take_exam.exam(question, solution, answer, question_idx)
 
 
+def student_first_take_exam_MATH_ALL(train:bool = True):
+    data = Math_All(train=train)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = TakeExam(model_path)
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     gsm8k = GSM8K(False)
     question = gsm8k.problems
@@ -491,6 +506,7 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
+    student_first_take_exam_MATH_ALL()
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -498,7 +514,7 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
