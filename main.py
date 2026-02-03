@@ -473,7 +473,7 @@ def take_exam_MATH500_after_EHC(lora_path:str):
 if __name__ == "__main__":
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k(False)
+    student_first_take_exam_Gsm8k(False)
 
 
     # #2. teacher judges
@@ -485,7 +485,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
@@ -493,13 +493,13 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
 
-    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
-    # teacher.teacher_mark_paper_with_save()
+    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
     #####################################################################################################
