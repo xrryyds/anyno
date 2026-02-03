@@ -20,5 +20,5 @@ EASL7B(hints)           95/1319     33/1319
 
 
 AIME2024        -pass@1     -pass@8      
-EASL7B                  
+EASL7B            27/30     24/30     
 EASL7B(hints)             
