@@ -37,10 +37,10 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
-# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -506,7 +506,7 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    student_first_take_exam_MATH_ALL()
+    # student_first_take_exam_MATH_ALL()
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
