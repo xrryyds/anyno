@@ -23,8 +23,12 @@ EASL7B            28/30     27/30
 EASL7B(hints)             
 
                 
-                   AIME2024                  MATH_ALL (hints 260)     Math_500 
-                  -pass@1     -pass@8       -pass@1     -pass@8       -pass@1     -pass@8   
-OREAL 7B                                     2493/7496   897/7476     167         80
-OREAL (5)                                                             167         90
-                                                                    
+train        MATH(algebra)     
+            -pass@1     -pass@8       
+OREAL 7B    393/1742    163/1742   
+OREAL (5)                                                             
+##############################################
+test         MATH(algebra)     
+            -pass@1     -pass@8       
+OREAL 7B    393/1742    163/1742   
+OREAL (5)                                         
