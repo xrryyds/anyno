@@ -506,10 +506,10 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL()
+    student_first_take_exam_MATH_ALL()
 
     # #2. teacher judges
-    teacher = TeacherCorrecter()
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
@@ -519,12 +519,12 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    # student_correct()
-    exam_roll_recheck_hints()
+    student_correct()
+    # exam_roll_recheck_hints()
 
 
     # 3. gen dataset
-    # gen_IRDCL_dataset(8)
+    gen_IRDCL_dataset(32)
 # python -m scripts.train.student_train
     # 4. check
     # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")

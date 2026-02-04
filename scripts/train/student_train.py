@@ -454,8 +454,7 @@ def main():
     
     # 2. Dataset
     dataset = Dataset.from_json(hint_config.data_path)
-    # [强烈建议] 如果使用 SequentialSampler，请务必先 Shuffle 数据集
-    dataset = dataset.shuffle(seed=42) 
+
     logger.info(f"Loaded dataset from {hint_config.data_path}, size: {len(dataset)}")
 
     # 3. Model
