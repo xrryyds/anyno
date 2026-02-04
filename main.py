@@ -384,7 +384,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 3)
+                        0.5, 1)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -506,15 +506,15 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL(False)
+    # student_first_take_exam_MATH_ALL()
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
-    # teacher.check_answers_equivalence()
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake()
+    # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
@@ -525,10 +525,10 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_0850")
-    # teacher.teacher_mark_paper_with_save()
-    teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
+    take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1206")
+    teacher.teacher_mark_paper_with_save()
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_0821")
+    # teacher.check_answers_equivalence()
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
     # teacher.teacher_mark_paper_with_save()

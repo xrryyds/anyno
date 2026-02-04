@@ -7,7 +7,7 @@ import sys
 # 配置：请修改这里的路径
 # ==========================================
 # 指向你的 epoch_metrics.jsonl 文件路径
-LOG_FILE_PATH = "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131/epoch_metrics.jsonl" 
+LOG_FILE_PATH = "/root/autodl-tmp/CELPO/output/sira_sft_0204_1055/epoch_metrics.jsonl" 
 
 def plot_training_metrics(log_path):
     if not os.path.exists(log_path):

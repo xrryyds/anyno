@@ -34,7 +34,6 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
 warnings.filterwarnings("ignore", message="Could not find a config file in")
 
-# 假设 prompt 模块
 try:
     from prompt import GEN_PROMPT, GEN_HINTS_WIH_ANSWER, GEN_ENHANCE_PROMPT
 except ImportError:
@@ -47,21 +46,13 @@ except ImportError:
 
 @dataclass
 class HintSFTConfig:
-    # --- Mode B (Generation) 配置 ---
     hint_fixed_weight: float = 1.0 
     gate_threshold: float = 0.3   
     gate_slope: float = 3.0       
-
-    # Volume Balance Term: (1-r)/r
     split_r: float = 0.5
-    
-    # alpha = ((1-r)/r) * (L_gen / beta)
-    beta: float = 2 
-    
-    # [NEW] 日志记录频率 (Steps)
+    beta: float = 2  # 保持你设置的 0.8
     metrics_log_interval: int = 8
-
-    # 路径配置
+    
     model_path: str = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
     data_path: str = "/xrr/CELPO/datasets/exam/irdcl_data.json" 
     output_base_dir: str = "/root/autodl-tmp/output"
@@ -71,66 +62,120 @@ def setup_logging(output_dir):
     file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(file_handler)
-    return os.path.join(output_dir, "step_metrics.jsonl") # 改名以反映 step
+    
+    # 返回两个日志路径
+    step_log_path = os.path.join(output_dir, "step_metrics.jsonl")
+    epoch_log_path = os.path.join(output_dir, "epoch_metrics.jsonl")
+    return step_log_path, epoch_log_path
 
 # ==========================================
-# 2. Metrics Tracker (统计追踪器)
+# 2. Metrics Tracker (修改版：支持 Raw Anchor Loss)
 # ==========================================
 
 class TrainingMetricsTracker:
     def __init__(self):
-        self.reset()
+        self.reset_window()
+        self.reset_epoch()
         
-    def reset(self):
-        self.total_loss = 0.0
-        self.steps = 0
-        self.gate_values = []
-        self.anchor_losses = [] # 记录加权后的 Anchor Loss
-        self.mode_b_losses = []
+    def reset_window(self):
+        """重置 Step 窗口统计数据"""
+        self.win_loss = 0.0
+        self.win_steps = 0
+        self.win_gate_values = []
+        self.win_anchor_losses_weighted = [] # 记录加权后的
+        self.win_anchor_losses_raw = []      # [NEW] 记录原始的
+        self.win_mode_b_losses = []
         self.current_alpha = 0.0 
-        self.mode_b_counts = 0
-        self.anchor_counts = 0
+        self.win_counts = {"anchor": 0, "mode_b": 0}
+
+    def reset_epoch(self):
+        """重置 Epoch 全局统计数据"""
+        self.ep_loss = 0.0
+        self.ep_steps = 0
+        self.ep_gate_values = []
+        self.ep_anchor_losses_weighted = []
+        self.ep_anchor_losses_raw = []       # [NEW] 记录原始的
+        self.ep_mode_b_losses = []
+        self.ep_counts = {"anchor": 0, "mode_b": 0}
 
     def update(self, loss, metadata, debug_info, current_alpha):
-        self.total_loss += loss
-        self.steps += 1
         self.current_alpha = current_alpha
+        
+        # 1. 更新 Window 数据
+        self.win_loss += loss
+        self.win_steps += 1
+        
+        # 2. 更新 Epoch 数据
+        self.ep_loss += loss
+        self.ep_steps += 1
         
         for meta, info in zip(metadata, debug_info):
             if info is None: continue 
             
             mode = meta.get("mode")
-            if mode == "mode_b_generation":
-                self.mode_b_counts += 1
-                self.mode_b_losses.append(info["loss_contrib"])
-                self.gate_values.append(info["gate"])
-            elif mode == "pure_sft_anchor":
-                self.anchor_counts += 1
-                self.anchor_losses.append(info["loss_contrib"])
+            gate_val = info.get("gate", 0.0)
+            loss_contrib = info["loss_contrib"] # 这是加权后的 Loss，用于反向传播的那个
 
-    def get_window_stats(self): # 改个名，语义更准确，逻辑不变
-        avg_gate = sum(self.gate_values) / len(self.gate_values) if self.gate_values else 0.0
-        avg_anchor_loss = sum(self.anchor_losses) / len(self.anchor_losses) if self.anchor_losses else 0.0
-        avg_mode_b_loss = sum(self.mode_b_losses) / len(self.mode_b_losses) if self.mode_b_losses else 0.0
+            if mode == "mode_b_generation":
+                # Window
+                self.win_counts["mode_b"] += 1
+                self.win_mode_b_losses.append(loss_contrib)
+                self.win_gate_values.append(gate_val)
+                # Epoch
+                self.ep_counts["mode_b"] += 1
+                self.ep_mode_b_losses.append(loss_contrib)
+                self.ep_gate_values.append(gate_val)
+                
+            elif mode == "pure_sft_anchor":
+                # 获取 Raw Loss (未加权的)
+                raw_loss = info.get("raw_loss", 0.0) 
+
+                # Window
+                self.win_counts["anchor"] += 1
+                self.win_anchor_losses_weighted.append(loss_contrib)
+                self.win_anchor_losses_raw.append(raw_loss) # [NEW]
+                # Epoch
+                self.ep_counts["anchor"] += 1
+                self.ep_anchor_losses_weighted.append(loss_contrib)
+                self.ep_anchor_losses_raw.append(raw_loss) # [NEW]
+
+    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w_losses, anchor_raw_losses, mode_b_losses, counts, alpha):
+        avg_gate = sum(gate_vals) / len(gate_vals) if gate_vals else 0.0
+        avg_anchor_w = sum(anchor_w_losses) / len(anchor_w_losses) if anchor_w_losses else 0.0
+        # [NEW] 计算原始 Loss 的平均值
+        avg_anchor_raw = sum(anchor_raw_losses) / len(anchor_raw_losses) if anchor_raw_losses else 0.0
+        
+        avg_mode_b = sum(mode_b_losses) / len(mode_b_losses) if mode_b_losses else 0.0
         
         return {
-            "avg_train_loss": self.total_loss / max(self.steps, 1),
+            "avg_train_loss": loss_sum / max(steps, 1),
             "avg_gate_value": avg_gate,
-            "avg_anchor_loss_weighted": avg_anchor_loss, 
-            "avg_mode_b_loss": avg_mode_b_loss,
-            "final_alpha": self.current_alpha,
-            "sample_counts": {
-                "anchor": self.anchor_counts,
-                "mode_b": self.mode_b_counts
-            }
+            "avg_anchor_loss_weighted": avg_anchor_w, # 依然保留加权 Loss，便于观察梯度贡献
+            "avg_anchor_loss_raw": avg_anchor_raw,    # [NEW] 这是真实的拟合程度
+            "avg_mode_b_loss": avg_mode_b,
+            "final_alpha": alpha, 
+            "sample_counts": counts
         }
+
+    def get_window_stats(self):
+        return self._calculate_stats(
+            self.win_loss, self.win_steps, self.win_gate_values, 
+            self.win_anchor_losses_weighted, self.win_anchor_losses_raw, 
+            self.win_mode_b_losses, self.win_counts, self.current_alpha
+        )
+
+    def get_epoch_stats(self):
+        return self._calculate_stats(
+            self.ep_loss, self.ep_steps, self.ep_gate_values, 
+            self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, 
+            self.ep_mode_b_losses, self.ep_counts, self.current_alpha
+        )
 
 tracker = TrainingMetricsTracker()
 
 # ==========================================
 # 3. Data Collator (不变)
 # ==========================================
-
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = 1024):
         self.tokenizer = tokenizer
@@ -205,7 +250,7 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. SIRA Trainer (不变)
+# 4. SIRA Trainer (修改 compute_loss 传递 raw loss)
 # ==========================================
 
 class SequentialTrainer(Trainer):
@@ -291,6 +336,9 @@ class SequentialTrainer(Trainer):
         r = self.hint_config.split_r
         vol_balance = (1 - r) / r
         alpha = vol_balance * (scaling_loss / self.hint_config.beta)
+        
+        # 可选：如果想在这里加 alpha 的 Hard Clamp，可以取消下面这行的注释
+        # alpha = max(alpha.item(), 0.1) # 强制最小 0.1
 
         final_losses_map = {}
         for idx, l_val in zip(gen_indices, gen_losses):
@@ -302,46 +350,74 @@ class SequentialTrainer(Trainer):
             raw_anchor_loss = (token_losses[idx] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
             weighted_anchor_loss = alpha * raw_anchor_loss
             final_losses_map[idx] = weighted_anchor_loss
-            debug_map[idx] = {"gate": 0.0, "loss_contrib": weighted_anchor_loss.item()}
+            
+            # [Modify] 记录 raw_loss 供 tracker 使用，loss_contrib 依然是 weighted 的保持梯度计算逻辑不变
+            debug_map[idx] = {
+                "gate": 0.0, 
+                "loss_contrib": weighted_anchor_loss.item(),
+                "raw_loss": raw_anchor_loss.item() 
+            }
 
         batch_loss_list = [final_losses_map[i] for i in range(token_losses.size(0))]
         debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
         
-        return torch.stack(batch_loss_list).mean(), debug_info_list, alpha.item()
+        return torch.stack(batch_loss_list).mean(), debug_info_list, (alpha.item() if isinstance(alpha, torch.Tensor) else alpha)
 
 # ==========================================
-# 5. Callbacks (修改部分)
+# 5. Callbacks
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
     """
-    修改为按 step 记录日志的 Callback
+    按 step 记录日志的 Callback
     """
     def __init__(self, log_file, log_interval):
         self.log_file = log_file
         self.log_interval = log_interval
 
     def on_step_end(self, args, state, control, **kwargs):
-        # 检查是否达到记录步数（且不是第0步）
         if state.global_step > 0 and state.global_step % self.log_interval == 0:
-            stats = tracker.get_window_stats() # 获取当前窗口的统计信息
+            stats = tracker.get_window_stats() 
             stats["epoch"] = state.epoch
             stats["global_step"] = state.global_step
+            stats["timestamp"] = datetime.now().isoformat()
             
-            # 写入文件
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(stats) + "\n")
             
-            # 打印日志
-            logger.info(f"[Step {state.global_step} | Epoch {state.epoch:.2f}] "
-                        f"Loss: {stats['avg_train_loss']:.4f} | "
-                        f"Alpha: {stats['final_alpha']:.4f} | " 
-                        f"Gate: {stats['avg_gate_value']:.4f} | "
-                        f"W_AnchorLoss: {stats['avg_anchor_loss_weighted']:.4f} | "
-                        f"ModeBLoss: {stats['avg_mode_b_loss']:.4f}")
+            # 日志中增加 Raw Anchor Loss 的显示
+            logger.info(f"[Step {state.global_step}] Loss: {stats['avg_train_loss']:.4f} | "
+                        f"RawAnchor: {stats['avg_anchor_loss_raw']:.4f} | " # <--- 看这里
+                        f"ModeB: {stats['avg_mode_b_loss']:.4f}")
             
-            # 重要：记录完后重置 Tracker，准备下一轮统计
-            tracker.reset()
+            tracker.reset_window()
+
+class EpochLogCallback(TrainerCallback):
+    """
+    按 epoch 记录日志的 Callback
+    """
+    def __init__(self, log_file):
+        self.log_file = log_file
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        stats = tracker.get_epoch_stats()
+        stats["epoch"] = state.epoch 
+        stats["global_step"] = state.global_step
+        stats["timestamp"] = datetime.now().isoformat()
+        
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(stats) + "\n")
+            
+        logger.info(f"="*60)
+        logger.info(f"*** EPOCH {state.epoch} FINISHED ***")
+        logger.info(f"  Avg Epoch Loss: {stats['avg_train_loss']:.4f}")
+        logger.info(f"  Avg Gate:       {stats['avg_gate_value']:.4f}")
+        logger.info(f"  Avg ModeB Loss: {stats['avg_mode_b_loss']:.4f}")
+        logger.info(f"  Avg Raw Anchor: {stats['avg_anchor_loss_raw']:.4f}") # <--- 重点关注这个
+        logger.info(f"  Samples: ModeB={stats['sample_counts']['mode_b']}, Anchor={stats['sample_counts']['anchor']}")
+        logger.info(f"="*60)
+        
+        tracker.reset_epoch()
 
 # ==========================================
 # 6. Main Execution
@@ -365,18 +441,21 @@ def main():
         data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=0.5, 
-        beta=2.0,
-        metrics_log_interval=8 # [NEW] 设置每50步打印一次日志
+        beta=0.8, # 保持较小的 Beta
+        metrics_log_interval=8 
     )
     
     output_dir = f"{hint_config.output_base_dir}/sira_sft_{datetime.now().strftime('%m%d_%H%M')}"
-    metric_log_file = setup_logging(output_dir)
+    
+    step_log_file, epoch_log_file = setup_logging(output_dir)
     
     # 1. Tokenizer
     tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
     
     # 2. Dataset
     dataset = Dataset.from_json(hint_config.data_path)
+    # [强烈建议] 如果使用 SequentialSampler，请务必先 Shuffle 数据集
+    dataset = dataset.shuffle(seed=42) 
     logger.info(f"Loaded dataset from {hint_config.data_path}, size: {len(dataset)}")
 
     # 3. Model
@@ -409,12 +488,12 @@ def main():
     # 5. Training Args
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=1,             
+        num_train_epochs=5, # [建议] 降低 Epoch 数，例如 3-5
         per_device_train_batch_size=4,   
         gradient_accumulation_steps=2, 
         learning_rate=5e-5,
         warmup_ratio=0.1,
-        logging_steps=hint_config.metrics_log_interval, # 让 HF 默认进度条也按这个频率显示
+        logging_steps=hint_config.metrics_log_interval, 
         fp16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
@@ -433,11 +512,13 @@ def main():
         args=training_args,
         train_dataset=dataset,
         data_collator=collator,
-        # [NEW] 使用 StepLogCallback 替代 EpochLogCallback
-        callbacks=[StepLogCallback(metric_log_file, hint_config.metrics_log_interval)]
+        callbacks=[
+            StepLogCallback(step_log_file, hint_config.metrics_log_interval),
+            EpochLogCallback(epoch_log_file)
+        ]
     )
 
-    logger.info(f"Starting SIRA training with dynamic Alpha, Logging every {hint_config.metrics_log_interval} steps...")
+    logger.info(f"Starting SIRA training with dynamic Alpha, Logging steps every {hint_config.metrics_log_interval} and every epoch...")
     trainer.train()
     trainer.save_model(output_dir)
 
