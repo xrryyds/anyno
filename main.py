@@ -307,7 +307,7 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="algebra", lora_path:str = None):
+def student_take_exam_Math_sub(train:bool = True, subset:str="counting_and_probability", lora_path:str = None):
     data = Math_Subset(subset=subset,train=train)
     question = data.problems
     solution = data.solutions
@@ -405,18 +405,18 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
 
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
-
+    # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(False)
+    # student_take_exam_Math_sub(True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake()
+    exam_roll_recheck_mistake()
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -432,7 +432,7 @@ if __name__ == "__main__":
     # 4. check
     # student_take_exam_Math_sub(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0205_0108")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     #####################################################################################################
