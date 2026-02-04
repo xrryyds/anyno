@@ -252,8 +252,8 @@ def main():
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
     project_root = os.path.dirname(os.path.dirname(project_root))
-    model_dir = os.path.join(project_root, "CELPO", "model", "Qwen")
-    model_url = os.path.join(model_dir, "Qwen2.5-Math-7B-Instruct")
+    model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
+    model_url = os.path.join(model_dir, "OREAL-7B")
 
     data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "hints.json")
 
