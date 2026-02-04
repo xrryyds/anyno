@@ -525,9 +525,9 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_0850")
-    teacher.teacher_mark_paper_with_save()
-    # teacher.check_answers_equivalence()
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_0850")
+    # teacher.teacher_mark_paper_with_save()
+    teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
