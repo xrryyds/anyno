@@ -188,7 +188,7 @@ def filter_json_by_question_idx(exam_path, hints_exam_result_path):
     
 
 
-def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5):
+def generate_irdcl_dataset_syn(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5):
     """
     # Construct IRDCL training data.
     # Logic: Split the Hints data into chunks, and pair each chunk with randomly sampled Corr data to form a batch.
@@ -272,6 +272,110 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
         json.dump(final_dataset, f, ensure_ascii=False, indent=4)
 
     print(f"Done. Generated {len(final_dataset)} items.")
+    print(f"Saved to {output_path}")
+
+
+
+def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
+    """
+    # Construct IRDCL training data.
+    # Logic: Repeat the generation process for 'epoch' times. 
+    # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
+    """
+    # 计算标准的 batch 分配
+    std_num_anchors = int(batch_size * anchor_k)
+    std_num_hints = batch_size - std_num_anchors
+    
+    if std_num_hints <= 0:
+        raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
+
+    print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
+
+    print("Loading data...")
+    with open(corr_path, 'r', encoding='utf-8') as f:
+        corr_data = json.load(f)
+    
+    with open(adv_hints_path, 'r', encoding='utf-8') as f:
+        adv_data = json.load(f)
+        
+    # with open(disadv_hints_path, 'r', encoding='utf-8') as f:
+    #     disadv_data = json.load(f)
+
+    # combined_hints_data = adv_data + disadv_data
+    combined_hints_data = adv_data
+    total_hints = len(combined_hints_data)
+    print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
+
+    final_dataset = []
+
+    # --- 开始 Epoch 循环 ---
+    for ep in range(epoch):
+        print(f"Processing Epoch {ep + 1}/{epoch}...")
+        
+        # 每个 epoch 开始前打乱 hints 数据的顺序
+        # 这样每个 epoch 的 batch 组合都会不同
+        random.shuffle(combined_hints_data)
+
+        # 遍历 hints 数据生成 batch
+        for i in range(0, total_hints, std_num_hints):
+            current_batch = []
+            
+            # 切片获取当前的 hints 块
+            hints_chunk = combined_hints_data[i : i + std_num_hints]
+            actual_hint_count = len(hints_chunk)
+            
+            # 添加 hints 数据
+            for item in hints_chunk:
+                entry = {
+                    "question_idx": item.get("question_idx"),
+                    "question": item.get("question"),
+                    "answer": item.get("student_answer"),
+                    "ref_answer": item.get("ref_answer"),
+                    "ref_solution": item.get("ref_solution"),
+                    "hints": item.get("hints"),
+                    "type": "hint_data" 
+                }
+                current_batch.append(entry)
+            
+            # 计算需要补充的 anchor 数量
+            # 如果是最后一个 batch，hints 数量可能少于 std_num_hints，所以按比例重新计算
+            if anchor_k >= 1.0 or anchor_k <= 0.0:
+                needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
+            else:
+                ratio_factor = anchor_k / (1.0 - anchor_k)
+                needed_anchor_count = int(round(actual_hint_count * ratio_factor))
+            
+            # 随机抽取 anchor 数据 (随机性体现在这里，每个epoch抽到的都可能不同)
+            anchors_chunk = random.choices(corr_data, k=needed_anchor_count)
+
+            # 添加 anchor 数据
+            for item in anchors_chunk:
+                entry = {
+                    "question_idx": item.get("question_idx"),
+                    "question": item.get("question"),
+                    "answer": item.get("answer"),
+                    "ref_answer": item.get("ref_answer"),
+                    "ref_solution": item.get("ref_solution"),
+                    "hints": None,
+                    "type": "anchor_data"
+                }
+                current_batch.append(entry)
+            
+            # 打乱当前 batch 内部顺序
+            random.shuffle(current_batch)
+            
+            # 将当前 batch 加入总数据集
+            final_dataset.extend(current_batch)
+
+    # --- 保存结果 ---
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(final_dataset, f, ensure_ascii=False, indent=4)
+
+    print(f"Done. Generated total {len(final_dataset)} items over {epoch} epochs.")
     print(f"Saved to {output_path}")
 
 

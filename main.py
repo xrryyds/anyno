@@ -18,7 +18,7 @@ from utils import (
     remove_null_hints, 
     filter_json_by_question_idx, 
     generate_irdcl_dataset,
-    remove_null_hints
+    remove_null_hints,
 )
 from configs import GRPOConfig
 from data_math import Math_500, GSM8K, AIME2024, Math_All
@@ -384,7 +384,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5)
+                        0.5, 3)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -517,7 +517,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
@@ -525,8 +525,8 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
-    # teacher.teacher_mark_paper_with_save()
+    take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_0850")
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_0351")
 
