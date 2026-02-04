@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
-model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -503,18 +503,20 @@ def take_exam_MATH500_after_EHC(lora_path:str):
     exam_paper_easl.exam(question, solution, answer, question_idx)
 
 if __name__ == "__main__":
+    #CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
+
     # #1. student first take exam
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL(False)
+    student_first_take_exam_MATH_ALL(False)
 
     # #2. teacher judges
-    teacher = TeacherCorrecter()
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake()
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
