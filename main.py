@@ -520,14 +520,16 @@ if __name__ == "__main__":
     # teacher.teacher_hints() 
 
     # student_correct()
-    # exam_roll_recheck_hints()
+    exam_roll_recheck_hints()
+
+
     # 3. gen dataset
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
     # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
     # teacher.teacher_mark_paper_with_save()
-    exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
     # teacher.check_answers_equivalence()
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
