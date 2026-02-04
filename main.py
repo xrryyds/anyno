@@ -40,8 +40,8 @@ logger = logging.getLogger(__name__)
 exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()

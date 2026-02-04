@@ -25,7 +25,7 @@ EASL7B(hints)
                 
 train        MATH(algebra)     
             -pass@1     -pass@8       
-OREAL 7B    393/1742    163/1742   
+OREAL 7B    393/1742    163(134)/1742   
 OREAL (5)                                                             
 ##############################################
 test         MATH(algebra)     
