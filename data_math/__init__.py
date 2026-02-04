@@ -5,6 +5,7 @@ from .math_dataset import Math_DataSet
 from .math_data_util import Math_data
 from .AIME_2024_data_util import AIME2024
 from .MATH_util import Math_All
+from .MATH_Sub_data_util import Math_Subset
 
-__all__ = ["LoadDataset", "Math_500","GSM8K", "Math_DataSet", "Math_data", "AIME2024", "Math_All"]
+__all__ = ["LoadDataset", "Math_500","GSM8K", "Math_DataSet", "Math_data", "AIME2024", "Math_All", "Math_Subset"]
 

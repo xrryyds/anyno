@@ -22,7 +22,7 @@ from utils import (
     remove_null_hints,
 )
 from configs import GRPOConfig
-from data_math import Math_500, GSM8K, AIME2024, Math_All
+from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset
 
 
 # =====================================================
@@ -291,7 +291,7 @@ def single_qusestion(qusetion):
     return student_exam.answer_single_question(qusetion)
 
 
-def student_first_take_exam_Math500():
+def student_take_exam_Math500():
     math_500 = Math_500()
     question = math_500.problems
     solution = math_500.solutions
@@ -307,8 +307,27 @@ def student_first_take_exam_Math500():
 
 
 
+def student_take_exam_Math_sub(train:bool = True, subset:str="algebra", lora_path:str = None):
+    data = Math_Subset(subset=subset,train=train)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = None
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+    else:
+        take_exam = TakeExam(model_path)
 
-def student_first_take_exam_Gsm8k(train:bool = True):
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
+def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -316,66 +335,16 @@ def student_first_take_exam_Gsm8k(train:bool = True):
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
-    take_exam = TakeExam(model_path)
-    question_idx = []
-    for idx in range(len(question)):
-        question_idx.append(idx)
-    take_exam.exam(question, solution, answer, question_idx)
-
-
-
-def student_first_take_exam_AIME2024(train:bool = True):
-    data = AIME2024(train=train)
-    question = data.problems
-    solution = data.solutions
-    answer = data.answers
-    
-    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
-    take_exam = TakeExam(model_path)
-    question_idx = []
-    for idx in range(len(question)):
-        question_idx.append(idx)
-    take_exam.exam(question, solution, answer, question_idx)
-
-
-def student_first_take_exam_MATH_ALL(train:bool = True):
-    data = Math_All(train=train)
-    question = data.problems
-    solution = data.solutions
-    answer = data.answers
-    
-    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
-    take_exam = TakeExam(model_path)
-    question_idx = []
-    for idx in range(len(question)):
-        question_idx.append(idx)
-    take_exam.exam(question, solution, answer, question_idx)
-
-
-def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
-    gsm8k = GSM8K(False)
-    question = gsm8k.problems
-    solution = gsm8k.solutions
-    answer = gsm8k.answers
-    
-    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
     take_exam = None
-    if use_lora:
-        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
     else:
         take_exam = TakeExam(model_path)
 
-    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
-    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_EHC_TEST
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
-    
     take_exam.exam(question, solution, answer, question_idx)
-
 
 
 def gen_IRDCL_dataset(batch_size):
@@ -434,82 +403,13 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
         err_entropy
     )
 
-
-def student_take_exam_Gsm8k_grpo_test():
-    # 1. 准备数据
-    logger.info("Loading Dataset...")
-    gsm8k = GSM8K(False) # 确保这里的 GSM8K 类能正确引入
-    question = gsm8k.problems
-    solution = gsm8k.solutions
-    answer = gsm8k.answers
-    
-    logger.info(f"Dataset Loaded: {len(question)} samples.")
-
-    logger.info(f"Loading Base Model from {BASE_MODEL_PATH}...")
-    take_exam = TakeExam(model_path=BASE_MODEL_PATH)
-
-    # 3. 【核心步骤】加载 GRPO LoRA Adapter
-    # 这步操作不会破坏 TakeExam 的其他功能，只是在运行时替换了内部的 model
-    logger.info(f"Loading GRPO Adapter from {GRPO_ADAPTER_PATH}...")
-    try:
-        take_exam.model = PeftModel.from_pretrained(
-            take_exam.model, 
-            GRPO_ADAPTER_PATH,
-            torch_dtype=torch.float16
-        )
-        take_exam.model.eval() # 切换到评估模式
-        logger.info("Successfully loaded GRPO adapter!")
-    except Exception as e:
-        logger.error(f"Error loading adapter: {e}")
-        logger.error("Ensure the path exists and contains adapter_config.json and adapter_model.safetensors")
-        return
-
-    # 4. 生成 Question ID (原有逻辑)
-    question_idx = list(range(len(question)))
-
-    # 5. 运行测试
-    logger.info("Starting Inference...")
-    accuracy = take_exam.exam_test(question, solution, answer, question_idx)
-    
-    logger.info(f"Final GRPO Model Accuracy: {accuracy:.2%}")
-
-
-def take_exam_gsm8k_after_EHC(lora_path:str):
-    exam_paper_easl = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
-    gsm8k = GSM8K()
-    question = gsm8k.problems
-    solution = gsm8k.solutions
-    answer = gsm8k.answers
-    
-    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
-    question_idx = []
-    for idx in range(len(question)):
-        question_idx.append(idx)
-    exam_paper_easl.exam(question, solution, answer, question_idx)
-
-def take_exam_MATH500_after_EHC(lora_path:str):
-    exam_paper_easl = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
-    math_500 = Math_500()
-    question = math_500.problems
-    solution = math_500.solutions
-    answer = math_500.answers
-    
-    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
-    question_idx = []
-    for idx in range(len(question)):
-        question_idx.append(idx)
-    exam_paper_easl.exam(question, solution, answer, question_idx)
-
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
 
     # #1. student first take exam
-    # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k(False)
-    # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL(False)
+    # student_take_exam_Math500()
+    # student_take_exam_Gsm8k(False)
+    student_take_exam_Math_sub(True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -530,12 +430,7 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # take_exam_MATH500_after_EHC("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    # teacher.check_answers_equivalence()
-
-    # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
+    student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
