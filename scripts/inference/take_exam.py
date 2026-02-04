@@ -6,8 +6,8 @@ import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, set_seed
 
-# from vllm import LLM, SamplingParams
-# from vllm.lora.request import LoRARequest
+from vllm import LLM, SamplingParams
+from vllm.lora.request import LoRARequest
 
 # =====================================================
 # Logger

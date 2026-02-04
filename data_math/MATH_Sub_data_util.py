@@ -16,18 +16,18 @@ class Math_Subset():
         
         if train:
             target_split = 'train'
-            local_path = os.path.join('./datasets/data/MATH/train', subset)
+            local_path = os.path.join('./datasets/data/MATH/train')
         else:
             target_split = 'test'
-            local_path = os.path.join('./datasets/data/MATH/test', subset)
+            local_path = os.path.join('./datasets/data/MATH/test')
 
-        logger.info(f"Loading MATH subset: {subset} (Split: {target_split})...")
+        logger.info(f"Loading MATH subset")
 
         dataset_loader = LoadDataset(
-            dataset_name='HuggingFaceH4/MATH',
+            dataset_name='qwedsacf/competition_math',
             split=target_split,
             local_path=local_path,
-            config=subset
+            # config=subset
         )
 
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
@@ -64,10 +64,6 @@ class Math_Subset():
             )
 
 def main():
-    # 示例：只加载 number_theory 的测试集
-    subset_name = "algebra"
-    print(f"Loading subset: {subset_name}...")
-    
     math_subset = Math_Subset(subset=subset_name, train=False)
 
     if math_subset.data_len == 0:

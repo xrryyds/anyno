@@ -38,10 +38,10 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    student_take_exam_Math_sub(False)
+    # student_take_exam_Math_sub(False)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
@@ -430,8 +430,9 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0205_0108")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     #####################################################################################################
