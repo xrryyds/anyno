@@ -355,7 +355,7 @@ def student_first_take_exam_MATH_ALL(train:bool = True):
 
 
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
-    gsm8k = GSM8K()
+    gsm8k = GSM8K(False)
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -507,7 +507,7 @@ if __name__ == "__main__":
 
     # #1. student first take exam
     # student_first_take_exam_Math500()
-    # student_first_take_exam_Gsm8k()
+    # student_first_take_exam_Gsm8k(False)
     # student_first_take_exam_AIME2024()
     # student_first_take_exam_MATH_ALL(False)
 
@@ -538,5 +538,5 @@ if __name__ == "__main__":
     # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
+    exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     #####################################################################################################
