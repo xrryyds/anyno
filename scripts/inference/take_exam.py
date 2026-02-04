@@ -1,4 +1,5 @@
 import os
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 import json
 import logging
 import torch
