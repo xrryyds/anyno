@@ -487,8 +487,8 @@ def main():
     # 5. Training Args
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=5, # [建议] 降低 Epoch 数，例如 3-5
-        per_device_train_batch_size=4,   
+        num_train_epochs=1, # [建议] 降低 Epoch 数，例如 3-5
+        per_device_train_batch_size=8,   
         gradient_accumulation_steps=2, 
         learning_rate=5e-5,
         warmup_ratio=0.1,

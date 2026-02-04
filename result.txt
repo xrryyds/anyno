@@ -12,22 +12,15 @@ MATH_500          -pass@1     -pass@8
 EASL7B             98/500    62/500
 EASL7B(hints)      
 EASL7B(EHC 3)      94/500    58/239
-                   148       59
-
-
-GSM8K(test 1319)       -pass@1     -pass@8      
-EASL7B                  129/1319    34/1319        
-EASL7B(hints)           95/1319     33/1319
-
+        
 
 AIME2024        -pass@1     -pass@8      
 EASL7B            27/30     24/30     
 EASL7B(hints)             
 
-
-
                 
                    AIME2024                  MATH_ALL (hints 260)     Math_500 
                   -pass@1     -pass@8       -pass@1     -pass@8       -pass@1     -pass@8   
 OREAL 7B                                     2493/7496   897/7476     167         80
-OREAL (hints)             
+OREAL (5)                                                             167
+                                                                    
