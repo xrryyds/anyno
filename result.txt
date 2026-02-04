@@ -22,5 +22,5 @@ EASL7B(hints)
                    AIME2024                  MATH_ALL (hints 260)     Math_500 
                   -pass@1     -pass@8       -pass@1     -pass@8       -pass@1     -pass@8   
 OREAL 7B                                     2493/7496   897/7476     167         80
-OREAL (5)                                                             167
+OREAL (5)                                                             167         90
                                                                     

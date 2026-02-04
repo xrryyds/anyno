@@ -4,6 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
+from scripts import run_sira_training
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -506,14 +507,14 @@ if __name__ == "__main__":
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    # student_first_take_exam_MATH_ALL()
+    # student_first_take_exam_MATH_ALL(False)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake()
+    exam_roll_recheck_mistake()
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -525,11 +526,11 @@ if __name__ == "__main__":
 
     # 3. gen dataset
     # gen_IRDCL_dataset(32)
-# python -m scripts.train.student_train
+    run_sira_training(model_path=model_path)
     # 4. check
-    take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1832")
-    teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1832")
+    # teacher.teacher_mark_paper_with_save()
+    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1832")
     # teacher.check_answers_equivalence()
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")

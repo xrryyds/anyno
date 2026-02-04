@@ -1,4 +1,5 @@
 import os
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 import sys
 import json
 import random
@@ -50,11 +51,11 @@ class HintSFTConfig:
     gate_threshold: float = 0.3   
     gate_slope: float = 3.0       
     split_r: float = 0.5
-    beta: float = 2  # 保持你设置的 0.8
+    beta: float = 2  # 保持你设置的 0.8 (注意：Trainer 初始化时通过参数传入了 0.8，这里默认值只是占位)
     metrics_log_interval: int = 8
     
-    model_path: str = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-    data_path: str = "/xrr/CELPO/datasets/exam/irdcl_data.json" 
+    model_path: str = "" # 将在运行时动态设置
+    data_path: str = ""  # 将在运行时动态设置
     output_base_dir: str = "/root/autodl-tmp/output"
 
 def setup_logging(output_dir):
@@ -69,7 +70,7 @@ def setup_logging(output_dir):
     return step_log_path, epoch_log_path
 
 # ==========================================
-# 2. Metrics Tracker (修改版：支持 Raw Anchor Loss)
+# 2. Metrics Tracker
 # ==========================================
 
 class TrainingMetricsTracker:
@@ -82,8 +83,8 @@ class TrainingMetricsTracker:
         self.win_loss = 0.0
         self.win_steps = 0
         self.win_gate_values = []
-        self.win_anchor_losses_weighted = [] # 记录加权后的
-        self.win_anchor_losses_raw = []      # [NEW] 记录原始的
+        self.win_anchor_losses_weighted = [] 
+        self.win_anchor_losses_raw = []      
         self.win_mode_b_losses = []
         self.current_alpha = 0.0 
         self.win_counts = {"anchor": 0, "mode_b": 0}
@@ -94,7 +95,7 @@ class TrainingMetricsTracker:
         self.ep_steps = 0
         self.ep_gate_values = []
         self.ep_anchor_losses_weighted = []
-        self.ep_anchor_losses_raw = []       # [NEW] 记录原始的
+        self.ep_anchor_losses_raw = []       
         self.ep_mode_b_losses = []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
 
@@ -114,7 +115,7 @@ class TrainingMetricsTracker:
             
             mode = meta.get("mode")
             gate_val = info.get("gate", 0.0)
-            loss_contrib = info["loss_contrib"] # 这是加权后的 Loss，用于反向传播的那个
+            loss_contrib = info["loss_contrib"] 
 
             if mode == "mode_b_generation":
                 # Window
@@ -133,25 +134,23 @@ class TrainingMetricsTracker:
                 # Window
                 self.win_counts["anchor"] += 1
                 self.win_anchor_losses_weighted.append(loss_contrib)
-                self.win_anchor_losses_raw.append(raw_loss) # [NEW]
+                self.win_anchor_losses_raw.append(raw_loss) 
                 # Epoch
                 self.ep_counts["anchor"] += 1
                 self.ep_anchor_losses_weighted.append(loss_contrib)
-                self.ep_anchor_losses_raw.append(raw_loss) # [NEW]
+                self.ep_anchor_losses_raw.append(raw_loss) 
 
     def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w_losses, anchor_raw_losses, mode_b_losses, counts, alpha):
         avg_gate = sum(gate_vals) / len(gate_vals) if gate_vals else 0.0
         avg_anchor_w = sum(anchor_w_losses) / len(anchor_w_losses) if anchor_w_losses else 0.0
-        # [NEW] 计算原始 Loss 的平均值
         avg_anchor_raw = sum(anchor_raw_losses) / len(anchor_raw_losses) if anchor_raw_losses else 0.0
-        
         avg_mode_b = sum(mode_b_losses) / len(mode_b_losses) if mode_b_losses else 0.0
         
         return {
             "avg_train_loss": loss_sum / max(steps, 1),
             "avg_gate_value": avg_gate,
-            "avg_anchor_loss_weighted": avg_anchor_w, # 依然保留加权 Loss，便于观察梯度贡献
-            "avg_anchor_loss_raw": avg_anchor_raw,    # [NEW] 这是真实的拟合程度
+            "avg_anchor_loss_weighted": avg_anchor_w, 
+            "avg_anchor_loss_raw": avg_anchor_raw,    
             "avg_mode_b_loss": avg_mode_b,
             "final_alpha": alpha, 
             "sample_counts": counts
@@ -174,7 +173,7 @@ class TrainingMetricsTracker:
 tracker = TrainingMetricsTracker()
 
 # ==========================================
-# 3. Data Collator (不变)
+# 3. Data Collator
 # ==========================================
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = 1024):
@@ -250,7 +249,7 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. SIRA Trainer (修改 compute_loss 传递 raw loss)
+# 4. SIRA Trainer
 # ==========================================
 
 class SequentialTrainer(Trainer):
@@ -337,9 +336,6 @@ class SequentialTrainer(Trainer):
         vol_balance = (1 - r) / r
         alpha = vol_balance * (scaling_loss / self.hint_config.beta)
         
-        # 可选：如果想在这里加 alpha 的 Hard Clamp，可以取消下面这行的注释
-        # alpha = max(alpha.item(), 0.1) # 强制最小 0.1
-
         final_losses_map = {}
         for idx, l_val in zip(gen_indices, gen_losses):
             final_losses_map[idx] = l_val
@@ -351,7 +347,6 @@ class SequentialTrainer(Trainer):
             weighted_anchor_loss = alpha * raw_anchor_loss
             final_losses_map[idx] = weighted_anchor_loss
             
-            # [Modify] 记录 raw_loss 供 tracker 使用，loss_contrib 依然是 weighted 的保持梯度计算逻辑不变
             debug_map[idx] = {
                 "gate": 0.0, 
                 "loss_contrib": weighted_anchor_loss.item(),
@@ -368,9 +363,6 @@ class SequentialTrainer(Trainer):
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
-    """
-    按 step 记录日志的 Callback
-    """
     def __init__(self, log_file, log_interval):
         self.log_file = log_file
         self.log_interval = log_interval
@@ -385,17 +377,13 @@ class StepLogCallback(TrainerCallback):
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(stats) + "\n")
             
-            # 日志中增加 Raw Anchor Loss 的显示
             logger.info(f"[Step {state.global_step}] Loss: {stats['avg_train_loss']:.4f} | "
-                        f"RawAnchor: {stats['avg_anchor_loss_raw']:.4f} | " # <--- 看这里
+                        f"RawAnchor: {stats['avg_anchor_loss_raw']:.4f} | " 
                         f"ModeB: {stats['avg_mode_b_loss']:.4f}")
             
             tracker.reset_window()
 
 class EpochLogCallback(TrainerCallback):
-    """
-    按 epoch 记录日志的 Callback
-    """
     def __init__(self, log_file):
         self.log_file = log_file
 
@@ -413,51 +401,80 @@ class EpochLogCallback(TrainerCallback):
         logger.info(f"  Avg Epoch Loss: {stats['avg_train_loss']:.4f}")
         logger.info(f"  Avg Gate:       {stats['avg_gate_value']:.4f}")
         logger.info(f"  Avg ModeB Loss: {stats['avg_mode_b_loss']:.4f}")
-        logger.info(f"  Avg Raw Anchor: {stats['avg_anchor_loss_raw']:.4f}") # <--- 重点关注这个
+        logger.info(f"  Avg Raw Anchor: {stats['avg_anchor_loss_raw']:.4f}") 
         logger.info(f"  Samples: ModeB={stats['sample_counts']['mode_b']}, Anchor={stats['sample_counts']['anchor']}")
         logger.info(f"="*60)
         
         tracker.reset_epoch()
 
 # ==========================================
-# 6. Main Execution
+# 6. Main Execution Function
 # ==========================================
 
-def main():
+def run_sira_training(
+    model_path: str,
+    data_path: Optional[str] = None,
+    output_base_dir: Optional[str] = None
+):
+    """
+    执行 SIRA 训练的主函数
+    
+    Args:
+        model_path (str): 模型所在的目录路径
+        data_path (Optional[str]): 训练数据集的 JSON 路径。如果不填，将使用默认相对路径。
+        output_base_dir (Optional[str]): 输出基准目录。如果不填，将使用默认相对路径。
+    """
+    
+    # --- 1. 路径自动推断 (如果未提供) ---
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
-    project_root = os.path.dirname(os.path.dirname(project_root))
-    model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
-    model_url = os.path.join(model_dir, "OREAL-7B")
+    project_root = os.path.dirname(os.path.dirname(project_root)) # 回退到 CELPO 根目录之上
 
-    data_path =  os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
-    output_base_dir = os.path.join(project_root, "CELPO", "output")
-
+    if data_path is None:
+        data_path = os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
+    
+    if output_base_dir is None:
+        output_base_dir = os.path.join(project_root, "CELPO", "output")
+        
     set_seed(42)
     
-    # 初始化配置
+    # --- 2. 状态重置 ---
+    # 由于 tracker 是全局变量，为了支持多次调用或外部调用，需重置状态
+    tracker.reset_window()
+    tracker.reset_epoch()
+
+    # --- 3. 初始化配置 ---
     hint_config = HintSFTConfig(
-        model_path=model_url, 
+        model_path=model_path, 
         data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=0.5, 
-        beta=0.8, # 保持较小的 Beta
+        beta=0.8, 
         metrics_log_interval=8 
     )
     
     output_dir = f"{hint_config.output_base_dir}/sira_sft_{datetime.now().strftime('%m%d_%H%M')}"
-    
     step_log_file, epoch_log_file = setup_logging(output_dir)
     
-    # 1. Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
-    
-    # 2. Dataset
+    logger.info(f"Model Path: {hint_config.model_path}")
+    logger.info(f"Data Path: {hint_config.data_path}")
+    logger.info(f"Output Dir: {output_dir}")
+
+    # --- 4. 准备 Tokenizer ---
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
+    except Exception as e:
+        logger.error(f"Failed to load tokenizer from {hint_config.model_path}: {e}")
+        raise e
+
+    # --- 5. 准备 Dataset ---
+    if not os.path.exists(hint_config.data_path):
+        raise FileNotFoundError(f"Dataset not found at {hint_config.data_path}")
+        
     dataset = Dataset.from_json(hint_config.data_path)
+    logger.info(f"Loaded dataset size: {len(dataset)}")
 
-    logger.info(f"Loaded dataset from {hint_config.data_path}, size: {len(dataset)}")
-
-    # 3. Model
+    # --- 6. 准备 Model ---
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path, 
         torch_dtype=torch.float16, 
@@ -481,13 +498,13 @@ def main():
     trainable_params, all_param = model.get_nb_trainable_parameters()
     logger.info(f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}")
 
-    # 4. Collator
+    # --- 7. Collator ---
     collator = FixedModeCollator(tokenizer)
 
-    # 5. Training Args
+    # --- 8. Training Args ---
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=1, # [建议] 降低 Epoch 数，例如 3-5
+        num_train_epochs=1, 
         per_device_train_batch_size=8,   
         gradient_accumulation_steps=2, 
         learning_rate=5e-5,
@@ -504,7 +521,7 @@ def main():
         report_to="none"                 
     )
 
-    # 6. Trainer
+    # --- 9. Trainer ---
     trainer = SequentialTrainer(
         hint_config=hint_config,
         model=model,
@@ -517,9 +534,16 @@ def main():
         ]
     )
 
-    logger.info(f"Starting SIRA training with dynamic Alpha, Logging steps every {hint_config.metrics_log_interval} and every epoch...")
+    logger.info(f"Starting SIRA training with dynamic Alpha...")
     trainer.train()
     trainer.save_model(output_dir)
+    logger.info(f"Training finished. Model saved to {output_dir}")
 
 if __name__ == "__main__":
-    main()
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+    project_root = os.path.dirname(os.path.dirname(project_root))
+    default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
+    default_model_url = os.path.join(default_model_dir, "OREAL-7B")
+
+    run_sira_training(model_path=default_model_url)
