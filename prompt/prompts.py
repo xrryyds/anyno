@@ -78,18 +78,14 @@ JUDGER_GEN_REASON_PROMPT= """
 
 #############################################################################################
 # Mode A: 输入包含 Hint
-GEN_ENHANCE_PROMPT = """Answer the questions.
-# Question:
-{question}
+GEN_ENHANCE_PROMPT = """{question}
 # known:
 {hints}
 # Answer:
 """
 
 # Mode B: 输入只包含 Question
-GEN_PROMPT = """Answer the questions.
-# Question:
-{question}
+GEN_PROMPT = """{question}
 """
 
 # Mode B: 模型的输出目标 (Hint + Answer)

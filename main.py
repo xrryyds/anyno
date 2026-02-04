@@ -525,9 +525,9 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8)
 # python -m scripts.train.student_train
     # 4. check
-    take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1206")
-    teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_0821")
+    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
+    # teacher.teacher_mark_paper_with_save()
+    exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1055")
     # teacher.check_answers_equivalence()
 
     # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
@@ -535,14 +535,3 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
     #####################################################################################################
-    
-    # BASE_MODEL_PATH = "/root/autodl-tmp/CELPO/model/Qwen/Qwen2.5-Math-7B-Instruct"
-    # # GRPO 训练保存的 checkpoint 路径，通常是 epoch_X
-    # GRPO_ADAPTER_PATH = "/root/autodl-tmp/CELPO/output/hint_grpo/epoch_2" 
-    
-    # if not os.path.exists(GRPO_ADAPTER_PATH):
-    #     logger.warning(f"Adapter path {GRPO_ADAPTER_PATH} does not exist. Check if training finished.")
-    # else:
-    #     # student_take_exam_Gsm8k_grpo_test()
-    #     pass
-
