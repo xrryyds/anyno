@@ -38,9 +38,9 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
-model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
-# model_path = "/root/autodl-tmp/Qwen2.5-Math-7B-Instruct/"
+model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
@@ -355,7 +355,7 @@ def student_first_take_exam_MATH_ALL(train:bool = True):
 
 
 def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
-    gsm8k = GSM8K(False)
+    gsm8k = GSM8K()
     question = gsm8k.problems
     solution = gsm8k.solutions
     answer = gsm8k.answers
@@ -368,7 +368,7 @@ def student_take_exam_Gsm8k_test(use_lora:bool=False, lora_path:str=""):
     else:
         take_exam = TakeExam(model_path)
 
-    take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
+    # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_TEST
     # take_exam.OUTPUT_JSON_PATH = take_exam.OUTPUT_JSON_PATH_EHC_TEST
     question_idx = []
     for idx in range(len(question)):
@@ -503,16 +503,16 @@ def take_exam_MATH500_after_EHC(lora_path:str):
     exam_paper_easl.exam(question, solution, answer, question_idx)
 
 if __name__ == "__main__":
-    #CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
+    # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
 
     # #1. student first take exam
     # student_first_take_exam_Math500()
     # student_first_take_exam_Gsm8k()
     # student_first_take_exam_AIME2024()
-    student_first_take_exam_MATH_ALL(False)
+    # student_first_take_exam_MATH_ALL(False)
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
@@ -527,16 +527,16 @@ if __name__ == "__main__":
 
 
     # 3. gen dataset
-    # gen_IRDCL_dataset(32)
-    run_sira_training(model_path=model_path)
+    # gen_IRDCL_dataset(16)
+    # run_sira_training(model_path=model_path)
     # 4. check
-    # take_exam_MATH500_after_EHC("/root/autodl-tmp/CELPO/output/sira_sft_0204_1832")
+    # take_exam_MATH500_after_EHC("/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/sira_sft_0204_1832")
+    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.check_answers_equivalence()
 
-    # student_take_exam_Gsm8k_test(True, "/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
+    # student_take_exam_Gsm8k_test(True, "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/root/autodl-tmp/CELPO/output/hint_sft_0203_1131")
+    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     #####################################################################################################
