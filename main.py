@@ -409,14 +409,14 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(True)
+    student_take_exam_Math_sub(False)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake()
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
