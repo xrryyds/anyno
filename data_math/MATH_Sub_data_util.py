@@ -16,18 +16,19 @@ class Math_Subset():
         
         if train:
             target_split = 'train'
-            local_path = os.path.join('./datasets/data/MATH/train')
+            # 区分路径以避免缓存冲突
+            local_path = os.path.join('./datasets/data/MATH/train', subset)
         else:
             target_split = 'test'
-            local_path = os.path.join('./datasets/data/MATH/test')
+            local_path = os.path.join('./datasets/data/MATH/test', subset)
 
-        logger.info(f"Loading MATH subset")
+        logger.info(f"Loading MATH subset: {subset} (Split: {target_split})...")
 
         dataset_loader = LoadDataset(
-            dataset_name='qwedsacf/competition_math',
+            dataset_name='HuggingFaceH4/MATH',
             split=target_split,
             local_path=local_path,
-            # config=subset
+            config=subset  # 传入子集名称作为 config
         )
 
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
@@ -46,6 +47,7 @@ class Math_Subset():
             solution = data.get("solution", "").strip()
             answer = data.get("answer", "")
 
+            # 如果 dataset 中没有直接提供 answer，尝试从 solution 中提取 boxed 内容
             if not answer and solution:
                 answer = extract_boxed_content(solution)
 
@@ -64,7 +66,11 @@ class Math_Subset():
             )
 
 def main():
-    math_subset = Math_Subset(subset=subset_name, train=False)
+    # 示例：只加载 number_theory 的测试集
+    subset_name = "prealgebra"
+    print(f"Loading subset: {subset_name}...")
+    
+    math_subset = Math_Subset(subset=subset_name, train=True)
 
     if math_subset.data_len == 0:
         print("Error: No data loaded.")
