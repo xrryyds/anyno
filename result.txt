@@ -25,7 +25,7 @@ EASL7B(hints)
                 
 train           MATH(all)                    MATH(prealgebra)
                 -pass@1     -pass@8          -pass@1     -pass@8     
-OREAL 7B        2497/7496   1078/7496            192/1205    81(38)/1205
+OREAL 7B        2497/7496   1078(887)/7496            192/1205    81(38)/1205
 adv(319)                                     
 OREAL (EHC_1)                                192
 

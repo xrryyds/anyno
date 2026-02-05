@@ -452,9 +452,9 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
-    student_correct()
+    # student_correct()
     # exam_roll_recheck_hints()
 
 
