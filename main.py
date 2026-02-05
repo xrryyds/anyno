@@ -441,7 +441,7 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(train=True, subset="prealgebra")
+    # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -454,7 +454,7 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    # student_correct()
+    student_correct()
     # exam_roll_recheck_hints()
 
 
@@ -467,5 +467,5 @@ if __name__ == "__main__":
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
     #####################################################################################################
