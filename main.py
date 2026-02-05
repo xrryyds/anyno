@@ -420,19 +420,19 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
 
 
     # 3. gen dataset
-    # gen_IRDCL_dataset(8)
+    # gen_IRDCL_dataset(5)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=False, lora_path="/root/autodl-tmp/CELPO/output/sira_sft8_epoch_1")
+    # student_take_exam_Math_sub(train=False, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0205_20")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True,"/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
+    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_20")
     #####################################################################################################
