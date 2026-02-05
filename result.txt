@@ -37,8 +37,8 @@ test              MATH(all)                   MATH(prealgebra)
                   -pass@1     -pass@8         -pass@1     -pass@8     
 OREAL 7B          1574/5000    687/5000       134/871    63/871
 adv(319)        
-OREAL (EHC8_1)    1718/5000                   150        69
-OREAL (EHC8_3) 
+OREAL (EHC8_20)    1718/5000                   150        69
+OREAL (EHC8_10) 
 
 
 DS 7B             2378/5000     1476/5000   
