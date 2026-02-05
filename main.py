@@ -403,6 +403,38 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
         err_entropy
     )
 
+
+def count_common_questions(file_corr = exam_paper.corr_path, file_hints = exam_paper.hints_file_path):
+    try:
+        # 读取 corr.json 文件
+        with open(file_corr, 'r', encoding='utf-8') as f:
+            corr_data = json.load(f)
+            
+        # 读取 adv_hints.json 文件
+        with open(file_hints, 'r', encoding='utf-8') as f:
+            hints_data = json.load(f)
+            
+        # 提取 question_idx 集合
+        # 假设文件结构是列表，每个元素是包含 'question_idx' 的字典
+        corr_ids = {item['question_idx'] for item in corr_data if 'question_idx' in item}
+        hints_ids = {item['question_idx'] for item in hints_data if 'question_idx' in item}
+        
+        # 计算交集
+        common_ids = corr_ids.intersection(hints_ids)
+        
+        # 返回相同 question_idx 的数量
+        print(len(common_ids))
+
+    except FileNotFoundError as e:
+        print(f"错误: 找不到文件 - {e}")
+        return 0
+    except json.JSONDecodeError:
+        print("错误: 文件不是有效的 JSON 格式")
+        return 0
+    except Exception as e:
+        print(f"发生未知错误: {e}")
+        return 0
+
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
@@ -430,9 +462,10 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(5)
     # run_sira_training(model_path=model_path)
     # 4. check
-    student_take_exam_Math_sub(train=False, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0205_10")
+    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
+    # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_20")
+    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
     #####################################################################################################
