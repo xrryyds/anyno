@@ -1,16 +1,24 @@
 import logging
 import os
+import json
 from datasets import Dataset, concatenate_datasets
+# 假设这些模块在你本地存在
 from .load_dataset import LoadDataset
-from prompt import QUESTION_PROMPT, ANSWER_PROMPT
 from utils import extract_boxed_content
 
 logger = logging.getLogger(__name__)
 
 class Math_All():
-    def __init__(self, train: bool = True):
-        # MATH 数据集的子集列表
-        target_subsets = [
+    def __init__(self, train: bool = True, subset_name: str = "all", shuffle: bool = True):
+        """
+        Args:
+            train (bool): True 为训练集, False 为测试集
+            subset_name (str): 指定加载哪个子集，例如 "algebra"。
+                               如果为 "all"，则加载所有子集并混合。
+            shuffle (bool): 是否打乱数据顺序。
+        """
+        # 定义所有可用的子集名称
+        all_possible_subsets = [
             "algebra",
             "counting_and_probability",
             "geometry",
@@ -20,50 +28,61 @@ class Math_All():
             "precalculus"
         ]
 
-        loaded_datasets = []
-        
-        # 根据 train 参数设定分片和基础路径
+        # 1. 根据 subset_name 决定要加载的目标列表
+        if subset_name.lower() == "all":
+            target_subsets = all_possible_subsets
+            logger.info(f"Mode: Load ALL subsets and MIX.")
+        elif subset_name in all_possible_subsets:
+            target_subsets = [subset_name]
+            logger.info(f"Mode: Load single subset '{subset_name}'.")
+        else:
+            raise ValueError(f"Invalid subset_name: '{subset_name}'. Must be 'all' or one of {all_possible_subsets}")
+
+        # 2. 设定路径
         if train:
             target_split = 'train'
-            local_path_base = './datasets/data/MATH/train' # 为了更清晰，建议加上 /train
+            local_path_base = './datasets/data/MATH/train'
         else:
             target_split = 'test'
             local_path_base = './datasets/data/MATH/test'
 
-        logger.info(f"Loading MATH dataset (Split: {target_split})...")
-        print(f"Start loading MATH dataset (Split: {target_split})...")
+        loaded_datasets = []
+        print(f"Start loading MATH dataset (Split: {target_split}, Target: {subset_name})...")
 
+        # 3. 循环加载目标子集
         for subset in target_subsets:
             try:
-                # 【关键修改】: 
-                # 每个子集必须有独立的文件夹，否则不同子集的元数据会互相覆盖导致报错
                 current_local_path = os.path.join(local_path_base, subset)
                 
                 dataset_loader = LoadDataset(
                     dataset_name='HuggingFaceH4/MATH',
                     split=target_split,
-                    local_path=current_local_path, # 传入独立的路径
+                    local_path=current_local_path,
                     config=subset 
                 )
                 
                 ds = dataset_loader.get_dataset()
-                # 只有当成功获取到 dataset 对象时才加入列表
+                
                 if ds is not None:
                     loaded_datasets.append(ds)
-                    logger.info(f"Successfully loaded subset: {subset}")
-                    
+                    print(f" - Loaded: {subset} ({len(ds)} rows)")
             except Exception as e:
-                logger.warning(f"Failed to load subset '{subset}' split '{target_split}': {e}")
-                print(f"Warning: Failed to load {subset}. Error: {e}")
+                logger.warning(f"Failed to load {subset}: {e}")
 
         if not loaded_datasets:
-            raise ValueError(f"No datasets loaded for split {target_split}. Please check network or clean cache.")
+            raise ValueError(f"No datasets loaded. Please check paths or network.")
 
-        # 合并所有子集
+        # 4. 合并数据集
         full_dataset = concatenate_datasets(loaded_datasets)
         
-        # 提取并处理数据
+        # 5. 【关键】如果是 "all" 或者是单独子集但要求 shuffle，则进行打乱
+        if shuffle:
+            print("Shuffling (mixing) data...")
+            full_dataset = full_dataset.shuffle(seed=42)
+
+        # 6. 提取数据
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(full_dataset)
+        print(f"Done. Total valid samples: {self.data_len}")
 
     def extract_data(self, dataset: Dataset) -> tuple[list, list, list, int]:
         problems = []
@@ -73,58 +92,61 @@ class Math_All():
         for data in dataset:
             problem = data.get("problem", "").strip()
             solution = data.get("solution", "").strip()
-            answer = data.get("answer", "") # 可能为 None 或 ""
+            answer = data.get("answer", "") 
 
-            # 基础校验
             if not problem or not solution:
                 continue
             
-            # 如果没有直接的 answer 字段，尝试从 solution 中提取
             if not answer:
                 answer = extract_boxed_content(solution)
             
-            # 只有提取到有效答案才加入
             if answer:
                 problems.append(problem)
                 solutions.append(solution)
                 answers.append(answer)
 
         return problems, solutions, answers, len(problems)
-            
+
+def save_to_jsonl(math_obj, output_path):
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    print(f"Saving to {output_path}...")
+    with open(output_path, 'w', encoding='utf-8') as f:
+        for p, s, a in zip(math_obj.problems, math_obj.solutions, math_obj.answers):
+            entry = {"problem": p, "solution": s, "answer": a}
+            f.write(json.dumps(entry, ensure_ascii=False) + '\n')
+
 def main():
-    # ---------------------------------------------------------
-    # 示例 1: 下载并查看 Train 集
-    # ---------------------------------------------------------
-    print("="*20 + " Loading TRAIN Set " + "="*20)
+    # ==========================================
+    # 场景 1: 获取所有 Train 数据并混合
+    # ==========================================
     try:
-        math_train = Math_All(train=True)
-        print(f"Total Train Data: {math_train.data_len}")
-        if math_train.data_len > 0:
-            print(f"Sample Problem (Train): {math_train.problems[0][:100]}...")
-            print(f"Sample Answer (Train): {math_train.answers[0]}")
-    except Exception as e:
-        print(f"Train Load Error: {e}")
-
-    print("\n")
-
-    # ---------------------------------------------------------
-    # 示例 2: 下载并查看 Test 集
-    # ---------------------------------------------------------
-    print("="*20 + " Loading TEST Set " + "="*20)
-    try:
-        math_test = Math_All(train=False)
-        split_line = "#" * 20
-        print(f"Total Test Data: {math_test.data_len}")
+        print("\n--- 1. Loading ALL Train Data (Mixed) ---")
+        # subset_name="all" 会加载所有子集并混合
+        math_all_train = Math_All(train=True, subset_name="all")
         
-        if math_test.data_len > 0:
-            print(split_line)
-            print("Sample Problem (Test):" + math_test.problems[0])
-            print(split_line)
-            print("Sample Answer (Test):" + math_test.answers[0])
-            print(split_line)
-            print("Sample solution (Test):" + math_test.solutions[0])
+        save_to_jsonl(math_all_train, "./processed_data/math_train_all_mixed.jsonl")
+        
+        # 验证前几个是否来自不同领域（因为混合了）
+        print("Preview (Problem Start):")
+        for i in range(3):
+            print(f" {i+1}. {math_all_train.problems[i][:50]}...")
+
     except Exception as e:
-        print(f"Test Load Error: {e}")
+        print(f"Error: {e}")
+
+    # ==========================================
+    # 场景 2: 只获取 Geometry 的 Train 数据
+    # ==========================================
+    try:
+        print("\n--- 2. Loading ONLY Geometry Train Data ---")
+        # subset_name="geometry" 只加载几何
+        math_geo_train = Math_All(train=True, subset_name="geometry")
+        
+        save_to_jsonl(math_geo_train, "./processed_data/math_train_geometry.jsonl")
+        
+    except Exception as e:
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     main()

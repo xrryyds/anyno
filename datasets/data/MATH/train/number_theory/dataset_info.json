@@ -1,0 +1,60 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "number_theory",
+  "dataset_name": "math",
+  "dataset_size": 945248,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/HuggingFaceH4/MATH@9bbe1fc38f097a38e3bdf5bbec8d6feee21318c9/number_theory/train-00000-of-00001.parquet": {
+      "num_bytes": 306360,
+      "checksum": null
+    },
+    "hf://datasets/HuggingFaceH4/MATH@9bbe1fc38f097a38e3bdf5bbec8d6feee21318c9/number_theory/test-00000-of-00001.parquet": {
+      "num_bytes": 180461,
+      "checksum": null
+    }
+  },
+  "download_size": 486821,
+  "features": {
+    "problem": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "level": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "type": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "solution": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 1432069,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 595793,
+      "num_examples": 869,
+      "dataset_name": "math"
+    },
+    "test": {
+      "name": "test",
+      "num_bytes": 349455,
+      "num_examples": 540,
+      "dataset_name": "math"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}

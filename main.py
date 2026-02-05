@@ -307,8 +307,8 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="counting_and_probability", lora_path:str = None):
-    data = Math_Subset(subset=subset,train=train)
+def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None):
+    data = Math_All(subset_name=subset,train=train)
     question = data.problems
     solution = data.solutions
     answer = data.answers
@@ -409,7 +409,7 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(True)
+    student_take_exam_Math_sub(True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # student_correct()
     # exam_roll_recheck_hints()
