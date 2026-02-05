@@ -455,14 +455,14 @@ if __name__ == "__main__":
     # teacher.teacher_hints() 
 
     # student_correct()
-    exam_roll_recheck_hints()
+    # exam_roll_recheck_hints()
 
 
     # 3. gen dataset
-    # gen_IRDCL_dataset(5)
+    # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
+    student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0206_0347")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()

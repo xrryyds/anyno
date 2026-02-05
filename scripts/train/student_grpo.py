@@ -1,393 +1,355 @@
 import os
+# 建议开启 vLLM 以加速 GRPO 采样，显存不足可设为 False
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+
 import sys
 import json
-import re
 import torch
-import torch.nn.functional as F
 import logging
-import shutil
-import argparse
-import gc
+import warnings
+from datetime import datetime
 from dataclasses import dataclass
-from typing import List, Optional
-from tqdm import tqdm
+from typing import Dict, List, Optional
 
-from torch.utils.data import DataLoader, Dataset
+from datasets import Dataset
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    set_seed,
-    get_scheduler,
-    BitsAndBytesConfig
+    TrainerCallback,
+    set_seed
 )
-from peft import PeftModel
+from peft import PeftModel, LoraConfig
+from trl import GRPOTrainer, GRPOConfig
 
-# vLLM Imports
-try:
-    from vllm import LLM, SamplingParams
-    from vllm.lora.request import LoRARequest
-except ImportError:
-    raise ImportError("请先安装 vllm: pip install vllm")
+
+from data_math import Math_All 
 
 # ==========================================
-# 0. 基础配置与Prompt
+# Logger 配置
 # ==========================================
-
-# 假设 prompt 模块
-try:
-    from prompt import GEN_PROMPT
-except ImportError:
-    GEN_PROMPT = "Question: {question}\nAnswer:"
-
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
 logger = logging.getLogger(__name__)
 
-@dataclass
-class GRPOConfig:
-    base_model_path: str
-    sft_adapter_path: str
-    data_path: str
-    output_dir: str
-    
-    # GRPO 参数
-    group_size: int = 8         # 每条Prompt生成的样本数 (G)
-    num_train_epochs: int = 1
-    learning_rate: float = 1e-6 # GRPO 学习率通常比 SFT 低
-    beta: float = 0.04          # KL 惩罚系数
-    
-    # 生成配置
-    max_gen_length: int = 1024  
-    temperature: float = 0.9     
-    top_p: float = 0.95
-    
-    # 训练配置
-    gradient_accumulation_steps: int = 4
-    # [关键显存参数] 
-    # vLLM 显存占用比例。RefModel(4bit)约5G, PolicyModel(16bit)约15G。
-    # 给 vLLM 留 0.3 (约7G) 用于 KV Cache 和推理权重是比较安全的平衡点。
-    vllm_gpu_memory_utilization: float = 0.3 
-    vllm_max_model_len: int = 4096
-
-def setup_logging(output_dir):
-    os.makedirs(output_dir, exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="[%(asctime)s] %(levelname)s: %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout), 
-            logging.FileHandler(os.path.join(output_dir, "grpo.log"), encoding='utf-8')
-        ]
-    )
+warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 # ==========================================
-# 1. 数据处理工具
+# 1. 核心工具函数 (复用你的代码)
 # ==========================================
 
-class MathProblemDataset(Dataset):
-    def __init__(self, data_path):
-        self.data = []
-        with open(data_path, 'r', encoding='utf-8') as f:
-            raw_data = json.load(f)
-            for item in raw_data:
-                # 过滤掉没有参考答案的数据
-                if item.get('ref_answer') or item.get('solution'):
-                    self.data.append(item)
-        logger.info(f"Loaded {len(self.data)} samples from {data_path}.")
-
-    def __len__(self):
-        return len(self.data)
-
-    def __getitem__(self, idx):
-        return self.data[idx]
-
-def extract_answer(text):
+def extract_boxed_content(text: str) -> Optional[str]:
     """
-    增强版答案提取：
-    1. 优先提取 \boxed{...} 中的内容
-    2. 其次尝试提取 Answer: 后的数字
+    提取 LaTeX 字符串中最后一个 \boxed{...} 里的内容。
+    支持嵌套括号，例如 \boxed{\frac{1}{2}}。
     """
     if not text: return ""
     
-    # 策略 1: LaTeX boxed
-    matches = re.findall(r"\\boxed\{([^}]+)\}", text)
-    if matches:
-        return matches[-1].strip()
+    # 找到最后一个 \boxed{ 的位置
+    idx = text.rfind("\\boxed{")
+    if idx == -1:
+        return ""
+
+    # 移动索引到 \boxed{ 之后
+    i = idx + 7 
+    content_start = i
+    brace_balance = 0 
     
-    # 策略 2: 最后的数字
-    parts = text.split("Answer:")
-    if len(parts) > 1:
-        ans_part = parts[-1].strip()
-        # 匹配整数、小数、负数
-        match = re.search(r"(\-?\d+\.?\d*)", ans_part) 
-        if match:
-            return match.group(1)
-            
+    # 开始遍历字符
+    while i < len(text):
+        char = text[i]
+        
+        if char == '{':
+            brace_balance += 1
+        elif char == '}':
+            if brace_balance == 0:
+                return text[content_start:i].strip()
+            else:
+                brace_balance -= 1
+        
+        i += 1
     return ""
 
-def compute_rewards(generated_texts, ref_answer):
-    rewards = []
-    ref_str = str(ref_answer).strip()
-    
-    for text in generated_texts:
-        pred_ans = extract_answer(text)
-        score = 0.0
+# ==========================================
+# 2. Metrics Tracker (复刻日志风格)
+# ==========================================
+
+class GRPOMetricsTracker:
+    def __init__(self):
+        self.reset_window()
+        self.reset_epoch()
         
-        # 1. 格式奖励 (Format Reward)
-        if "\\boxed{" in text or "Answer:" in text:
-            score += 0.1
+    def reset_window(self):
+        """重置 Step 窗口统计数据"""
+        self.win_steps = 0
+        self.win_data = {
+            "reward": [],
+            "kl": [],
+            "completion_length": [],
+            "loss": 0.0
+        }
+
+    def reset_epoch(self):
+        """重置 Epoch 全局统计数据"""
+        self.ep_steps = 0
+        self.ep_data = {
+            "reward": [],
+            "kl": [],
+            "completion_length": [],
+            "loss": 0.0
+        }
+
+    def update(self, logs: Dict):
+        # TRL 的日志通常包含: 'loss', 'reward', 'kl', 'completion_length'
+        self.win_steps += 1
+        self.ep_steps += 1
+        
+        for key in ["reward", "kl", "completion_length"]:
+            if key in logs:
+                val = logs[key]
+                # 有时是 tensor，有时是 float
+                if isinstance(val, torch.Tensor):
+                    val = val.item()
+                self.win_data[key].append(val)
+                self.ep_data[key].append(val)
+        
+        if "loss" in logs:
+            val = logs["loss"]
+            if isinstance(val, torch.Tensor):
+                val = val.item()
+            self.win_data["loss"] += val
+            self.ep_data["loss"] += val
+
+    def _calculate_stats(self, steps, data_dict):
+        stats = {}
+        # 计算平均值
+        for key in ["reward", "kl", "completion_length"]:
+            values = data_dict[key]
+            stats[f"avg_{key}"] = sum(values) / len(values) if values else 0.0
+        
+        stats["avg_loss"] = data_dict["loss"] / max(steps, 1)
+        stats["sample_count"] = len(data_dict["reward"])
+        return stats
+
+    def get_window_stats(self):
+        return self._calculate_stats(self.win_steps, self.win_data)
+
+    def get_epoch_stats(self):
+        return self._calculate_stats(self.ep_steps, self.ep_data)
+
+tracker = GRPOMetricsTracker()
+
+# ==========================================
+# 3. Callbacks (日志写入)
+# ==========================================
+
+def setup_logging_paths(output_dir):
+    os.makedirs(output_dir, exist_ok=True)
+    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
+    return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
+
+class GRPOStepLogCallback(TrainerCallback):
+    def __init__(self, log_file, log_interval):
+        self.log_file = log_file
+        self.log_interval = log_interval
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if logs:
+            # 过滤掉不相关的系统 log，只处理包含 RL 指标的 log
+            if "reward" in logs or "loss" in logs:
+                tracker.update(logs)
+
+        if state.global_step > 0 and state.global_step % self.log_interval == 0:
+            if tracker.win_steps > 0:
+                stats = tracker.get_window_stats() 
+                stats["epoch"] = state.epoch
+                stats["global_step"] = state.global_step
+                stats["timestamp"] = datetime.now().isoformat()
+                
+                with open(self.log_file, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(stats) + "\n")
+                
+                logger.info(f"[Step {state.global_step}] Loss: {stats['avg_loss']:.4f} | "
+                            f"Reward: {stats['avg_reward']:.4f} | " 
+                            f"KL: {stats['avg_kl']:.4f} | "
+                            f"Len: {stats['avg_completion_length']:.1f}")
+                
+                tracker.reset_window()
+
+class GRPOEpochLogCallback(TrainerCallback):
+    def __init__(self, log_file):
+        self.log_file = log_file
+
+    def on_epoch_end(self, args, state, control, **kwargs):
+        stats = tracker.get_epoch_stats()
+        stats["epoch"] = state.epoch 
+        stats["global_step"] = state.global_step
+        stats["timestamp"] = datetime.now().isoformat()
+        
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write(json.dumps(stats) + "\n")
             
-        # 2. 正确性奖励 (Correctness Reward)
-        # 简单字符串匹配，实际工程中可能需要 sympy 做数学等价性判断
-        if pred_ans == ref_str:
-            score += 1.0
-        elif ref_str in text and len(ref_str) > 2: # 宽松匹配
-            score += 0.5
+        logger.info(f"="*60)
+        logger.info(f"*** EPOCH {state.epoch} FINISHED ***")
+        logger.info(f"  Avg Epoch Loss:   {stats['avg_loss']:.4f}")
+        logger.info(f"  Avg Reward:       {stats['avg_reward']:.4f}")
+        logger.info(f"  Avg KL Diverg:    {stats['avg_kl']:.4f}")
+        logger.info(f"  Avg Gen Length:   {stats['avg_completion_length']:.1f}")
+        logger.info(f"="*60)
+        
+        tracker.reset_epoch()
+
+# ==========================================
+# 4. 奖励函数 (直接结果导向)
+# ==========================================
+
+def correctness_reward_func(prompts, completions, answer, **kwargs) -> List[float]:
+    """
+    answer: 数据集中的 ground truth answer (list of strings)
+    """
+    rewards = []
+    for completion, gt in zip(completions, answer):
+        # 1. 提取模型生成内容
+        pred_content = extract_boxed_content(completion)
+        
+        # 2. 清洗数据 (去除首尾空白)
+        clean_pred = pred_content.strip()
+        clean_gt = gt.strip()
+        
+        # 3. 如果提取为空，直接0分
+        if not clean_pred:
+            rewards.append(0.0)
+            continue
             
-        rewards.append(score)
+        # 4. 直接字符串比对
+        if clean_pred == clean_gt:
+            rewards.append(1.0)
+        else:
+            rewards.append(0.0)
+            
     return rewards
 
 # ==========================================
-# 2. VLLM GRPO Trainer
+# 5. 主训练流程
 # ==========================================
 
-class VLLMGRPOTrainer:
-    def __init__(self, config: GRPOConfig, model, ref_model, tokenizer, dataset):
-        self.config = config
-        self.model = model
-        self.ref_model = ref_model
-        self.tokenizer = tokenizer
-        
-        # DataLoader (BS=1, shuffle=True)
-        self.dataloader = DataLoader(dataset, batch_size=1, shuffle=True, collate_fn=lambda x: x)
-        
-        # Optimizer & Scheduler
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=config.learning_rate)
-        num_steps = len(self.dataloader) * config.num_train_epochs // config.gradient_accumulation_steps
-        self.scheduler = get_scheduler("cosine", optimizer=self.optimizer, num_warmup_steps=min(20, num_steps//10), num_training_steps=num_steps)
-
-        # 初始化 vLLM
-        logger.info(f"Initializing vLLM (GPU Util: {config.vllm_gpu_memory_utilization})...")
-        self.llm = LLM(
-            model=config.base_model_path,
-            enable_lora=True,
-            max_lora_rank=64, 
-            gpu_memory_utilization=config.vllm_gpu_memory_utilization,
-            max_model_len=config.vllm_max_model_len,
-            trust_remote_code=True,
-            tensor_parallel_size=1, 
-            disable_log_stats=True 
-        )
-        
-        self.sampling_params = SamplingParams(
-            temperature=config.temperature,
-            top_p=config.top_p,
-            max_tokens=config.max_gen_length,
-            n=config.group_size, 
-        )
-        
-        # 临时目录用于交换 LoRA 权重
-        self.temp_lora_path = os.path.join(config.output_dir, "temp_lora_adapter")
-        os.makedirs(self.temp_lora_path, exist_ok=True)
-
-    def get_per_token_logps(self, model, input_ids, attention_mask):
-        logits = model(input_ids=input_ids, attention_mask=attention_mask).logits
-        logits = logits[:, :-1, :] 
-        labels = input_ids[:, 1:]
-        
-        return -F.cross_entropy(
-            logits.reshape(-1, logits.size(-1)),
-            labels.reshape(-1),
-            reduction='none'
-        ).view(labels.shape)
-
-    def train(self):
-        logger.info("🚀 Starting GRPO Training...")
-        global_step = 0
-        
-        progress_bar = tqdm(total=len(self.dataloader) * self.config.num_train_epochs)
-        
-        for epoch in range(self.config.num_train_epochs):
-            for step, batch in enumerate(self.dataloader):
-                q_text = batch[0]['question']
-                ref_ans = batch[0].get('ref_answer', batch[0].get('solution')) # 兼容字段名
-                
-                # --- Step 1: 保存当前 Policy Adapter ---
-                self.model.save_pretrained(self.temp_lora_path)
-                
-                # --- Step 2: vLLM 采样 (Rollout) ---
-                prompt = GEN_PROMPT.format(question=q_text)
-                try:
-                    lora_req = LoRARequest("adapter", 1, self.temp_lora_path)
-                    outputs = self.llm.generate(
-                        prompts=[prompt], 
-                        sampling_params=self.sampling_params,
-                        lora_request=lora_req,
-                        use_tqdm=False
-                    )
-                    generated_texts = [o.text for o in outputs[0].outputs]
-                except Exception as e:
-                    logger.error(f"vLLM Generation failed: {e}")
-                    continue # 跳过此 Batch
-
-                # --- Step 3: 计算 Rewards ---
-                rewards_list = compute_rewards(generated_texts, ref_ans)
-                rewards_tensor = torch.tensor(rewards_list, dtype=torch.float32, device=self.model.device)
-                
-                # --- Step 4: 准备数据 ---
-                full_texts = [prompt + gen for gen in generated_texts]
-                inputs = self.tokenizer(
-                    full_texts, return_tensors="pt", padding=True, truncation=True, 
-                    max_length=self.config.vllm_max_model_len
-                ).to(self.model.device)
-                
-                input_ids = inputs.input_ids
-                attention_mask = inputs.attention_mask
-                
-                # 确定 Prompt 长度用于 Mask
-                prompt_ids = self.tokenizer(prompt, add_special_tokens=False).input_ids
-                prompt_len = len(prompt_ids)
-                
-                # --- Step 5: 计算 Loss (PyTorch) ---
-                self.model.train()
-                
-                # Policy Logprobs
-                policy_logps = self.get_per_token_logps(self.model, input_ids, attention_mask)
-                
-                # Ref Logprobs (No Grad)
-                with torch.no_grad():
-                    ref_logps = self.get_per_token_logps(self.ref_model, input_ids, attention_mask)
-                
-                # Mask (只保留回答部分)
-                mask = attention_mask[:, 1:].clone()
-                # 简单 Mask 策略：前 prompt_len 个 token 设为 0
-                safe_prompt_len = min(prompt_len, mask.size(1))
-                mask[:, :safe_prompt_len] = 0
-                
-                # KL Divergence (Token-level)
-                kl = policy_logps.detach() - ref_logps 
-                
-                # KL Penalty (Sample-level sum for reward calc)
-                # GRPO 论文通常将 -beta * KL 加入 Reward
-                kl_penalty = -self.config.beta * (kl * mask).sum(dim=-1)
-                
-                # Total Reward & Advantage
-                total_rewards = rewards_tensor + kl_penalty
-                mean_r = total_rewards.mean()
-                std_r = total_rewards.std() + 1e-8
-                advantages = (total_rewards - mean_r) / std_r
-                
-                # Final Loss: - (Advantage * Policy_Logprobs)
-                # 将 Advantage 广播到 Token 维度
-                adv_expanded = advantages.view(-1, 1).expand_as(policy_logps)
-                loss = -(policy_logps * adv_expanded * mask).sum() / mask.sum()
-                
-                # --- Step 6: 优化 ---
-                loss = loss / self.config.gradient_accumulation_steps
-                loss.backward()
-                
-                progress_bar.update(1)
-                progress_bar.set_postfix({
-                    "Loss": f"{loss.item() * self.config.gradient_accumulation_steps:.4f}",
-                    "R_Avg": f"{rewards_tensor.mean().item():.2f}",
-                    "KL": f"{-kl_penalty.mean().item():.3f}"
-                })
-                
-                if (step + 1) % self.config.gradient_accumulation_steps == 0:
-                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), 1.0)
-                    self.optimizer.step()
-                    self.scheduler.step()
-                    self.optimizer.zero_grad()
-                    global_step += 1
-            
-            # --- Epoch End ---
-            save_path = os.path.join(self.config.output_dir, f"checkpoint-epoch-{epoch+1}")
-            self.model.save_pretrained(save_path)
-            self.tokenizer.save_pretrained(save_path)
-            logger.info(f"Saved checkpoint to {save_path}")
-
-        # 清理
-        try:
-            shutil.rmtree(self.temp_lora_path)
-        except:
-            pass
-        progress_bar.close()
-
-# ==========================================
-# 3. Main
-# ==========================================
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--sft_adapter_path", type=str, required=True, help="SFT训练结果路径")
-    parser.add_argument("--base_model_path", type=str, default="/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B")
-    parser.add_argument("--data_path", type=str, default="/root/autodl-tmp/CELPO/datasets/exam/irdcl_data.json")
-    args = parser.parse_args()
-
-    # 输出目录自动生成
-    output_dir = os.path.join(os.path.dirname(args.sft_adapter_path), "grpo_vllm_output")
-    
+def run_grpo_training(
+    model_path_base: str,
+    model_path_lora: str,
+    output_base_dir: str = "./output",
+    subset_name: str = "algebra"
+):
     set_seed(42)
+    tracker.reset_window()
+    tracker.reset_epoch()
+
+    # --- 配置参数 ---
+    output_dir = f"{output_base_dir}/grpo_{subset_name}_{datetime.now().strftime('%m%d_%H%M')}"
+    step_log_file, epoch_log_file = setup_logging_paths(output_dir)
     
-    config = GRPOConfig(
-        base_model_path=args.base_model_path,
-        sft_adapter_path=args.sft_adapter_path,
-        data_path=args.data_path,   
-        output_dir=output_dir,
-        group_size=8,
-        gradient_accumulation_steps=4
-    )
+    logger.info(f"Base Model: {model_path_base}")
+    logger.info(f"SFT LoRA:   {model_path_lora}")
     
-    setup_logging(output_dir)
-    logger.info(f"Config: {config}")
-    
-    # 1. Load Tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(config.base_model_path, trust_remote_code=True)
+    # --- 1. 加载 Tokenizer ---
+    tokenizer = AutoTokenizer.from_pretrained(model_path_base, trust_remote_code=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
-    
-    # 2. [显存优化] Load Policy Model (Trainable)
-    logger.info("Loading Policy Model (BF16)...")
+
+    # --- 2. 加载模型并合并 SFT 权重 ---
+    logger.info("Loading Base Model...")
     model = AutoModelForCausalLM.from_pretrained(
-        config.base_model_path, 
-        torch_dtype=torch.bfloat16, 
-        device_map="auto", 
+        model_path_base,
+        torch_dtype=torch.float16,
+        device_map="auto",
         trust_remote_code=True
     )
-    model = PeftModel.from_pretrained(model, config.sft_adapter_path, is_trainable=True)
     
-    # ================= 核心修复部分 =================
-    # 必须显式开启输入梯度，否则开启 Gradient Checkpointing 后会断开梯度图
-    model.enable_input_require_grads()
+    if os.path.exists(model_path_lora):
+        logger.info(f"Merging SFT LoRA from {model_path_lora}...")
+        model = PeftModel.from_pretrained(model, model_path_lora)
+        model = model.merge_and_unload() # 合并，成为新的 Base Model 用于 RL
+    else:
+        logger.warning("SFT LoRA path not found. Starting GRPO from raw Base Model.")
+
+    # --- 3. 准备数据 ---
+    logger.info(f"Loading Dataset ({subset_name})...")
+    # 使用你的 Math_All 类
+    math_obj = Math_All(train=True, subset_name=subset_name, shuffle=True)
     
-    # 建议关闭 use_reentrant 以提高兼容性
-    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
-    # ==============================================
-    
-    model.config.use_cache = False
-    
-    # 3. [显存优化] Load Reference Model (4-bit Quantized)
-    # Ref Model 不需要梯度，用 4bit 加载极省显存
-    logger.info("Loading Reference Model (4-bit)...")
-    bnb_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_quant_type="nf4"
+    data_dict = {"prompt": [], "answer": []}
+    for prob, ans in zip(math_obj.problems, math_obj.answers):
+        # 关键修改：直接使用 problem 作为 prompt，不添加任何 system prompt
+        data_dict["prompt"].append(prob)
+        # 假设 math_obj.answers 已经是清洗好的答案
+        data_dict["answer"].append(ans)
+        
+    dataset = Dataset.from_dict(data_dict)
+    logger.info(f"Dataset Size: {len(dataset)}")
+
+    # --- 4. 配置 GRPO 新的 LoRA ---
+    peft_config = LoraConfig(
+        r=16,
+        lora_alpha=32,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM",
+        bias="none"
     )
-    ref_model = AutoModelForCausalLM.from_pretrained(
-        config.base_model_path, 
-        quantization_config=bnb_config, # 量化加载
-        device_map="auto", 
-        trust_remote_code=True
+
+    # --- 5. 训练参数 ---
+    training_args = GRPOConfig(
+        output_dir=output_dir,
+        learning_rate=1e-6,               # RL 学习率
+        num_train_epochs=1,
+        per_device_train_batch_size=2,    # Batch Size
+        gradient_accumulation_steps=4,
+        logging_steps=1,                  # 这里的 logging_steps 配合我们的 Callback 使用
+        bf16=True,
+        save_strategy="steps",
+        save_steps=100,
+        max_prompt_length=512,
+        max_completion_length=512,
+        num_generations=8,                # G: Group Size
+        beta=0.04,                        # KL 惩罚
+        report_to="none",                 # 关闭默认 wandb/tensorboard
+        use_vllm=True,                    # 开启 vLLM 加速
+        vllm_gpu_memory_utilization=0.5,
     )
-    # 加载 SFT 权重作为 Reference
-    ref_model = PeftModel.from_pretrained(ref_model, config.sft_adapter_path)
-    ref_model.eval()
-    
-    # 4. Dataset
-    dataset = MathProblemDataset(config.data_path)
-    
-    # 5. Train
-    trainer = VLLMGRPOTrainer(config, model, ref_model, tokenizer, dataset)
+
+    # --- 6. Trainer ---
+    trainer = GRPOTrainer(
+        model=model,
+        reward_funcs=[correctness_reward_func], # 只有这一个奖励函数
+        args=training_args,
+        train_dataset=dataset,
+        processing_class=tokenizer,
+        peft_config=peft_config,
+        callbacks=[
+            GRPOStepLogCallback(step_log_file, log_interval=1),
+            GRPOEpochLogCallback(epoch_log_file)
+        ]
+    )
+
+    logger.info("Starting GRPO Training...")
     trainer.train()
+    trainer.save_model(output_dir)
+    logger.info(f"Training finished. Model saved to {output_dir}")
 
 if __name__ == "__main__":
-    main()
+    # 配置你的路径
+    BASE_MODEL = "deepseek-ai/deepseek-math-7b-base" # 替换实际路径
+    SFT_LORA = "/root/autodl-tmp/output/sira_sft_output" # 替换实际路径
+    
+    try:
+        run_grpo_training(
+            model_path_base=BASE_MODEL,
+            model_path_lora=SFT_LORA,
+            subset_name="algebra" 
+        )
+    except Exception as e:
+        logger.error(f"Execution failed: {e}")
+        import traceback
+        traceback.print_exc()
