@@ -6,12 +6,11 @@ from typing import List
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    TrainingArguments, 
     set_seed
 )
 from peft import LoraConfig, TaskType
 from datasets import Dataset
-from trl import SFTTrainer
+from trl import SFTTrainer, SFTConfig
 
 # =====================================================
 # 1. 环境与多进程设置
@@ -32,19 +31,18 @@ def run_sft_training(
     question_list: List[str], 
     answer_list: List[str], 
     output_dir: str = None,
-    num_train_epochs: int = 1,
+    num_train_epochs: int = 2,
     learning_rate: float = 2e-4
 ):
     """
-    SFT 训练主函数 (适配 TRL 最新版，不使用 Flash Attention)
+    SFT 训练主函数 (修复 Formatting 逻辑与参数兼容性)
     """
-    # 设置随机种子
     set_seed(42)
     
     if output_dir is None:
         current_file_path = os.path.abspath(__file__)
-        project_root = os.path.dirname(os.path.dirname(current_file_path)) # scripts
-        project_root = os.path.dirname(project_root) # CELPO
+        project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+        project_root = os.path.dirname(project_root) 
         output_dir = os.path.join(project_root, "output", "sft_lora_checkpoints")
     
     logger.info(f"Starting SFT Training...")
@@ -76,22 +74,27 @@ def run_sft_training(
     
     dataset = Dataset.from_list(data_entries)
 
-    # 格式化函数
-    def formatting_prompts_func(examples):
-        output_texts = []
-        for conversation in examples['messages']:
-            text = tokenizer.apply_chat_template(
-                conversation, 
-                tokenize=False, 
-                add_generation_prompt=False 
-            )
-            output_texts.append(text)
-        return output_texts
+    # ⭐⭐⭐ 核心修复：Formatting 函数 ⭐⭐⭐
+    def formatting_prompts_func(example):
+        # TRICK: TRL 在处理 dataset 时，有时传入单个样本(Dict)，有时传入Batch(List)。
+        # 根据之前的报错，这里的 example 是单个样本的 Dict。
+        # example['messages'] 已经是我们要的 List[Dict] 结构了。
+        
+        conversation = example['messages']
+        
+        # 直接转换整个对话列表
+        text = tokenizer.apply_chat_template(
+            conversation, 
+            tokenize=False, 
+            add_generation_prompt=False 
+        )
+        
+        # SFTTrainer 要求返回 list[str]
+        return [text]
 
     # ================== 5. 加载模型 ==================
     logger.info(f"Loading base model from {model_url}")
     
-    # 这里去掉了 attn_implementation="flash_attention_2"
     model = AutoModelForCausalLM.from_pretrained(
         model_url,
         trust_remote_code=True,
@@ -99,7 +102,6 @@ def run_sft_training(
         device_map="auto"
     )
     
-    # 开启梯度检查点
     model.gradient_checkpointing_enable()
 
     # ================== 6. LoRA 配置 ==================
@@ -114,8 +116,12 @@ def run_sft_training(
     )
 
     # ================== 7. 训练参数 ==================
-    training_args = TrainingArguments(
+    logger.info("Configuring Training Arguments...")
+    
+    # 兼容性写法：不在 init 中传 max_seq_length
+    training_args = SFTConfig(
         output_dir=output_dir,
+        dataset_text_field="text",
         per_device_train_batch_size=4,  
         gradient_accumulation_steps=4,  
         learning_rate=learning_rate,
@@ -127,10 +133,14 @@ def run_sft_training(
         optim="adamw_torch",
         report_to="none",               
         run_name="sft_run",
-        remove_unused_columns=True     
+        remove_unused_columns=True,     
+        gradient_checkpointing=True,
     )
+    
+    # 手动赋值 max_seq_length
+    training_args.max_seq_length = 4096
 
-    # ================== 8. 初始化 Trainer (核心修改) ==================
+    # ================== 8. 初始化 Trainer ==================
     logger.info("Initializing SFTTrainer...")
     
     trainer = SFTTrainer(
@@ -138,11 +148,7 @@ def run_sft_training(
         args=training_args,
         train_dataset=dataset,
         peft_config=peft_config,
-        
-        # ⭐⭐⭐ 核心修复点：使用 processing_class 替代 tokenizer ⭐⭐⭐
         processing_class=tokenizer, 
-        
-        max_seq_length=4096, 
         formatting_func=formatting_prompts_func, 
     )
 
@@ -165,5 +171,4 @@ def run_sft_training(
     return final_output_path
 
 if __name__ == "__main__":
-    # 测试代码
     pass
