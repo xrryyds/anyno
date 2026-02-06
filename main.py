@@ -403,9 +403,13 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     )
 
 
-def sft_on_mistake():
-    exam_paper.load_mistakes()
-    question_idx, question, answer, ref_answer, ref_solution, entropy = exam_paper.parse_data(exam_paper.mistakes)
+def sft_on_adv_Data():
+    try:
+        with open(exam_paper.adv_hints_dataset_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"load fail: {e}")
+     _, question,  _,  _, ref_solution,  _ = exam_paper.parse_data(data)
     run_sft_training(model_url=model_path, question_list=question, answer_list=ref_solution)
 
 
@@ -500,7 +504,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_hints()
 
     # ** sft
-    # sft_on_mistake()
+    sft_on_adv_Data()
     
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
@@ -513,6 +517,6 @@ if __name__ == "__main__":
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
     
-    grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+    # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
 
     #####################################################################################################
