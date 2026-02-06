@@ -1,245 +1,190 @@
 import os
+# 设置多进程启动方式，保持和你代码一致
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn" 
+
 import json
-import numpy as np
+import logging
 import torch
-import gc
-import matplotlib.pyplot as plt 
-from datasets import load_dataset
-from peft import LoraConfig
+from typing import List
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
     TrainingArguments, 
-    TrainerCallback
+    set_seed
 )
-from trl import SFTTrainer, DataCollatorForCompletionOnlyLM 
-from configs import SftConfig
-from data_math import Math_data, GSM8K
+from peft import LoraConfig, get_peft_model, TaskType
+from datasets import Dataset
+from trl import SFTTrainer, DataCollatorForCompletionOnlyLM
 
-# 设置环境
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# =====================================================
+# Logger (保持一致)
+# =====================================================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
 
-# --- 功能 1: 自定义回调函数，用于收集数据画图 ---
-class SaveMetricsCallback(TrainerCallback):
-    def __init__(self, output_dir):
-        self.log_history = []
-        self.output_dir = output_dir
-        self.json_path = os.path.join(output_dir, "training_logs.json")
-
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs:
-            # 记录当前的 step, loss, eval_loss, accuracy 等信息
-            log_entry = logs.copy()
-            log_entry['step'] = state.global_step
-            log_entry['epoch'] = state.epoch
-            self.log_history.append(log_entry)
-            
-            # 实时写入文件，防止程序中断数据丢失
-            with open(self.json_path, 'w', encoding='utf-8') as f:
-                json.dump(self.log_history, f, indent=4)
-
-# --- 功能 2: 计算准确率 (修复版) ---
-def compute_metrics(eval_preds):
-    preds, labels = eval_preds
+def run_sft_training(
+    model_url: str, 
+    question_list: List[str], 
+    answer_list: List[str], 
+    output_dir: str = None,
+    num_train_epochs: int = 3,
+    learning_rate: float = 2e-4
+):
+    """
+    封装的 SFT 方法
+    :param model_url: 模型路径 (如 /root/autodl-tmp/...)
+    :param question_list: 问题列表
+    :param answer_list: 答案列表 (与问题一一对应)
+    :param output_dir: LoRA 权重保存路径，若为 None 则自动生成
+    :param num_train_epochs: 训练轮数
+    :param learning_rate: 学习率
+    """
     
-    # SFTTrainer 有时返回 tuple (logits, past_key_values)
-    if isinstance(preds, tuple):
-        preds = preds[0]
+    # ================== Config & Seed ==================
+    set_seed(42)
     
-    # 【关键修复】
-    # 这里的 preds 已经是 preprocess_logits_for_metrics 处理过的 Token ID 了
-    # 所以千万不要再做 np.argmax(preds, axis=-1)，否则维度会变成 (Batch,) 导致报错
-    pred_ids = preds 
+    if output_dir is None:
+        current_file_path = os.path.abspath(__file__)
+        project_root = os.path.dirname(os.path.dirname(current_file_path))
+        output_dir = os.path.join(project_root, "CELPO", "output", "sft_lora_checkpoints")
     
-    # 【安全措施】强制展平 (Batch, Seq_Len) -> (Batch * Seq_Len)
-    # 这样可以忽略 Batch 维度的影响，直接比较所有 Token
-    pred_ids = pred_ids.reshape(-1)
-    labels = labels.reshape(-1)
+    logger.info(f"Starting SFT Training...")
+    logger.info(f"Model Path: {model_url}")
+    logger.info(f"Data Size: {len(question_list)} pairs")
+    logger.info(f"Output Dir: {output_dir}")
+
+    # ================== 1. Data Processing ==================
+    logger.info("Processing dataset...")
     
-    # 忽略 label 中的 -100 (padding)
-    mask = labels != -100
+    # 构造符合 Chat 模板的数据集
+    # 格式: {"messages": [{"role": "user", "content": q}, {"role": "assistant", "content": a}]}
+    data_entries = []
+    for q, a in zip(question_list, answer_list):
+        conversation = [
+            {"role": "user", "content": str(q)},
+            {"role": "assistant", "content": str(a)}
+        ]
+        data_entries.append({"messages": conversation})
     
-    # 计算准确率
-    # 此时 pred_ids[mask] 和 labels[mask] 都是 1维 数组，完全对齐
-    correct = (pred_ids[mask] == labels[mask]).sum()
-    total = mask.sum()
+    dataset = Dataset.from_list(data_entries)
+
+    # ================== 2. Load Tokenizer ==================
+    logger.info(f"Loading tokenizer from {model_url}")
+    tokenizer = AutoTokenizer.from_pretrained(
+        model_url,
+        trust_remote_code=True,
+        use_fast=False, # 保持和你推理代码一致
+    )
+    # Qwen 等模型通常需要设置 padding_side 和 pad_token
+    tokenizer.padding_side = "right" 
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    # ================== 3. Load Model ==================
+    logger.info(f"Loading base model from {model_url}")
+    # 注意：训练时我们通常使用 transformers 原生加载，而不是 vLLM
+    # 为了显存优化，默认使用 bfloat16
+    model = AutoModelForCausalLM.from_pretrained(
+        model_url,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
+        # 如果显存不够，可以解开下面这行的注释使用 4bit 量化加载 (需要 bitsandbytes)
+        # quantization_config=BitsAndBytesConfig(load_in_4bit=True) 
+    )
     
-    accuracy = correct / total if total > 0 else 0.0
-    return {"accuracy": accuracy}
+    # 开启梯度检查点以节省显存
+    model.gradient_checkpointing_enable()
 
-# 预处理 Logits 以节省显存 (配合 compute_metrics 使用)
-# 这个函数在 GPU 上运行，负责把巨大的 Logits 转成 ID
-def preprocess_logits_for_metrics(logits, labels):
-    if isinstance(logits, tuple):
-        logits = logits[0]
-    return logits.argmax(dim=-1)
+    # ================== 4. LoRA Config ==================
+    logger.info("Configuring LoRA...")
+    peft_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=64,                   # Rank，和你推理代码中的 max_lora_rank 对应
+        lora_alpha=128,         # 通常是 rank 的 2 倍
+        lora_dropout=0.05,
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"], # Qwen 全参覆盖
+        bias="none",
+    )
 
-class SftTrainer:
-    def __init__(self, config: SftConfig, data: Math_data):
-        self.config = config
-        self.output_dir = config.output_dir
-        self.model_id = config.model_name
-        
-        # 1. 加载 Tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_id)
-        if self.tokenizer.pad_token is None:
-            self.tokenizer.pad_token = self.tokenizer.eos_token
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
-        self.tokenizer.padding_side = 'right' 
+    # ================== 5. Training Arguments ==================
+    training_args = TrainingArguments(
+        output_dir=output_dir,
+        per_device_train_batch_size=4,  # 根据显存调整
+        gradient_accumulation_steps=4,  # 显存不够时调大这个
+        learning_rate=learning_rate,
+        num_train_epochs=num_train_epochs,
+        logging_steps=10,
+        save_strategy="epoch",
+        fp16=False,
+        bf16=True,                      # 推荐使用 bf16
+        optim="adamw_torch",
+        report_to="none",               # 不上传 wandb
+        run_name="sft_run",
+        remove_unused_columns=False     # 防止 dataset 中的 messages 列被删除
+    )
 
-        train_dataset, eval_dataset = data.get_dataset()
-        print(f"训练集样本数: {len(train_dataset.problems)}")
-        self.train_dataset = train_dataset.to_hf_dataset()
-        self.eval_dataset = eval_dataset.to_hf_dataset()
-        
-        # 2. 加载模型
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_id,
-            torch_dtype=torch.bfloat16,
-            device_map="auto", 
-        )
-            
-        # 3. 配置 TrainingArguments
-        self.training_arguments = TrainingArguments(
-            output_dir=self.output_dir,
-            bf16=config.bf16,
-            per_device_train_batch_size=config.per_device_train_batch_size,
-            gradient_accumulation_steps=config.gradient_accumulation_steps,
-            
-            # --- 验证与保存策略 ---
-            eval_strategy="steps",           
-            eval_steps=config.save_steps,    
-            save_strategy="steps",           
-            save_steps=config.save_steps,
-            
-            # --- 最佳模型保存机制 ---
-            load_best_model_at_end=True,     
-            metric_for_best_model="accuracy",
-            greater_is_better=True,          
-            save_total_limit=2,              
-            
-            logging_steps=config.logging_steps,
-            learning_rate=config.learning_rate,
-            max_grad_norm=config.max_grad_norm,
-            num_train_epochs=config.num_train_epochs,
-            warmup_ratio=config.warmup_ratio,
-            lr_scheduler_type=config.lr_scheduler_type,
-            report_to=config.report_to,
-            gradient_checkpointing=True, 
-            group_by_length=True,
-        )
-        
-        self.lora_config = LoraConfig(
-            r=config.lora_r,
-            lora_alpha=config.lora_alpha,
-            target_modules=["q_proj", "o_proj", "k_proj", "v_proj", "gate_proj", "up_proj", "down_proj"],
-            bias=config.bias,
-            task_type=config.task_type,
-        )
-
-        # 4. 初始化 Trainer
-        self.trainer = SFTTrainer(
-            model=self.model,
-            args=self.training_arguments,
-            train_dataset=self.train_dataset,
-            eval_dataset=self.eval_dataset, 
-            tokenizer=self.tokenizer,
-            peft_config=self.lora_config,
-            formatting_func=self.math_formatting_func,
-            max_seq_length=config.max_seq_length,
-            packing=False,
-            
-            # --- 注入指标计算与回调 ---
-            compute_metrics=compute_metrics, 
-            preprocess_logits_for_metrics=preprocess_logits_for_metrics, 
-            callbacks=[SaveMetricsCallback(self.output_dir)]
-        )
-
-    def train(self):
-        print("开始训练...")
-        self.trainer.train() 
-        
-        save_path = os.path.join(self.output_dir, "best_model_final")
-        self.trainer.save_model(save_path)
-        self.tokenizer.save_pretrained(save_path)
-        print(f"训练完成。准确率最高的模型已保存至: {save_path}")
-        print(f"绘图数据已保存至: {os.path.join(self.output_dir, 'training_logs.json')}")
-
-    def math_formatting_func(self, examples):
-        output_texts = []
-        for prompt, ref_sol in zip(examples["prompt"], examples["reference_answer"]):
-            messages = [
-                {"role": "user", "content": prompt},  
-                {"role": "assistant", "content": ref_sol}  
-            ]
-            text = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,  
-                add_generation_prompt=False  
-            )
-            output_texts.append(text)
-        return output_texts
-
-# --- 辅助函数：画图脚本 ---
-def plot_training_results(log_file_path):
-    if not os.path.exists(log_file_path):
-        print("Log file not found.")
-        return
-
-    with open(log_file_path, 'r') as f:
-        logs = json.load(f)
-
-    steps = []
-    train_loss = []
-    eval_steps = []
-    eval_loss = []
-    eval_acc = []
-
-    for entry in logs:
-        if 'loss' in entry and 'step' in entry:
-            steps.append(entry['step'])
-            train_loss.append(entry['loss'])
-        if 'eval_loss' in entry:
-            eval_steps.append(entry['step'])
-            eval_loss.append(entry['eval_loss'])
-        if 'eval_accuracy' in entry:
-            eval_acc.append(entry['eval_accuracy'])
-
-    fig, ax1 = plt.subplots(figsize=(10, 6))
-
-    ax1.set_xlabel('Steps')
-    ax1.set_ylabel('Loss', color='tab:red')
-    ax1.plot(steps, train_loss, label='Training Loss', color='tab:red', alpha=0.6)
-    ax1.plot(eval_steps, eval_loss, label='Validation Loss', color='tab:orange', linestyle='--')
-    ax1.tick_params(axis='y', labelcolor='tab:red')
-
-    if eval_acc:
-        ax2 = ax1.twinx() 
-        ax2.set_ylabel('Accuracy', color='tab:blue')
-        ax2.plot(eval_steps, eval_acc, label='Validation Accuracy', color='tab:blue', linewidth=2)
-        ax2.tick_params(axis='y', labelcolor='tab:blue')
-
-    plt.title('Training Metrics: Loss & Accuracy')
-    fig.tight_layout()
-    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    # ================== 6. SFT Trainer ==================
+    logger.info("Initializing SFTTrainer...")
     
-    plot_path = log_file_path.replace('.json', '.png')
-    plt.savefig(plot_path, dpi=300)
-    print(f"图表已保存为: {plot_path}")
+    trainer = SFTTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=dataset,
+        peft_config=peft_config,
+        tokenizer=tokenizer,
+        # TRL 库会自动处理 'messages' 格式的数据并应用 chat_template
+        # max_seq_length 需要和你推理时的 MAX_MODEL_LEN 匹配或略小
+        max_seq_length=2048, 
+        dataset_text_field="messages", 
+    )
 
+    # ================== 7. Start Training ==================
+    logger.info("Starting training execution...")
+    try:
+        trainer.train()
+    except Exception as e:
+        logger.error(f"Training failed: {e}")
+        raise e
+
+    # ================== 8. Save Adapter ==================
+    final_output_path = os.path.join(output_dir, "final_adapter")
+    logger.info(f"Saving final LoRA adapter to {final_output_path}")
+    
+    trainer.save_model(final_output_path)
+    tokenizer.save_pretrained(final_output_path)
+    
+    logger.info("SFT Training completed successfully.")
+    return final_output_path
+
+# =====================================================
+# 调用示例 (放在 __main__ 块中)
+# =====================================================
 if __name__ == "__main__":
-    torch.cuda.empty_cache()
-    gc.collect()
+    # 模拟数据
+    mock_questions = [
+        "1+1等于几？", 
+        "求解方程 2x + 4 = 10"
+    ]
+    mock_answers = [
+        "1+1等于2。",
+        "移项得 2x=6，解得 x=3。"
+    ]
     
-    config_path = "/home/xrrfolder/CELPO/configs/sft.yaml" 
-
-    config = SftConfig.load_yaml(config_path)
+    # 假设的模型路径
+    MODEL_PATH = "/root/autodl-tmp/model/Qwen/Qwen2.5-Math-7B-Instruct"
     
-    print("Loaded Config:", config)
-    
-    gsm8k = GSM8K() 
-    
-    trainer = SftTrainer(config, gsm8k)
-    trainer.train()
-    
-    plot_training_results(os.path.join(config.output_dir, "training_logs.json"))
+    # 确保路径存在，否则 demo 无法运行
+    if os.path.exists(MODEL_PATH):
+        saved_adapter_path = run_sft_training(
+            model_url=MODEL_PATH,
+            question_list=mock_questions,
+            answer_list=mock_answers,
+            num_train_epochs=1 # 演示用1个epoch
+        )
+        print(f"训练完成，Adapter保存在: {saved_adapter_path}")
+    else:
+        logger.warning(f"模型路径 {MODEL_PATH} 不存在，请修改后运行。")

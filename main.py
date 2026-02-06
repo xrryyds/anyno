@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training
+from scripts import run_sira_training, run_sft_training
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -435,6 +435,38 @@ def count_common_questions(file_corr = exam_paper.corr_path, file_hints = exam_p
         print(f"发生未知错误: {e}")
         return 0
 
+def sft_on_mistakes(model_path: str):
+    
+    # 2. 加载错题
+    logger.info("Loading mistakes...")
+    if not exam_paper.load_mistakes():
+        logger.error("Failed to load mistakes. Aborting SFT.")
+        return
+
+    _, questions, _, _, ref_solutions, _ = exam_paper.parse_data(exam_paper.mistakes)
+
+    if not questions or len(questions) == 0:
+        logger.warning("No questions found in mistake file.")
+        return
+
+    valid_questions = []
+    valid_solutions = []
+
+    for q, sol in zip(questions, ref_solutions):
+        if q and sol:
+            valid_questions.append(q)
+            valid_solutions.append(sol)
+    
+    logger.info(f"Prepared {len(valid_questions)} pairs for training (Model will learn 'ref_solution').")
+
+    run_sft_training(
+        model_url=model_path,
+        question_list=valid_questions,
+        answer_list=valid_solutions, # 使用标准答案进行训练
+        num_train_epochs=1           # 针对少量错题，通常跑 3-5 个 epoch
+    )
+
+
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
@@ -462,10 +494,10 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0205_5")
+    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
     #####################################################################################################
