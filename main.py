@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training, run_sft_training
+from scripts import run_sira_training, run_sft_training, run_grpo_training
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -404,6 +404,12 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     )
 
 
+def sft_on_mistake():
+    exam_paper.load_mistakes()
+    question_idx, question, answer, ref_answer, ref_solution, entropy = exam_paper.parse_data(exam_paper.mistakes)
+    run_sft_training(model_url=model_path, question_list=question, answer_list=ref_solution)
+
+
 def count_common_questions(file_corr = exam_paper.corr_path, file_hints = exam_paper.hints_file_path):
     try:
         # 读取 corr.json 文件
@@ -466,6 +472,11 @@ def sft_on_mistakes(model_path: str):
         num_train_epochs=1           # 针对少量错题，通常跑 3-5 个 epoch
     )
 
+def grpo_on_MATH(lora_path:str, subset:str ="all"):
+    data = Math_All(subset_name=subset,train=True)
+    question = data.problems
+    answer = data.answers
+    run_grpo_training(model_path=model_path, sft_lora_path=lora_path, questions=question, answers=answer)
 
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
@@ -473,7 +484,7 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(train=True)
+    student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -489,15 +500,20 @@ if __name__ == "__main__":
     # student_correct()
     # exam_roll_recheck_hints()
 
-
+    # ** sft
+    # sft_on_mistake()
+    
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
+    
+    grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+
     #####################################################################################################

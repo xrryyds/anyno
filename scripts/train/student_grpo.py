@@ -95,13 +95,17 @@ def run_grpo_training(
     sft_lora_path: str,
     questions: List[str],
     answers: List[str],
-    output_dir: str = "output/grpo_result",
     num_generations: int = 8  # 对应 Roll 8
 ):
     logger.info(f"Loading Base Model from: {base_model_path}")
     logger.info(f"Loading SFT LoRA from: {sft_lora_path}")
 
-    # -----------------------------------------------------
+
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path))
+    project_root = os.path.dirname(os.path.dirname(project_root))
+    output_dir = os.path.join(project_root,"CELPO", "output", "grpo")
+  # -----------------------------------------------------
     # Step 1: 准备数据
     # GRPO Trainer 需要 Dataset 格式，包含 'prompt' 和 'answer' (用于奖励计算)
     # -----------------------------------------------------
