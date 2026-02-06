@@ -504,15 +504,15 @@ if __name__ == "__main__":
     # exam_roll_recheck_hints()
 
     # ** sft
-    sft_on_adv_Data()
+    # sft_on_adv_Data()
     
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
+    student_take_exam_Math_sub(train=False, lora_path="/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
     # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")

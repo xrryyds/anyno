@@ -23,12 +23,12 @@ EASL7B            28/30     27/30
 EASL7B(hints)             
 
                 
-train           MATH(all)                    MATH(prealgebra)
-                -pass@1     -pass@8          -pass@1     -pass@8     
-OREAL 7B        2497/7496   1078(887)/7496    192/1205    81(38)/1205
+train           MATH(all)                    MATH(prealgebra)            MATH（precalculus）
+                -pass@1     -pass@8          -pass@1     -pass@8         -pass@1     -pass@8 
+OREAL 7B        2497/7496   1078(887)/7496    192/1205    81(38)/1205    359/746     179/746
 adv(319)                                     
 OREAL (EHC_1)   2240/7496   857/7496                        
-OREAL (sft)    3874/7496   857/7496 
+OREAL (sft)    3874/7496    1724/7496 
 
 DS 7B           3654/7496     2390/7496     
 DS (EHC)                                                                    
