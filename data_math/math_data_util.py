@@ -2,31 +2,22 @@ import logging
 from datasets import Dataset
 from .load_dataset import LoadDataset
 from prompt import QUESTION_PROMPT, ANSWER_PROMPT
-from configs import GRPOConfig
 from sklearn.model_selection import train_test_split 
 from .math_dataset import Math_DataSet
 
 class Math_data():
-    def __init__(self, config: GRPOConfig):
+    def __init__(self):
         dataset_loader = LoadDataset(
             dataset_name='',
             split='',
             local_path=''
         )
 
-
-        if config.max_samples is not None:
-            total_size = len(dataset_loader)
-            actual_size = min(config.max_samples, total_size)
-            dataset_loader.set_dataset_size(actual_size)
-
-
-
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
             dataset_loader.get_dataset())
 
 
-        self.gen_prompt(self.problems, max_token=GRPOConfig.thinking_max_tokens)
+        self.gen_prompt(self.problems, max_token=4096)
         self.gen_answer(self.answers)
         
         (self.train_problems, self.test_problems,
