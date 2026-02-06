@@ -36,17 +36,16 @@ def run_sft_training(
     learning_rate: float = 2e-4
 ):
     """
-    SFT 训练主函数 (优化版)
+    SFT 训练主函数 (适配 TRL 最新版，不使用 Flash Attention)
     """
-    # 设置随机种子，保证可复现性
+    # 设置随机种子
     set_seed(42)
     
     if output_dir is None:
-        # 自动推导输出路径
         current_file_path = os.path.abspath(__file__)
-        project_root = os.path.dirname(os.path.dirname(current_file_path))
-        project_root = os.path.dirname(os.path.dirname(project_root))
-        output_dir = os.path.join(project_root,"CELPO", "output", "sft_lora_checkpoints")
+        project_root = os.path.dirname(os.path.dirname(current_file_path)) # scripts
+        project_root = os.path.dirname(project_root) # CELPO
+        output_dir = os.path.join(project_root, "output", "sft_lora_checkpoints")
     
     logger.info(f"Starting SFT Training...")
     logger.info(f"Model Path: {model_url}")
@@ -60,18 +59,15 @@ def run_sft_training(
         trust_remote_code=True,
         use_fast=False, 
     )
-    # Qwen/Llama 等模型通常 padding 在右侧，但某些旧版本 SFT 需要检查
-    # 这里保持默认即可，SFTTrainer 会自动处理
     tokenizer.padding_side = "right" 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # ================== 4. 数据处理 (保持与推理一致的 Chat 格式) ==================
+    # ================== 4. 数据处理 ==================
     logger.info("Processing dataset...")
     
     data_entries = []
     for q, a in zip(question_list, answer_list):
-        # 构造标准的对话列表
         conversation = [
             {"role": "user", "content": str(q)},
             {"role": "assistant", "content": str(a)}
@@ -80,12 +76,10 @@ def run_sft_training(
     
     dataset = Dataset.from_list(data_entries)
 
-    # 格式化函数：将 list[dict] 转为训练所需的文本字符串
+    # 格式化函数
     def formatting_prompts_func(examples):
         output_texts = []
         for conversation in examples['messages']:
-            # apply_chat_template 会自动处理 user/assistant 标签和特殊 token
-            # 这与推理时的 add_generation_prompt=True 是完美对应的
             text = tokenizer.apply_chat_template(
                 conversation, 
                 tokenize=False, 
@@ -97,7 +91,7 @@ def run_sft_training(
     # ================== 5. 加载模型 ==================
     logger.info(f"Loading base model from {model_url}")
     
-    # 既然你有 A800，这里保留 bf16
+    # 这里去掉了 attn_implementation="flash_attention_2"
     model = AutoModelForCausalLM.from_pretrained(
         model_url,
         trust_remote_code=True,
@@ -105,7 +99,7 @@ def run_sft_training(
         device_map="auto"
     )
     
-    # 开启梯度检查点 (Gradient Checkpointing)，大幅节省显存
+    # 开启梯度检查点
     model.gradient_checkpointing_enable()
 
     # ================== 6. LoRA 配置 ==================
@@ -133,11 +127,10 @@ def run_sft_training(
         optim="adamw_torch",
         report_to="none",               
         run_name="sft_run",
-        # ⭐ [关键修复] 必须为 True，确保过滤掉原始 messages 字典，避免 DataCollator 报错
         remove_unused_columns=True     
     )
 
-    # ================== 8. 初始化 Trainer ==================
+    # ================== 8. 初始化 Trainer (核心修改) ==================
     logger.info("Initializing SFTTrainer...")
     
     trainer = SFTTrainer(
@@ -145,8 +138,10 @@ def run_sft_training(
         args=training_args,
         train_dataset=dataset,
         peft_config=peft_config,
-        tokenizer=tokenizer,
-        # ⭐ [优化点] 提升到 4096，与你推理代码的 MAX_MODEL_LEN 一致
+        
+        # ⭐⭐⭐ 核心修复点：使用 processing_class 替代 tokenizer ⭐⭐⭐
+        processing_class=tokenizer, 
+        
         max_seq_length=4096, 
         formatting_func=formatting_prompts_func, 
     )
@@ -169,36 +164,6 @@ def run_sft_training(
     logger.info("SFT Training completed successfully.")
     return final_output_path
 
-# =====================================================
-# Main Execution (测试入口)
-# =====================================================
 if __name__ == "__main__":
-    # 模拟数据 (实际运行时这里会被你的业务逻辑替换)
-    mock_questions = [
-        "1+1等于几？", 
-        "求解方程 2x + 4 = 10"
-    ]
-    mock_answers = [
-        "1+1等于2。",
-        "移项得 2x=6，解得 x=3。"
-    ]
-    
-    # 请修改为你的实际模型路径
-    MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
-    
-    if os.path.exists(MODEL_PATH) or MODEL_PATH.startswith("Qwen/"):
-        try:
-            saved_adapter_path = run_sft_training(
-                model_url=MODEL_PATH,
-                question_list=mock_questions,
-                answer_list=mock_answers,
-                num_train_epochs=1
-            )
-            print(f"\n✅ 训练完成，Adapter保存在: {saved_adapter_path}")
-        except Exception as e:
-            logger.error(f"❌ Execution Failed: {e}")
-            # 打印完整的错误堆栈以便调试
-            import traceback
-            traceback.print_exc()
-    else:
-        logger.error(f"❌ 模型路径 {MODEL_PATH} 不存在，请修改代码中的 MODEL_PATH 变量。")
+    # 测试代码
+    pass

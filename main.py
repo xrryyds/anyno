@@ -409,7 +409,7 @@ def sft_on_adv_Data():
             data = json.load(f)
     except Exception as e:
         print(f"load fail: {e}")
-     _, question,  _,  _, ref_solution,  _ = exam_paper.parse_data(data)
+    _, question,  _,  _, ref_solution,  _ = exam_paper.parse_data(data)
     run_sft_training(model_url=model_path, question_list=question, answer_list=ref_solution)
 
 
@@ -487,7 +487,7 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(False)
-    student_take_exam_Math_sub(train=True)
+    # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
