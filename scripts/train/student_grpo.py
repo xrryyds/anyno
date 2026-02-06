@@ -1,31 +1,23 @@
 import os
-# 建议开启 vLLM 以加速 GRPO 采样，显存不足可设为 False
-os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-
 import sys
 import json
 import torch
 import logging
-import warnings
 from datetime import datetime
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import List, Optional, Dict
 
 from datasets import Dataset
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
-    TrainerCallback,
     set_seed
 )
-from peft import PeftModel, LoraConfig
+from peft import LoraConfig, get_peft_model, PeftModel, TaskType
 from trl import GRPOTrainer, GRPOConfig
 
-
-from data_math import Math_All 
-
 # ==========================================
-# Logger 配置
+# 1. Logger 配置
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -33,17 +25,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-warnings.filterwarnings("ignore", category=FutureWarning)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 # ==========================================
-# 1. 核心工具函数 (复用你的代码)
+# 2. 答案提取工具 (使用您提供的函数)
 # ==========================================
 
 def extract_boxed_content(text: str) -> Optional[str]:
     """
-    提取 LaTeX 字符串中最后一个 \boxed{...} 里的内容。
-    支持嵌套括号，例如 \boxed{\frac{1}{2}}。
+    提取 LaTeX 字符串中最后一个 \\boxed{...} 里的内容。
+    支持嵌套括号，例如 \\boxed{\\frac{1}{2}}。
     """
     if not text: return ""
     
@@ -70,286 +59,212 @@ def extract_boxed_content(text: str) -> Optional[str]:
                 brace_balance -= 1
         
         i += 1
-    return ""
+    return "" 
+
+def normalize_math_str(s: str) -> str:
+    """简单归一化：去除空白字符"""
+    if not s: return ""
+    return s.replace(" ", "").replace("\n", "").strip()
 
 # ==========================================
-# 2. Metrics Tracker (复刻日志风格)
-# ==========================================
-
-class GRPOMetricsTracker:
-    def __init__(self):
-        self.reset_window()
-        self.reset_epoch()
-        
-    def reset_window(self):
-        """重置 Step 窗口统计数据"""
-        self.win_steps = 0
-        self.win_data = {
-            "reward": [],
-            "kl": [],
-            "completion_length": [],
-            "loss": 0.0
-        }
-
-    def reset_epoch(self):
-        """重置 Epoch 全局统计数据"""
-        self.ep_steps = 0
-        self.ep_data = {
-            "reward": [],
-            "kl": [],
-            "completion_length": [],
-            "loss": 0.0
-        }
-
-    def update(self, logs: Dict):
-        # TRL 的日志通常包含: 'loss', 'reward', 'kl', 'completion_length'
-        self.win_steps += 1
-        self.ep_steps += 1
-        
-        for key in ["reward", "kl", "completion_length"]:
-            if key in logs:
-                val = logs[key]
-                # 有时是 tensor，有时是 float
-                if isinstance(val, torch.Tensor):
-                    val = val.item()
-                self.win_data[key].append(val)
-                self.ep_data[key].append(val)
-        
-        if "loss" in logs:
-            val = logs["loss"]
-            if isinstance(val, torch.Tensor):
-                val = val.item()
-            self.win_data["loss"] += val
-            self.ep_data["loss"] += val
-
-    def _calculate_stats(self, steps, data_dict):
-        stats = {}
-        # 计算平均值
-        for key in ["reward", "kl", "completion_length"]:
-            values = data_dict[key]
-            stats[f"avg_{key}"] = sum(values) / len(values) if values else 0.0
-        
-        stats["avg_loss"] = data_dict["loss"] / max(steps, 1)
-        stats["sample_count"] = len(data_dict["reward"])
-        return stats
-
-    def get_window_stats(self):
-        return self._calculate_stats(self.win_steps, self.win_data)
-
-    def get_epoch_stats(self):
-        return self._calculate_stats(self.ep_steps, self.ep_data)
-
-tracker = GRPOMetricsTracker()
-
-# ==========================================
-# 3. Callbacks (日志写入)
-# ==========================================
-
-def setup_logging_paths(output_dir):
-    os.makedirs(output_dir, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
-    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-    logger.addHandler(file_handler)
-    return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
-
-class GRPOStepLogCallback(TrainerCallback):
-    def __init__(self, log_file, log_interval):
-        self.log_file = log_file
-        self.log_interval = log_interval
-
-    def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs:
-            # 过滤掉不相关的系统 log，只处理包含 RL 指标的 log
-            if "reward" in logs or "loss" in logs:
-                tracker.update(logs)
-
-        if state.global_step > 0 and state.global_step % self.log_interval == 0:
-            if tracker.win_steps > 0:
-                stats = tracker.get_window_stats() 
-                stats["epoch"] = state.epoch
-                stats["global_step"] = state.global_step
-                stats["timestamp"] = datetime.now().isoformat()
-                
-                with open(self.log_file, "a", encoding="utf-8") as f:
-                    f.write(json.dumps(stats) + "\n")
-                
-                logger.info(f"[Step {state.global_step}] Loss: {stats['avg_loss']:.4f} | "
-                            f"Reward: {stats['avg_reward']:.4f} | " 
-                            f"KL: {stats['avg_kl']:.4f} | "
-                            f"Len: {stats['avg_completion_length']:.1f}")
-                
-                tracker.reset_window()
-
-class GRPOEpochLogCallback(TrainerCallback):
-    def __init__(self, log_file):
-        self.log_file = log_file
-
-    def on_epoch_end(self, args, state, control, **kwargs):
-        stats = tracker.get_epoch_stats()
-        stats["epoch"] = state.epoch 
-        stats["global_step"] = state.global_step
-        stats["timestamp"] = datetime.now().isoformat()
-        
-        with open(self.log_file, "a", encoding="utf-8") as f:
-            f.write(json.dumps(stats) + "\n")
-            
-        logger.info(f"="*60)
-        logger.info(f"*** EPOCH {state.epoch} FINISHED ***")
-        logger.info(f"  Avg Epoch Loss:   {stats['avg_loss']:.4f}")
-        logger.info(f"  Avg Reward:       {stats['avg_reward']:.4f}")
-        logger.info(f"  Avg KL Diverg:    {stats['avg_kl']:.4f}")
-        logger.info(f"  Avg Gen Length:   {stats['avg_completion_length']:.1f}")
-        logger.info(f"="*60)
-        
-        tracker.reset_epoch()
-
-# ==========================================
-# 4. 奖励函数 (直接结果导向)
+# 3. 结果导向奖励函数 (Result-Oriented Reward)
 # ==========================================
 
 def correctness_reward_func(prompts, completions, answer, **kwargs) -> List[float]:
     """
-    answer: 数据集中的 ground truth answer (list of strings)
+    GRPO 核心奖励函数。
+    Logic: Extract(Pred) == Extract(Gold) -> 1.0, else 0.0
     """
     rewards = []
-    for completion, gt in zip(completions, answer):
-        # 1. 提取模型生成内容
-        pred_content = extract_boxed_content(completion)
+    for completion, gold_ans in zip(completions, answer):
+        # 1. 提取模型生成的答案
+        pred_val = extract_boxed_content(completion)
         
-        # 2. 清洗数据 (去除首尾空白)
-        clean_pred = pred_content.strip()
-        clean_gt = gt.strip()
-        
-        # 3. 如果提取为空，直接0分
-        if not clean_pred:
-            rewards.append(0.0)
-            continue
-            
-        # 4. 直接字符串比对
-        if clean_pred == clean_gt:
-            rewards.append(1.0)
+        # 2. 处理标准答案
+        # 如果标准答案本身包含 \boxed，也提取一下；否则直接视为纯文本
+        gold_str = str(gold_ans)
+        if "\\boxed{" in gold_str:
+            gold_val = extract_boxed_content(gold_str)
         else:
+            gold_val = gold_str
+            
+        # 3. 对比 (归一化后)
+        if pred_val and gold_val:
+            if normalize_math_str(pred_val) == normalize_math_str(gold_val):
+                rewards.append(1.0)
+            else:
+                rewards.append(0.0)
+        else:
+            # 提取失败或为空
             rewards.append(0.0)
             
     return rewards
 
 # ==========================================
-# 5. 主训练流程
+# 4. GRPO 训练主程序
 # ==========================================
 
-def run_grpo_training(
-    model_path_base: str,
-    model_path_lora: str,
-    output_base_dir: str = "./output",
-    subset_name: str = "algebra"
+def run_result_oriented_grpo(
+    base_model_path: str,
+    sft_lora_path: str,
+    questions: List[str],
+    answers: List[str],
+    output_base_dir: str = "/root/autodl-tmp/output",
+    num_generations: int = 8,  # Group Size (G)
+    max_steps: int = 500,      # 训练步数
+    learning_rate: float = 1e-6
 ):
+    """
+    结果导向 GRPO 训练入口
+    """
+    # --- 0. 基础设置 ---
     set_seed(42)
-    tracker.reset_window()
-    tracker.reset_epoch()
+    timestamp = datetime.now().strftime('%m%d_%H%M')
+    output_dir = os.path.join(output_base_dir, f"grpo_result_{timestamp}")
+    os.makedirs(output_dir, exist_ok=True)
+    
+    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    logger.addHandler(file_handler)
+    
+    logger.info(f"Starting GRPO (Result-Oriented)")
+    logger.info(f"Base Model: {base_model_path}")
+    logger.info(f"SFT Path:   {sft_lora_path}")
+    logger.info(f"Output Dir: {output_dir}")
+    logger.info(f"Dataset Size: {len(questions)}")
+    logger.info(f"Group Size: {num_generations}")
 
-    # --- 配置参数 ---
-    output_dir = f"{output_base_dir}/grpo_{subset_name}_{datetime.now().strftime('%m%d_%H%M')}"
-    step_log_file, epoch_log_file = setup_logging_paths(output_dir)
-    
-    logger.info(f"Base Model: {model_path_base}")
-    logger.info(f"SFT LoRA:   {model_path_lora}")
-    
-    # --- 1. 加载 Tokenizer ---
-    tokenizer = AutoTokenizer.from_pretrained(model_path_base, trust_remote_code=True)
+    # --- 1. 数据集构建 ---
+    logger.info("Preparing Dataset and Tokenizer...")
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(base_model_path, trust_remote_code=True)
+    except Exception as e:
+        logger.error(f"Failed to load tokenizer: {e}")
+        raise e
+        
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    # --- 2. 加载模型并合并 SFT 权重 ---
+    formatted_data = []
+    for q, a in zip(questions, answers):
+        # 使用 apply_chat_template 保证与 SFT/Inference 一致
+        # 这里只生成 User 输入部分
+        messages = [{"role": "user", "content": str(q)}]
+        prompt_text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        
+        formatted_data.append({
+            "prompt": prompt_text,
+            "answer": str(a) # 传递给 reward function
+        })
+    
+    dataset = Dataset.from_list(formatted_data)
+
+    # --- 2. 模型准备 (Base + SFT -> Merge -> New LoRA) ---
     logger.info("Loading Base Model...")
     model = AutoModelForCausalLM.from_pretrained(
-        model_path_base,
-        torch_dtype=torch.float16,
+        base_model_path,
+        torch_dtype=torch.bfloat16,
         device_map="auto",
         trust_remote_code=True
     )
     
-    if os.path.exists(model_path_lora):
-        logger.info(f"Merging SFT LoRA from {model_path_lora}...")
-        model = PeftModel.from_pretrained(model, model_path_lora)
-        model = model.merge_and_unload() # 合并，成为新的 Base Model 用于 RL
+    if os.path.exists(sft_lora_path):
+        logger.info(f"Merging SFT Adapter from {sft_lora_path}...")
+        model = PeftModel.from_pretrained(model, sft_lora_path)
+        model = model.merge_and_unload() # 关键：合并权重
     else:
-        logger.warning("SFT LoRA path not found. Starting GRPO from raw Base Model.")
+        logger.warning(f"SFT path {sft_lora_path} not found! Training on Base Model only.")
 
-    # --- 3. 准备数据 ---
-    logger.info(f"Loading Dataset ({subset_name})...")
-    # 使用你的 Math_All 类
-    math_obj = Math_All(train=True, subset_name=subset_name, shuffle=True)
-    
-    data_dict = {"prompt": [], "answer": []}
-    for prob, ans in zip(math_obj.problems, math_obj.answers):
-        # 关键修改：直接使用 problem 作为 prompt，不添加任何 system prompt
-        data_dict["prompt"].append(prob)
-        # 假设 math_obj.answers 已经是清洗好的答案
-        data_dict["answer"].append(ans)
-        
-    dataset = Dataset.from_dict(data_dict)
-    logger.info(f"Dataset Size: {len(dataset)}")
+    model.gradient_checkpointing_enable() # 节省显存
 
-    # --- 4. 配置 GRPO 新的 LoRA ---
+    # GRPO 训练的新 LoRA 配置
     peft_config = LoraConfig(
         r=16,
         lora_alpha=32,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        task_type="CAUSAL_LM",
-        bias="none"
+        task_type=TaskType.CAUSAL_LM,
+        bias="none",
     )
 
-    # --- 5. 训练参数 ---
+    # --- 3. GRPO 参数配置 ---
     training_args = GRPOConfig(
         output_dir=output_dir,
-        learning_rate=1e-6,               # RL 学习率
-        num_train_epochs=1,
-        per_device_train_batch_size=2,    # Batch Size
-        gradient_accumulation_steps=4,
-        logging_steps=1,                  # 这里的 logging_steps 配合我们的 Callback 使用
+        learning_rate=learning_rate,
+        adam_beta1=0.9,
+        adam_beta2=0.99,
+        weight_decay=0.1,
+        warmup_ratio=0.1,
+        lr_scheduler_type="cosine",
+        logging_steps=1,
         bf16=True,
-        save_strategy="steps",
+        per_device_train_batch_size=1,     # 显存敏感
+        gradient_accumulation_steps=8,     # 累计梯度
+        num_generations=num_generations,   # G: 每个Prompt采样多少个
+        max_prompt_length=1024,
+        max_completion_length=1024,
+        max_steps=max_steps,
         save_steps=100,
-        max_prompt_length=512,
-        max_completion_length=512,
-        num_generations=8,                # G: Group Size
-        beta=0.04,                        # KL 惩罚
-        report_to="none",                 # 关闭默认 wandb/tensorboard
-        use_vllm=True,                    # 开启 vLLM 加速
-        vllm_gpu_memory_utilization=0.5,
+        save_total_limit=1,
+        report_to="none",
+        use_vllm=False, # 设为True需环境支持，设为False更稳定
+        beta=0.04,      # KL惩罚系数
     )
 
-    # --- 6. Trainer ---
+    # --- 4. 初始化 Trainer ---
     trainer = GRPOTrainer(
         model=model,
-        reward_funcs=[correctness_reward_func], # 只有这一个奖励函数
+        processing_class=tokenizer,
+        reward_funcs=correctness_reward_func, # 核心：使用自定义的提取+对比函数
         args=training_args,
         train_dataset=dataset,
-        processing_class=tokenizer,
         peft_config=peft_config,
-        callbacks=[
-            GRPOStepLogCallback(step_log_file, log_interval=1),
-            GRPOEpochLogCallback(epoch_log_file)
-        ]
     )
 
-    logger.info("Starting GRPO Training...")
+    # --- 5. 执行训练 ---
+    logger.info("Starting Training Loop...")
     trainer.train()
-    trainer.save_model(output_dir)
-    logger.info(f"Training finished. Model saved to {output_dir}")
-
-if __name__ == "__main__":
-    # 配置你的路径
-    BASE_MODEL = "deepseek-ai/deepseek-math-7b-base" # 替换实际路径
-    SFT_LORA = "/root/autodl-tmp/output/sira_sft_output" # 替换实际路径
     
+    # --- 6. 保存 ---
+    logger.info(f"Saving final model to {output_dir}")
+    trainer.save_model(output_dir)
+    tokenizer.save_pretrained(output_dir)
+    logger.info("GRPO Training Finished.")
+
+# ==========================================
+# 5. 调用示例
+# ==========================================
+if __name__ == "__main__":
+    # 模拟数据加载 (请替换为您实际的数据加载逻辑)
+    # from data_math import Math_500 ...
+    
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+    project_root = os.path.dirname(os.path.dirname(project_root))
+
+    # 配置路径
+    BASE_MODEL = os.path.join(project_root, "CELPO", "model", "OREAL", "OREAL-7B")
+    SFT_LORA = os.path.join(project_root, "CELPO", "output", "hint_sft_XXXX_XXXX") 
+    
+    # 示例数据
+    sample_questions = [
+        "What is 2+2?", 
+        "Calculate \\int x dx."
+    ]
+    sample_answers = [
+        "\\boxed{4}", 
+        "\\boxed{\\frac{x^2}{2} + C}"
+    ]
+
+    # 运行
     try:
-        run_grpo_training(
-            model_path_base=BASE_MODEL,
-            model_path_lora=SFT_LORA,
-            subset_name="algebra" 
+        run_result_oriented_grpo(
+            base_model_path=BASE_MODEL,
+            sft_lora_path=SFT_LORA,
+            questions=sample_questions, # 替换为您的 questions list
+            answers=sample_answers,     # 替换为您的 answers list
+            num_generations=8,
+            max_steps=200
         )
     except Exception as e:
-        logger.error(f"Execution failed: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Training failed: {e}")
+        raise e
