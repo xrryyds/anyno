@@ -40,6 +40,7 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
 def exam_roll_recheck_hints():
@@ -479,15 +480,15 @@ def grpo_on_MATH(lora_path:str, subset:str ="all"):
     data = Math_All(subset_name=subset,train=True)
     question = data.problems
     answer = data.answers
-    run_grpo_training(model_path=model_path, sft_lora_path=lora_path, questions=question, answers=answer)
+    run_grpo_training(model_path, lora_path, question, answer)
 
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500()
-    # student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(train=True)
+    # student_take_exam_Gsm8k(True)
+    # student_take_exam_Math_sub(train=False,subset="prealgebra" )
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -507,16 +508,16 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(16)
+    # gen_IRDCL_dataset(8)
     # run_sira_training(model_path=model_path)
     # 4. check
-    student_take_exam_Math_sub(train=False, lora_path="/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
-    # student_take_exam_Gsm8k(train=False, lora_path="/mnt/petrelfs/wanhaiyuan/xrr/CELPO/output/sira_sft_0204_2128")
-    teacher.teacher_mark_paper_with_save()
+    # student_take_exam_Math_sub(train=False, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0207_0905")
+    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sft_lora_checkpoints/final_adapter")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0207_0841")
     
-    # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0206_1232")
+    grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
