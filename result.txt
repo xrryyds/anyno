@@ -50,3 +50,5 @@ OREAL (sft)       2549/5000    1151/7496
 
 DS 7B             2378/5000     1476/5000     243/871      117/871
 DS (EHC)                                    
+
+torchrun --nproc_per_node=2 main.py
