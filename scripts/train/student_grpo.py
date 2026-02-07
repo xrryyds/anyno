@@ -46,7 +46,7 @@ def result_oriented_reward_func(prompts, completions, answer, **kwargs) -> List[
     return rewards
 
 # =====================================================
-# 2. GRPO 训练主流程 (Max Performance)
+# 2. GRPO 训练主流程 (稳定快速版)
 # =====================================================
 
 def run_grpo_training(
@@ -65,7 +65,7 @@ def run_grpo_training(
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path))
     project_root = os.path.dirname(os.path.dirname(project_root))
-    output_dir = os.path.join(project_root, "CELPO", "output", "grpo_max")
+    output_dir = os.path.join(project_root, "CELPO", "output", "grpo_stable")
     
     # --- 1. 准备数据 ---
     try:
@@ -90,7 +90,7 @@ def run_grpo_training(
     model = AutoModelForCausalLM.from_pretrained(
         base_model_path,
         torch_dtype=torch.bfloat16,
-        # device_map="auto", # DDP 必须禁用
+        # device_map="auto",  # DDP 必须禁用
         trust_remote_code=True,
         attn_implementation="sdpa" 
     )
@@ -102,7 +102,7 @@ def run_grpo_training(
     except Exception as e:
         logger.warning(f"Failed to merge SFT LoRA: {e}")
 
-    # --- 3. 配置训练参数 (极致优化) ---
+    # --- 3. 配置训练参数 (稳妥且快) ---
     peft_config = LoraConfig(
         r=64, lora_alpha=128,
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
@@ -113,27 +113,26 @@ def run_grpo_training(
         output_dir=output_dir,
         learning_rate=1e-6,
         
-        # === 【极致优化核心】 ===
-        # 1. 压榨显存：从 8 提到 16，利用 A800 巨大的显存优势
-        per_device_train_batch_size=16, 
+        # === 稳妥配置 ===
+        # 显存足够时，直接拉大 batch size 提升吞吐
+        # 如果还是慢，请将 per_device_train_batch_size 降回 4 或 8
+        per_device_train_batch_size=8, 
+        gradient_accumulation_steps=4, 
         
-        # 2. 减少累积：因为 Batch 翻倍了，累积步数减半，减少开销
-        gradient_accumulation_steps=2, 
+        # 【重点】关闭编译，避免崩溃
+        torch_compile=False, 
         
-        # 3. 开启编译：PyTorch 2.0 图编译，加速计算 (第一步会慢，后面起飞)
-        torch_compile=True, 
+        # 【重点】关闭 unused 检查，消除 DDP 警告并加速
+        ddp_find_unused_parameters=False,
         
-        # 4. 数据加载：拉满 CPU
-        dataloader_num_workers=8,
-        
-        # 其他保持不变
         num_generations=num_generations, 
         tf32=True,                  
         bf16=True,                  
+        dataloader_num_workers=4,
         use_vllm=False,
         max_completion_length=1024,
         num_train_epochs=1,
-        logging_steps=5,
+        logging_steps=1,  # 每步打印，方便观察
         save_steps=100,
         beta=0.04,
         report_to="none"
@@ -149,7 +148,7 @@ def run_grpo_training(
         peft_config=peft_config,
     )
 
-    if local_rank == 0: logger.info("🚀 Starting ULTIMATE GRPO Training...")
+    if local_rank == 0: logger.info("🚀 Starting STABLE GRPO Training...")
     
     trainer.train()
     
