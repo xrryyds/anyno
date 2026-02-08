@@ -480,9 +480,9 @@ def run_sira_training(
     # --- Training Args ---
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=1, 
+        num_train_epochs=5, 
         per_device_train_batch_size=2,   
-        gradient_accumulation_steps=4, 
+        gradient_accumulation_steps=8, 
         learning_rate=2e-4,
         warmup_ratio=0.1,
         logging_steps=hint_config.metrics_log_interval, 
