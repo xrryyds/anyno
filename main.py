@@ -511,8 +511,8 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16)
     # run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=False, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0207_0905")
-    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0207_1630") 
+    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255")
+    student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255") 
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
