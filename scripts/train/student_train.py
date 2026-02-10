@@ -1,5 +1,5 @@
 import os
-# 设置 VLLM 环境变量（如果后续有用到）
+# 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 import sys
@@ -68,7 +68,7 @@ def setup_logging(output_dir):
     return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
 
 # ==========================================
-# 2. Metrics Tracker (已更新：支持 Raw Loss 记录)
+# 2. Metrics Tracker
 # ==========================================
 class TrainingMetricsTracker:
     def __init__(self):
@@ -79,7 +79,6 @@ class TrainingMetricsTracker:
         self.win_loss, self.win_steps = 0.0, 0
         self.win_gate_values, self.win_anchor_losses_weighted = [], []
         self.win_anchor_losses_raw = []
-        # [NEW] Mode B 原始 Loss
         self.win_mode_b_losses, self.win_mode_b_raw = [], [] 
         self.current_alpha = 0.0 
         self.win_counts = {"anchor": 0, "mode_b": 0}
@@ -88,7 +87,6 @@ class TrainingMetricsTracker:
         self.ep_loss, self.ep_steps = 0.0, 0
         self.ep_gate_values, self.ep_anchor_losses_weighted = [], []
         self.ep_anchor_losses_raw = []
-        # [NEW] Mode B 原始 Loss
         self.ep_mode_b_losses, self.ep_mode_b_raw = [], []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
 
@@ -108,7 +106,6 @@ class TrainingMetricsTracker:
                 self.win_counts["mode_b"] += 1; self.ep_counts["mode_b"] += 1
                 self.win_mode_b_losses.append(loss_contrib); self.ep_mode_b_losses.append(loss_contrib)
                 self.win_gate_values.append(gate_val); self.ep_gate_values.append(gate_val)
-                # [NEW] 记录 Mode B Raw Loss
                 self.win_mode_b_raw.append(raw_loss); self.ep_mode_b_raw.append(raw_loss)
             
             elif mode == "pure_sft_anchor":
@@ -124,7 +121,7 @@ class TrainingMetricsTracker:
             "avg_anchor_loss_weighted": avg(anchor_w), 
             "avg_anchor_loss_raw": avg(anchor_raw),    
             "avg_mode_b_loss": avg(mode_b), 
-            "avg_mode_b_loss_raw": avg(mode_b_raw), # [NEW] 统计 Raw Loss
+            "avg_mode_b_loss_raw": avg(mode_b_raw), 
             "final_alpha": alpha, 
             "sample_counts": counts
         }
@@ -236,14 +233,13 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. SIRA Trainer (已更新：Alpha 使用 Raw Loss 计算)
+# 4. SIRA Trainer (含模长归一化修正)
 # ==========================================
 
 class SequentialTrainer(Trainer):
     def __init__(self, hint_config: HintSFTConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
-        # 这里的 beta 应当与 raw_loss 的量级对应
         self.running_gen_loss = self.hint_config.beta 
 
     def get_train_dataloader(self) -> DataLoader:
@@ -283,16 +279,20 @@ class SequentialTrainer(Trainer):
         shift_a_masks = answer_masks[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+        # 计算每个token的loss，保持 batch_size, seq_len 结构
         token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
         token_losses = token_losses.view(shift_labels.shape)
 
-        gen_losses = []      # 用于反向传播的加权 Loss
-        gen_raw_losses = []  # [NEW] 用于计算 Alpha 的原始 Loss
+        gen_losses = []      # 用于构建向量
+        gen_raw_losses = []  # 用于计算Alpha
         
         anchor_indices = [] 
         gen_indices = []    
         debug_map = {}      
 
+        # ------------------------------------------------------------------
+        # Part 1: 计算每个样本的 Loss (Mode B 和 Mode A)
+        # ------------------------------------------------------------------
         for i in range(token_losses.size(0)):
             h_m = shift_h_masks[i]
             h_count = h_m.sum()
@@ -300,30 +300,26 @@ class SequentialTrainer(Trainer):
             # --- Mode B (Hint) ---
             if h_count > 0:
                 gen_indices.append(i)
-                
-                # 1. 计算 Hint 部分 Loss
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
                 
-                # 2. 计算 Gate
+                # Gate 机制
                 gate_input = self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
                 gate = torch.sigmoid(gate_input)
                 
-                # 3. 计算 Answer 部分 Loss
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
                 
-                # 4. 计算加权 Loss (Backward Target)
+                # 加权生成 Loss
                 l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
                 gen_losses.append(l_gen)
 
-                # 5. [NEW] 计算 Raw Loss (Alpha Target)
+                # 计算 Raw Loss
                 total_valid_tokens = h_count + a_count
                 if total_valid_tokens > 0:
                     raw_b_loss = ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum()) / total_valid_tokens
                 else:
                     raw_b_loss = torch.tensor(0.0, device=logits.device)
-                
                 gen_raw_losses.append(raw_b_loss)
 
                 debug_map[i] = {"gate": gate.item(), "loss_contrib": l_gen.item(), "raw_loss": raw_b_loss.item()}
@@ -332,12 +328,11 @@ class SequentialTrainer(Trainer):
             else:
                 anchor_indices.append(i)
 
-        # ============================================================
-        # [关键修改] 使用 Raw Loss 计算 Alpha
-        # ============================================================
+        # ------------------------------------------------------------------
+        # Part 2: 计算 Alpha (基于 Raw Loss)
+        # ------------------------------------------------------------------
         if len(gen_raw_losses) > 0:
             current_raw_loss_tensor = torch.stack(gen_raw_losses).mean()
-            # 更新移动平均
             self.running_gen_loss = 0.9 * self.running_gen_loss + 0.1 * current_raw_loss_tensor.item()
             scaling_loss = current_raw_loss_tensor.detach()
         else:
@@ -345,8 +340,6 @@ class SequentialTrainer(Trainer):
 
         r = self.hint_config.split_r
         vol_balance = (1 - r) / r
-        
-        # Alpha 计算：raw_loss / beta
         alpha = vol_balance * (scaling_loss / self.hint_config.beta)
         
         final_losses_map = {}
@@ -357,16 +350,50 @@ class SequentialTrainer(Trainer):
             a_m = shift_a_masks[idx]
             a_count = a_m.sum()
             raw_anchor_loss = (token_losses[idx] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
-            
-            # 使用 Alpha 加权
+            # Alpha 加权
             weighted_anchor_loss = alpha * raw_anchor_loss
             final_losses_map[idx] = weighted_anchor_loss
             debug_map[idx] = {"gate": 0.0, "loss_contrib": weighted_anchor_loss.item(), "raw_loss": raw_anchor_loss.item()}
 
-        batch_loss_list = [final_losses_map[i] for i in range(token_losses.size(0))]
         debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
         
-        return torch.stack(batch_loss_list).mean(), debug_info_list, (alpha.item() if isinstance(alpha, torch.Tensor) else alpha)
+        # ------------------------------------------------------------------
+        # Part 3: [新增] 向量模长归一化 (Vector Norm Scaling)
+        # ------------------------------------------------------------------
+        
+        batch_size = token_losses.size(0)
+        # 1. 构建完整的 Batch Loss 向量
+        loss_vector = torch.stack([final_losses_map[i] for i in range(batch_size)])
+
+        # 2. 计算模长并缩放
+        # 只有在存在 Mode B 数据时，才有"保持 Mode B 模长"的概念
+        if len(gen_indices) > 0:
+            # 创建 Mask，提取仅 Mode B 的向量
+            is_mode_b = torch.zeros(batch_size, device=loss_vector.device)
+            # 注意: gen_indices 是 list，直接用索引赋值
+            for idx in gen_indices:
+                is_mode_b[idx] = 1.0
+            
+            loss_b_vec = loss_vector * is_mode_b
+            
+            # 计算 L2 范数 (模长)
+            norm_b = torch.norm(loss_b_vec, p=2)      # Mode B 的模长 (Target Magnitude)
+            norm_total = torch.norm(loss_vector, p=2) # 整体的模长 (Target Direction)
+            
+            # 计算缩放因子: ||B|| / ||Total||
+            # 使用 detach() 确保不反向传播去优化 norm 大小，只优化方向
+            if norm_total > 1e-6:
+                scale_factor = (norm_b / norm_total).detach()
+                # 最终 Loss = 方向(Total) * 大小(Mode B)
+                final_loss_tensor = loss_vector * scale_factor
+                final_loss = final_loss_tensor.mean()
+            else:
+                final_loss = loss_vector.mean()
+        else:
+            # 如果全是 Anchor 数据，回退到普通平均 (或者你可以选择跳过)
+            final_loss = loss_vector.mean()
+
+        return final_loss, debug_info_list, (alpha.item() if isinstance(alpha, torch.Tensor) else alpha)
 
 # ==========================================
 # 5. Callbacks
