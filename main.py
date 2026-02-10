@@ -354,7 +354,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 1)
+                        0.5, 20)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -487,11 +487,11 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500()
-    # student_take_exam_Gsm8k(True)
+    # student_take_exam_Gsm8k(False)
     # student_take_exam_Math_sub(train=False,subset="prealgebra" )
 
     # #2. teacher judges
-    # teacher = TeacherCorrecter()
+    teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
@@ -512,7 +512,7 @@ if __name__ == "__main__":
     run_sira_training(model_path=model_path)
     # 4. check
     # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255")
-    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255") 
+    # student_take_exam_Gsm8k(train=False, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0210_1900")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
