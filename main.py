@@ -491,7 +491,7 @@ if __name__ == "__main__":
     # student_take_exam_Math_sub(train=False,subset="prealgebra" )
 
     # #2. teacher judges
-    teacher = TeacherCorrecter()
+    # teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
@@ -509,11 +509,11 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(16)
-    # run_sira_training(model_path=model_path)
+    run_sira_training(model_path=model_path)
     # 4. check
     # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255") 
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0207_0841")
