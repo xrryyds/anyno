@@ -354,7 +354,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 20)
+                        0.5, 1)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -393,7 +393,7 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
             err_entropy.append(m_entropy[i])
 
     logger.info(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
-
+    logger.info(f"mistake:{len(err_question_idx)}")
     exam_paper.save_mistakes(
         err_question_idx, 
         err_questions, 
@@ -508,16 +508,15 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(16)
+    # gen_IRDCL_dataset(16) 
     run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0208_1255")
-    # student_take_exam_Gsm8k(train=False, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0210_1900")
+    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0211_0328")
+    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0211_0328")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_0207_0841")
-    
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_3")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################

@@ -52,10 +52,17 @@ class HintSFTConfig:
     gate_threshold: float = 0.3     # Gate 开启的阈值 (Mode B)
     gate_slope: float = 3.0         # Gate Sigmoid 的斜率 (Mode B)
     
-    split_r: float = 0.5            
+    split_r: float = 0.5            # 平衡系数计算参数
+    
+    # 【新增】全局 Anchor 权重系数 k
+    # 最终 Alpha = k * Alpha_Balance * Alpha_Suppress
+    anchor_loss_weight_k: float = 1 
     
     # 【抑制灵敏度】
-    anchor_sigmoid_slope: float = 100.0 
+    anchor_sigmoid_slope: float = 50.0 
+    
+    # 【容忍度】
+    anchor_loss_tolerance: float = 1.01
     
     metrics_log_interval: int = 8   
     
@@ -83,9 +90,9 @@ class TrainingMetricsTracker:
         self.win_gate_values, self.win_anchor_losses_weighted = [], []
         self.win_anchor_losses_raw = []
         self.win_mode_b_losses, self.win_mode_b_raw = [], [] 
-        self.current_alpha = 0.0 
         self.win_counts = {"anchor": 0, "mode_b": 0}
         self.win_beta_values = [] 
+        self.win_alpha_values = []
 
     def reset_epoch(self):
         self.ep_loss, self.ep_steps = 0.0, 0
@@ -94,15 +101,19 @@ class TrainingMetricsTracker:
         self.ep_mode_b_losses, self.ep_mode_b_raw = [], []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
         self.ep_beta_values = []
+        self.ep_alpha_values = []
 
     def update(self, loss, metadata, debug_info, current_alpha, current_beta):
-        self.current_alpha = current_alpha
         self.win_loss += loss; self.win_steps += 1
         self.ep_loss += loss; self.ep_steps += 1
         
         if current_beta is not None:
              self.win_beta_values.append(current_beta)
              self.ep_beta_values.append(current_beta)
+        
+        if current_alpha is not None:
+             self.win_alpha_values.append(current_alpha)
+             self.ep_alpha_values.append(current_alpha)
         
         for meta, info in zip(metadata, debug_info):
             if info is None: continue 
@@ -122,7 +133,7 @@ class TrainingMetricsTracker:
                 self.win_anchor_losses_weighted.append(loss_contrib); self.ep_anchor_losses_weighted.append(loss_contrib)
                 self.win_anchor_losses_raw.append(raw_loss); self.ep_anchor_losses_raw.append(raw_loss) 
 
-    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w, anchor_raw, mode_b, mode_b_raw, counts, alpha, beta_vals):
+    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w, anchor_raw, mode_b, mode_b_raw, counts, alpha_vals, beta_vals):
         avg = lambda l: sum(l)/len(l) if l else 0.0
         return {
             "avg_train_loss": loss_sum / max(steps, 1), 
@@ -131,7 +142,7 @@ class TrainingMetricsTracker:
             "avg_anchor_loss_raw": avg(anchor_raw),    
             "avg_mode_b_loss": avg(mode_b), 
             "avg_mode_b_loss_raw": avg(mode_b_raw), 
-            "final_alpha": alpha, 
+            "avg_final_alpha": avg(alpha_vals), 
             "avg_dynamic_beta": avg(beta_vals),
             "sample_counts": counts
         }
@@ -141,7 +152,7 @@ class TrainingMetricsTracker:
             self.win_loss, self.win_steps, self.win_gate_values, 
             self.win_anchor_losses_weighted, self.win_anchor_losses_raw, 
             self.win_mode_b_losses, self.win_mode_b_raw, 
-            self.win_counts, self.current_alpha, self.win_beta_values
+            self.win_counts, self.win_alpha_values, self.win_beta_values
         )
 
     def get_epoch_stats(self):
@@ -149,7 +160,7 @@ class TrainingMetricsTracker:
             self.ep_loss, self.ep_steps, self.ep_gate_values, 
             self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, 
             self.ep_mode_b_losses, self.ep_mode_b_raw, 
-            self.ep_counts, self.current_alpha, self.ep_beta_values
+            self.ep_counts, self.ep_alpha_values, self.ep_beta_values
         )
 
 tracker = TrainingMetricsTracker()
@@ -243,14 +254,13 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. SIRA Trainer (Dynamic Balance & Suppression)
+# 4. SIRA Trainer (With Global Parameter k)
 # ==========================================
 
 class SequentialTrainer(Trainer):
     def __init__(self, hint_config: HintSFTConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
-        # 初始化 running loss，由于没有初始 beta，暂时给一个较小值
         self.running_gen_loss = 1.0 
 
     def get_train_dataloader(self) -> DataLoader:
@@ -273,13 +283,13 @@ class SequentialTrainer(Trainer):
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
         
-        # === Step 1: Base Model (Ref) Logits for Dynamic Beta ===
+        # Step 1: Base Model (Ref) Logits
         with torch.no_grad():
             with self.model.disable_adapter():
                 ref_outputs = model(**inputs)
                 ref_logits = ref_outputs.get("logits")
         
-        # === Step 2: Current Model Logits ===
+        # Step 2: Current Model Logits
         outputs = model(**inputs)
         logits = outputs.get("logits")
         
@@ -312,9 +322,7 @@ class SequentialTrainer(Trainer):
         gen_indices = []    
         debug_map = {}      
 
-        # ------------------------------------------------------------------
-        # Part 1: Mode B Loss (Generation)
-        # ------------------------------------------------------------------
+        # Part 1: Mode B Loss
         for i in range(token_losses.size(0)):
             h_m = shift_h_masks[i]
             h_count = h_m.sum()
@@ -339,7 +347,6 @@ class SequentialTrainer(Trainer):
             else:
                 anchor_indices.append(i)
 
-        # 更新 Running Gen Loss 用于平衡计算
         if len(gen_losses) > 0:
             current_gen_loss_mean = torch.stack(gen_losses).mean()
             self.running_gen_loss = 0.9 * self.running_gen_loss + 0.1 * current_gen_loss_mean.item()
@@ -347,14 +354,11 @@ class SequentialTrainer(Trainer):
         else:
             scaling_gen_loss = torch.tensor(self.running_gen_loss, device=logits.device)
 
-        # ------------------------------------------------------------------
-        # Part 2: 计算 Alpha (平衡系数 + 抑制系数)
-        # ------------------------------------------------------------------
+        # Part 2: Alpha 计算
         final_losses_map = {}
         for idx, l_val in zip(gen_indices, gen_losses):
             final_losses_map[idx] = l_val
 
-        # 初始化返回值
         alpha_balance = torch.tensor(0.0, device=logits.device)
         alpha_suppress = torch.tensor(0.0, device=logits.device)
         dynamic_beta_val = 0.0
@@ -370,40 +374,44 @@ class SequentialTrainer(Trainer):
                 a_count = a_m.sum()
                 if a_count > 0:
                     current_raw_sum += (token_losses[idx] * a_m).sum() / a_count
-                    ref_raw_sum += (ref_token_losses[idx] * a_m).sum() / a_count # Beta Source
+                    ref_raw_sum += (ref_token_losses[idx] * a_m).sum() / a_count
                     valid_anchor_count += 1
             
             if valid_anchor_count > 0:
                 batch_current_mean = current_raw_sum / valid_anchor_count
-                batch_ref_mean = ref_raw_sum / valid_anchor_count # Dynamic Beta
+                batch_ref_mean = ref_raw_sum / valid_anchor_count 
                 dynamic_beta_val = batch_ref_mean.item()
                 
                 safe_beta = batch_ref_mean.detach() + 1e-6
                 
-                # === 1. 计算平衡系数 (Balance Coefficient) ===
-                # 公式: ( (1-r)/r ) * ( Loss_ModeB / Beta )
+                # 平衡系数
                 r = self.hint_config.split_r
                 vol_balance = (1 - r) / r
                 alpha_balance = vol_balance * (scaling_gen_loss / safe_beta)
                 
-                # === 2. 计算抑制系数 (Suppression Coefficient) ===
-                # 公式: 2 * Sigmoid( Slope * (Current / Beta - 1) )
-                ratio = batch_current_mean.detach() / safe_beta
+                # 抑制系数
+                target_threshold = safe_beta * self.hint_config.anchor_loss_tolerance
+                ratio = batch_current_mean.detach() / target_threshold
+                
                 sigmoid_input = (ratio - 1.0) * self.hint_config.anchor_sigmoid_slope
                 alpha_suppress = torch.sigmoid(sigmoid_input) * 2.0 
                 
-                final_alpha_val = (alpha_balance * alpha_suppress).item()
+                # 【修改】Alpha = k * Balance * Suppress
+                k = self.hint_config.anchor_loss_weight_k
+                final_alpha_val = (k * alpha_balance * alpha_suppress).item()
         
-        # ------------------------------------------------------------------
         # Part 3: 组合最终 Loss
-        # ------------------------------------------------------------------
         for idx in anchor_indices:
             a_m = shift_a_masks[idx]
             a_count = a_m.sum()
             raw_anchor_loss = (token_losses[idx] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
             
-            # 最终 Loss = (平衡系数 * 抑制系数) * Raw Loss
-            final_coeff = alpha_balance * alpha_suppress
+            k = self.hint_config.anchor_loss_weight_k
+            final_coeff = k * alpha_balance * alpha_suppress
+            
+            # 【保底】防止系数过小
+            final_coeff = torch.max(final_coeff, torch.tensor(0.01, device=logits.device))
+
             weighted_anchor_loss = final_coeff * raw_anchor_loss
             
             final_losses_map[idx] = weighted_anchor_loss
@@ -416,9 +424,7 @@ class SequentialTrainer(Trainer):
 
         debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
         
-        # ------------------------------------------------------------------
         # Part 4: 模长归一化
-        # ------------------------------------------------------------------
         batch_size = token_losses.size(0)
         loss_vector = torch.stack([final_losses_map[i] for i in range(batch_size)])
 
@@ -459,7 +465,7 @@ class StepLogCallback(TrainerCallback):
                         f"AncRaw: {stats['avg_anchor_loss_raw']:.4f} | "
                         f"Beta(Dyn): {stats['avg_dynamic_beta']:.4f} | "
                         f"ModeB(W): {stats['avg_mode_b_loss']:.4f} | "
-                        f"FinalAlpha: {stats['final_alpha']:.1f}")
+                        f"AvgAlpha: {stats['avg_final_alpha']:.2f}")
             tracker.reset_window()
 
 class EpochLogCallback(TrainerCallback):
@@ -475,6 +481,7 @@ class EpochLogCallback(TrainerCallback):
         logger.info(f"  Avg Beta (Dyn): {stats['avg_dynamic_beta']:.4f}")
         logger.info(f"  Avg ModeB (W):  {stats['avg_mode_b_loss']:.4f}")
         logger.info(f"  Avg Anc Raw:    {stats['avg_anchor_loss_raw']:.4f}")
+        logger.info(f"  Avg Alpha:      {stats['avg_final_alpha']:.4f}")
         logger.info(f"="*60)
         tracker.reset_epoch()
 
@@ -487,7 +494,7 @@ def run_sira_training(
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
     batch_size: int = 16,
-    epoch: int = 1,
+    epoch: int = 20,
     device_num: int = 1,
     spilt: float = 0.5
 ):
@@ -509,9 +516,15 @@ def run_sira_training(
         data_path=data_path, 
         output_base_dir=output_base_dir,
         
-        split_r=spilt,           # 恢复 split_r
+        split_r=spilt,           
+        
+        # 【新增】全局系数 k，你可以根据需要调整它
+        anchor_loss_weight_k=1.0/3, 
+        
         anchor_sigmoid_slope=100.0, 
-        metrics_log_interval= batch_size
+        anchor_loss_tolerance=1.01,
+        
+        metrics_log_interval=batch_size
     )
     
     output_dir = f"{hint_config.output_base_dir}/sira_sft_{datetime.now().strftime('%m%d_%H%M')}"
