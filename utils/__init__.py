@@ -16,5 +16,6 @@ __all__= [
     "filter_json_by_question_idx",
     "generate_irdcl_dataset",
     "remove_null_hints",
-    "generate_irdcl_dataset_syn"
+    "generate_irdcl_dataset_syn",
+    "generate_irdcl_dataset_v2"
 ]

@@ -19,6 +19,7 @@ from utils import (
     remove_null_hints, 
     filter_json_by_question_idx, 
     generate_irdcl_dataset,
+    generate_irdcl_datase_v2,
     remove_null_hints,
 )
 from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset
@@ -355,6 +356,15 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         0.5, 1)
+    
+def gen_IRDCL_dataset_v2(batch_size):
+    remove_null_hints(exam_paper.adv_hints_dataset_path)
+    generate_irdcl_datase_v2(exam_paper.corr_path,
+                        exam_paper.adv_hints_dataset_path,
+                        exam_paper.disadv_hints_dataset_path,
+                        exam_paper.irdcl_dataset_path,
+                        batch_size,
+                        0.9375, 1)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -509,10 +519,11 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(16) 
+    # gen_IRDCL_dataset_v2(16) 
     run_sira_training(model_path=model_path)
     # 4. check
-    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0211_0328")
-    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0211_0328")
+    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0214_1459")
+    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_3")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
