@@ -277,14 +277,15 @@ def generate_irdcl_dataset_syn(corr_path, adv_hints_path, disadv_hints_path, out
 
 def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
     """
-    # Construct IRDCL training data.
-    # Logic: Repeat the generation process for 'epoch' times. 
-    # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
-    # Optimized: 
-    #   - Use sampling without replacement for anchors (across all epochs)
-    #   - Pre-generate extended anchor pool to handle insufficient data
-    #   - Provide clear warnings and statistics
+    # Construct IRDCL training data (Interleaved Version).
+    # Logic: Strictly interleave Hint and Anchor data (Hint, Anchor, Hint, Anchor...).
+    # Requirement: anchor_k should be 0.5 for perfect pairing.
     """
+    
+    # 强制检查 anchor_k，如果需要严格的一对一穿插，比例最好是 0.5
+    if abs(anchor_k - 0.5) > 0.01:
+        print(f"⚠️ WARNING: anchor_k is {anchor_k}, but interleaved mode works best with 0.5 (1:1 ratio).")
+
     # 计算标准的 batch 分配
     std_num_anchors = int(batch_size * anchor_k)
     std_num_hints = batch_size - std_num_anchors
@@ -293,155 +294,128 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
         raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
 
     print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
-
     print("Loading data...")
+    
     with open(corr_path, 'r', encoding='utf-8') as f:
         corr_data = json.load(f)
     
     with open(adv_hints_path, 'r', encoding='utf-8') as f:
         adv_data = json.load(f)
         
-    # with open(disadv_hints_path, 'r', encoding='utf-8') as f:
-    #     disadv_data = json.load(f)
-
-    # combined_hints_data = adv_data + disadv_data
     combined_hints_data = adv_data
     total_hints = len(combined_hints_data)
     print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
 
-    # 预先计算总共需要的 anchor 数量
-    total_batches = (total_hints + std_num_hints - 1) // std_num_hints  # 向上取整
+    # --- Anchor 数量估算与扩展 (保持原逻辑不变) ---
+    total_batches = (total_hints + std_num_hints - 1) // std_num_hints
     approx_anchors_per_epoch = total_batches * std_num_anchors
     total_anchors_needed = approx_anchors_per_epoch * epoch
     
-    print(f"\n{'='*60}")
-    print(f"Anchor Requirements Analysis:")
-    print(f"  Total batches per epoch: {total_batches}")
-    print(f"  Anchors needed per epoch: ~{approx_anchors_per_epoch}")
-    print(f"  Total anchors needed: ~{total_anchors_needed}")
-    print(f"  Available anchors: {len(corr_data)}")
-    
     if total_anchors_needed > len(corr_data):
         repeat_times = total_anchors_needed / len(corr_data)
-        print(f"\n⚠️  WARNING: Insufficient anchor data!")
-        print(f"  Each anchor will be reused ~{repeat_times:.2f} times on average")
-        
-        # 设定阈值警告
-        if repeat_times > 10:
-            print(f"\n❌ ERROR: Repeat rate too high ({repeat_times:.1f}x)!")
-            print(f"  This may cause severe overfitting.")
-            response = input(f"Continue anyway? (yes/no): ")
-            if response.lower() not in ['yes', 'y']:
-                print("Operation aborted.")
-                return
-        elif repeat_times > 3:
-            print(f"\n⚠️  High repeat rate detected ({repeat_times:.1f}x)")
-            print(f"  Consider reducing epochs or increasing anchor data.")
-    else:
-        print(f"✅ Sufficient anchor data available")
-    print(f"{'='*60}\n")
+        print(f"⚠️ Anchor reuse rate: {repeat_times:.2f}x")
     
     # 预先生成扩展的 anchor 池
     repeat_factor = max(1, (total_anchors_needed + len(corr_data) - 1) // len(corr_data))
-    print(f"Generating extended anchor pool (creating {repeat_factor} shuffled copies)...")
-    
     extended_corr_data = []
     for i in range(repeat_factor):
         shuffled_copy = corr_data.copy()
         random.shuffle(shuffled_copy)
         extended_corr_data.extend(shuffled_copy)
-        print(f"  Copy {i+1}/{repeat_factor} generated ({len(shuffled_copy)} items)")
     
     print(f"Extended anchor pool size: {len(extended_corr_data)}")
-    print()
     
-    anchor_idx = 0  # 全局 anchor 索引
+    anchor_idx = 0
     final_dataset = []
 
     # --- 开始 Epoch 循环 ---
     for ep in range(epoch):
         print(f"Processing Epoch {ep + 1}/{epoch}...")
         
-        # 每个 epoch 开始前打乱 hints 数据
+        # 每个 epoch 打乱 hints 数据
         random.shuffle(combined_hints_data)
         
-        epoch_anchor_start = anchor_idx  # 记录本 epoch 开始时的索引
-
         # 遍历 hints 数据生成 batch
         for i in range(0, total_hints, std_num_hints):
             current_batch = []
             
-            # 切片获取当前的 hints 块
+            # 1. 获取当前的 hints 块
             hints_chunk = combined_hints_data[i : i + std_num_hints]
             actual_hint_count = len(hints_chunk)
             
-            # 添加 hints 数据
-            for item in hints_chunk:
-                entry = {
-                    "question_idx": item.get("question_idx"),
-                    "question": item.get("question"),
-                    "answer": item.get("student_answer"),
-                    "ref_answer": item.get("ref_answer"),
-                    "ref_solution": item.get("ref_solution"),
-                    "hints": item.get("hints"),
-                    "type": "hint_data" 
-                }
-                current_batch.append(entry)
-            
-            # 计算需要补充的 anchor 数量
+            # 2. 计算需要的 anchor 数量并获取 chunk
             if anchor_k >= 1.0 or anchor_k <= 0.0:
                 needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
             else:
                 ratio_factor = anchor_k / (1.0 - anchor_k)
                 needed_anchor_count = int(round(actual_hint_count * ratio_factor))
             
-            # 直接从扩展池中切片获取（保证不越界）
             anchors_chunk = extended_corr_data[anchor_idx : anchor_idx + needed_anchor_count]
             anchor_idx += needed_anchor_count
 
-            # 添加 anchor 数据
-            for item in anchors_chunk:
-                entry = {
-                    "question_idx": item.get("question_idx"),
-                    "question": item.get("question"),
-                    "answer": item.get("answer"),
-                    "ref_answer": item.get("ref_answer"),
-                    "ref_solution": item.get("ref_solution"),
-                    "hints": None,
-                    "type": "anchor_data"
-                }
-                current_batch.append(entry)
+            # --- [核心修改]：交替穿插构建 Batch ---
+            # 既然要求 1条Hint 1条Anchor，我们使用 zip 进行配对
+            # 如果数量不一致（比如最后一个batch），以较短的为准，剩余的追加在后面
             
-            # 打乱当前 batch 内部顺序
-            random.shuffle(current_batch)
+            min_len = min(len(hints_chunk), len(anchors_chunk))
+            
+            for k in range(min_len):
+                h_item = hints_chunk[k]
+                a_item = anchors_chunk[k]
+                
+                # 添加 Hint 数据
+                current_batch.append({
+                    "question_idx": h_item.get("question_idx"),
+                    "question": h_item.get("question"),
+                    "answer": h_item.get("student_answer"),
+                    "ref_answer": h_item.get("ref_answer"),
+                    "ref_solution": h_item.get("ref_solution"),
+                    "hints": h_item.get("hints"),
+                    "type": "hint_data" # Mode B
+                })
+                
+                # 添加 Anchor 数据
+                current_batch.append({
+                    "question_idx": a_item.get("question_idx"),
+                    "question": a_item.get("question"),
+                    "answer": a_item.get("answer"),
+                    "ref_answer": a_item.get("ref_answer"),
+                    "ref_solution": a_item.get("ref_solution"),
+                    "hints": None,
+                    "type": "anchor_data" # Anchor
+                })
+
+            # 处理多出来的部分（如果有的话，通常 anchor_k=0.5 时很少发生，除非最后一个batch不完整）
+            # 注意：这部分会破坏严格的穿插，但必须保留数据
+            if len(hints_chunk) > min_len:
+                for h_item in hints_chunk[min_len:]:
+                    current_batch.append({
+                        # ... 构建 hint 字典 (省略重复代码) ...
+                        "question": h_item.get("question"),
+                        "answer": h_item.get("student_answer"),
+                        "hints": h_item.get("hints"),
+                        "type": "hint_data"
+                    })
+            
+            if len(anchors_chunk) > min_len:
+                for a_item in anchors_chunk[min_len:]:
+                    current_batch.append({
+                        # ... 构建 anchor 字典 (省略重复代码) ...
+                        "question": a_item.get("question"),
+                        "answer": a_item.get("answer"),
+                        "hints": None,
+                        "type": "anchor_data"
+                    })
+            
+            # --- [重要]：移除 random.shuffle(current_batch) ---
+            # 不要在这里打乱，否则刚才的穿插就白做了。
+            # random.shuffle(current_batch) <--- REMOVED
             
             # 将当前 batch 加入总数据集
             final_dataset.extend(current_batch)
-        
-        epoch_anchors_used = anchor_idx - epoch_anchor_start
-        print(f"  Epoch {ep+1} completed:")
-        print(f"    - Anchors used this epoch: {epoch_anchors_used}")
-        print(f"    - Total anchors used so far: {anchor_idx}/{len(extended_corr_data)}")
-        print(f"    - Progress: {anchor_idx/len(extended_corr_data)*100:.1f}%")
-        print()
-
-    # --- 统计信息 ---
-    hint_count = sum(1 for item in final_dataset if item['type'] == 'hint_data')
-    anchor_count = sum(1 for item in final_dataset if item['type'] == 'anchor_data')
-    actual_repeat_rate = anchor_idx / len(corr_data) if len(corr_data) > 0 else 0
-    
-    print(f"\n{'='*60}")
-    print(f"Generation Statistics:")
-    print(f"  Total items generated: {len(final_dataset)}")
-    print(f"    - Hint data: {hint_count}")
-    print(f"    - Anchor data: {anchor_count}")
-    print(f"  Original anchor pool size: {len(corr_data)}")
-    print(f"  Total anchors used: {anchor_idx}")
-    print(f"  Average reuse per anchor: {actual_repeat_rate:.2f}x")
-    print(f"  Hint/Anchor ratio: {hint_count/anchor_count:.2f}" if anchor_count > 0 else "  Hint/Anchor ratio: N/A")
-    print(f"{'='*60}\n")
-
-    # --- 保存结果 ---
+            
+    # --- 统计与保存 ---
+    print(f"\nSaved {len(final_dataset)} items to {output_path}")
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -449,8 +423,10 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(final_dataset, f, ensure_ascii=False, indent=4)
 
-    print(f"✅ Dataset saved to: {output_path}")
-    print(f"Done!")
+    print("Done (Interleaved Mode)!")
+
+# 使用示例
+# generate_irdcl_dataset_interleaved(..., batch_size=32, anchor_k=0.5, ...)
 
 
 

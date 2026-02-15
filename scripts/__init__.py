@@ -4,6 +4,7 @@ from .train.student_train import run_sira_training
 from .train.sft_train import run_sft_training
 from .train.sft_train import run_sft_training
 from .train.student_grpo import run_grpo_training
+from .train.student_train_v2 import run_sira_training_v2
 
 __all__= [
     "TeacherCorrecter",
@@ -11,5 +12,6 @@ __all__= [
     "run_sira_training",
     "run_sft_training",
     "run_sft_training",
-    "run_grpo_training"
+    "run_grpo_training",
+    "run_sira_training_v2"
 ]

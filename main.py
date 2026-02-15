@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training, run_sft_training, run_grpo_training
+from scripts import run_sira_training, run_sft_training, run_grpo_training, run_sira_training_v2
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -158,6 +158,52 @@ def exam_roll_recheck_hints():
             'success': False,
             'error': error_msg
         }
+
+
+
+
+
+def process_exam_file_batch(file_path, lora_path):
+    """
+    读取JSON文件，提取所有字段为列表，然后一次性调用 student_exam.exam
+    """
+    try:
+        # 1. 读取 JSON 文件
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        # 2. 使用列表推导式提取各列数据
+        # 确保如果某个字段缺失，能有默认值（这里假设数据是完整的，或者用空字符串代替）
+        questions = [item.get('question', '') for item in data]
+        
+        # 注意：JSON中的 key 是 'ref_solution'，参数名是 'solution'
+        solutions = [item.get('ref_solution', '') for item in data]
+        
+        # 注意：JSON中的 key 是 'ref_answer'，参数名是 'answer'
+        answers = [item.get('ref_answer', '') for item in data]
+        
+        indices = [item.get('question_idx', 0) for item in data]
+        
+        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path)
+        # 3. 一次性调用 exam 方法，传入数组
+        student_exam.exam(
+            question=questions, 
+            solution=solutions, 
+            answer=answers, 
+            question_idx=indices
+        )
+        
+        print(f"成功加载并发送了 {len(data)} 条数据进行测试。")
+
+    except FileNotFoundError:
+        print(f"错误：找不到文件 {file_path}")
+    except json.JSONDecodeError:
+        print("错误：JSON 文件格式不正确")
+    except Exception as e:
+        print(f"发生错误：{e}")
+
+
+
 
 def student_correct():
     logger.info("Step 1: Loading Dataset...")
@@ -355,7 +401,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 1)
+                        0.5, 50)
     
 def gen_IRDCL_dataset_v2(batch_size):
     remove_null_hints(exam_paper.adv_hints_dataset_path)
@@ -364,7 +410,7 @@ def gen_IRDCL_dataset_v2(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.9375, 1)
+                        0.5, 50)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
@@ -519,15 +565,18 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(16) 
-    # gen_IRDCL_dataset_v2(16) 
-    run_sira_training(model_path=model_path)
+    # gen_IRDCL_dataset_v2(16)
+    # run_sira_training(model_path=model_path)
+    # run_sira_training_v2(model_path=model_path)
     # 4. check
     # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0214_1459")
-    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_3")
-    # teacher.teacher_mark_paper_with_save()
+    student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_3")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/corr_DS_gsm8k.json","/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_1635")
+    # teacher.teacher_mark_paper_with_save()
