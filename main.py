@@ -41,8 +41,8 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
-model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -547,9 +547,9 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    # student_take_exam_Math500()
-    student_take_exam_Gsm8k(False)
-    # student_take_exam_Math_sub(train=False,subset="prealgebra" )
+    # student_take_exam_Math500(True)
+    # student_take_exam_Gsm8k(False)
+    # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
@@ -585,4 +585,4 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(False)
+    exam_roll_recheck_mistake(False)
