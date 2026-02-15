@@ -1,7 +1,14 @@
 import os
+# ==================== 环境变量设置 ====================
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 同步
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # 确定性 CUBLAS
+os.environ["PYTHONHASHSEED"] = "42"  # Python 哈希种子
+
 import json
 import logging
+import random
+import numpy as np
 import torch
 from tqdm import tqdm
 from transformers import AutoTokenizer, set_seed
@@ -18,6 +25,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Qwen-Math 的标准 System Prompt，这对激发数学能力至关重要
+SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
+
+# =====================================================
+# 全局种子设置函数
+# =====================================================
+def set_all_seeds(seed=42):
+    """确保所有随机性来源都使用相同种子"""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    # PyTorch 确定性设置
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    # 使用确定性算法（warn_only=True 避免某些操作不支持时报错）
+    torch.use_deterministic_algorithms(True, warn_only=True)
+
+# 初始化全局种子
+set_all_seeds(42)
+set_seed(42)  # Transformers 的种子
 
 class TakeExam:
     def __init__(
@@ -26,7 +54,7 @@ class TakeExam:
         use_lora: bool = False,      
         adapter_path: str = None     
     ):
-        # ================== Path (保持不变) ==================
+        # ================== Path ==================
         current_file_path = os.path.abspath(__file__)
         project_root = os.path.dirname(os.path.dirname(current_file_path))
         project_root = os.path.dirname(project_root)
@@ -34,24 +62,13 @@ class TakeExam:
         self.OUTPUT_JSON_PATH = os.path.join(
             project_root, "datasets", "exam", "exam.json"
         )
-        self.OUTPUT_JSON_PATH_jsonl = os.path.join(
-            project_root, "datasets", "exam", "exam.jsonl"
-        )
         self.OUTPUT_JSON_PATH_ROLL = os.path.join(
             project_root, "datasets", "exam", "exam_roll.json"
         )
-        self.OUTPUT_JSON_PATH_TEST = os.path.join(
-            project_root, "datasets", "exam", "exam_test.json"
-        )
-        self.OUTPUT_JSON_PATH_EHC_TEST = os.path.join(
-            project_root, "datasets", "exam", "exam_ehc_test.json"
-        )
 
         # ================== Config ==================
-        # 1. 设置全局种子 (影响 numpy/torch)
-        set_seed(42)
-        # 2. 保存类成员变量供 vLLM 使用 (这是复现的关键)
         self.seed = 42
+        set_all_seeds(self.seed)  # 再次确保种子设置
 
         self.MAX_NEW_TOKENS = 2048
         self.MAX_MODEL_LEN = 4096 
@@ -68,24 +85,27 @@ class TakeExam:
             use_fast=False, 
         )
 
+        # 准备 Qwen 特有的 Stop Tokens ID
+        # 151645: <|im_end|>, 151643: <|endoftext|>
+        self.stop_token_ids = [self.tokenizer.eos_token_id, 151643, 151645]
+
         # ================== Initialize vLLM ==================
         logger.info(f"Initializing vLLM Engine from {self.LOCAL_MODEL_PATH}...")
         
-        num_gpus = torch.cuda.device_count()
-        logger.info(f"Detected {num_gpus} GPUs. Setting tensor_parallel_size={num_gpus}")
+        # 单 GPU 设置，确保完全确定性
+        logger.info("Using single GPU (tensor_parallel_size=1) for deterministic results")
 
-        # vLLM 初始化时也可以传入 seed，但这主要影响模型权重初始化的随机性
-        # 对采样随机性的控制主要在 SamplingParams
         self.llm = LLM(
             model=self.LOCAL_MODEL_PATH,
             trust_remote_code=True,
-            tensor_parallel_size=num_gpus,
+            tensor_parallel_size=1,  # ✅ 单 GPU，确保确定性
             gpu_memory_utilization=0.9,
             max_model_len=self.MAX_MODEL_LEN,
             enable_lora=use_lora,
             max_lora_rank=64,
-            enforce_eager=False,
-            seed=self.seed, # 建议在这里也加一个，虽然对 generation 影响有限
+            enforce_eager=True,  # ✅ 强制 eager 模式，避免编译优化带来的不确定性
+            seed=self.seed,
+            dtype="bfloat16"  # ✅ 明确指定精度，避免自动选择的不确定性
         )
 
         self.lora_request = None
@@ -96,29 +116,48 @@ class TakeExam:
             logger.warning(f"use_lora=True but path '{adapter_path}' is invalid.")
 
         logger.info("vLLM Engine loaded successfully.")
+        
+        # vLLM 初始化后再次设置种子，确保不被污染
+        set_all_seeds(self.seed)
 
-    # =====================================================
-    # 单题推理 (适配 vLLM)
-    # =====================================================
-    def answer_single_question(self, question: str) -> str:
-        try:
-            prompt = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": str(question)}],
+    def _build_prompts(self, questions):
+        """
+        统一构建带有 System Prompt 的输入
+        """
+        prompts = []
+        for q in questions:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": str(q)}
+            ]
+            text = self.tokenizer.apply_chat_template(
+                messages,
                 tokenize=False,
                 add_generation_prompt=True,
             )
+            prompts.append(text)
+        return prompts
+
+    # =====================================================
+    # 单题推理
+    # =====================================================
+    def answer_single_question(self, question: str) -> str:
+        try:
+            # 每次推理前重置种子，确保一致性
+            set_all_seeds(self.seed)
             
-            # ⭐ 修复点 1：传入 self.seed
+            prompts = self._build_prompts([question])
+            
             sampling_params = SamplingParams(
-                temperature=0.1,
-                top_p=0.9,
+                temperature=0.0,  # ✅ 贪心解码
+                top_p=1.0,        # ✅ temperature=0 时必须为 1.0
                 max_tokens=self.MAX_NEW_TOKENS,
-                stop_token_ids=[self.tokenizer.eos_token_id],
+                stop_token_ids=self.stop_token_ids,
                 seed=self.seed 
             )
 
             outputs = self.llm.generate(
-                [prompt], 
+                prompts, 
                 sampling_params, 
                 lora_request=self.lora_request,
                 use_tqdm=False 
@@ -130,11 +169,11 @@ class TakeExam:
             return ""
 
     def exam_with_cal_entropy(self, question, solution, answer, question_idx):
-        logger.warning("exam_with_cal_entropy is running without entropy calculation in vLLM mode to ensure speed.")
+        logger.warning("exam_with_cal_entropy is running standard exam (entropy skipped for speed).")
         self.exam(question, solution, answer, question_idx)
 
     # =====================================================
-    # 批量 Roll K 次考试 (vLLM 重构核心加速版)
+    # 批量 Roll K 次考试
     # =====================================================
     def exam_roll_k(
         self,
@@ -143,31 +182,25 @@ class TakeExam:
         answer,
         question_idx,
         k: int = 8,
-        temperature: float = 0.7
+        temperature: float = 0.7 
     ):
         """
         使用 vLLM 进行 Roll K 推理。
+        注意：如果用于 Pass@1 测试，请在调用时传入 k=1, temperature=0.0
         """
         logger.info(f"Starting vLLM Roll-K Exam: k={k}, temp={temperature}, total_questions={len(question)}")
         
-        logger.info("Preparing prompts...")
-        prompts = []
-        for q in question:
-            text = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": str(q)}],
-                tokenize=False,
-                add_generation_prompt=True,
-            )
-            prompts.append(text)
+        # 推理前重置种子
+        set_all_seeds(self.seed)
+        
+        prompts = self._build_prompts(question)
 
-        # ⭐ 修复点 2：传入 self.seed
-        # 即使 temperature > 0，固定 seed 也能保证每次 Roll 出来的 K 个结果是固定的
         sampling_params = SamplingParams(
             n=k,
             temperature=temperature,
-            top_p=0.9,
+            top_p=1.0 if temperature == 0 else 0.9,  # temperature=0 时 top_p 必须为 1
             max_tokens=self.MAX_NEW_TOKENS,
-            stop_token_ids=[self.tokenizer.eos_token_id],
+            stop_token_ids=self.stop_token_ids,
             seed=self.seed
         )
 
@@ -202,26 +235,23 @@ class TakeExam:
         logger.info(f"Roll-K Exam done! {len(results)} entries saved to {self.OUTPUT_JSON_PATH_ROLL}")
     
     # =====================================================
-    # 标准 Exam (适配 vLLM)
+    # 标准 Exam (Pass@1)
     # =====================================================
     def exam(self, question, solution, answer, question_idx):
-        logger.info(f"Starting vLLM Standard Exam: total_questions={len(question)}")
+        logger.info(f"Starting vLLM Standard Exam (Greedy): total_questions={len(question)}")
         
-        prompts = [
-            self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": str(q)}],
-                tokenize=False,
-                add_generation_prompt=True,
-            ) for q in question
-        ]
+        # 推理前重置种子
+        set_all_seeds(self.seed)
+        
+        prompts = self._build_prompts(question)
 
-        # ⭐ 修复点 3：传入 self.seed
+        # ✅ 强制 greedy search，确保确定性输出
         sampling_params = SamplingParams(
             n=1,
-            temperature=0,
-            top_p=0.9,
+            temperature=0.0,  # ✅ 必须为 0
+            top_p=1.0,        # ✅ 必须为 1.0
             max_tokens=self.MAX_NEW_TOKENS,
-            stop_token_ids=[self.tokenizer.eos_token_id],
+            stop_token_ids=self.stop_token_ids,
             seed=self.seed
         )
 
@@ -244,51 +274,88 @@ class TakeExam:
         logger.info(f"Standard Exam done! Saved to {self.OUTPUT_JSON_PATH}")
 
 
-    def _compute_sequence_entropy(self, generated_ids, scores):
-        return []
+# =====================================================
+# 一致性测试函数
+# =====================================================
+def test_consistency(take_exam, question, n_runs=3):
+    """测试多次运行结果是否完全一致"""
+    logger.info(f"Testing consistency with {n_runs} runs...")
+    results = []
+    
+    for i in range(n_runs):
+        # 每次运行前重置种子
+        set_all_seeds(42)
+        
+        output = take_exam.answer_single_question(question)
+        results.append(output)
+        logger.info(f"Run {i+1} output (first 100 chars): {output[:100]}...")
+    
+    # 检查一致性
+    unique_results = set(results)
+    if len(unique_results) == 1:
+        logger.info("✅ 结果完全一致！输出稳定可靠。")
+        return True
+    else:
+        logger.error("❌ 结果不一致！")
+        for i, r in enumerate(results):
+            logger.error(f"  Run {i+1}: {r[:200]}")
+        return False
 
 
 if __name__ == "__main__":
-    from configs import GRPOConfig
-    from data_math import Math_500
+    # 假设你也有这些文件
+    try:
+        from configs import GRPOConfig
+        from data_math import Math_500
+    except ImportError:
+        # Fallback for standalone testing
+        class MockDataset:
+            def __init__(self):
+                self.problems = ["What is 1+1?"]
+                self.solutions = ["1+1=2"]
+                self.answers = ["2"]
+        logger.warning("Could not import configs/data_math. Using mock data.")
+        Math_500 = lambda x: MockDataset()
 
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path))
     project_root = os.path.dirname(os.path.dirname(project_root))
 
-    exam_file_path = os.path.join(
-        project_root, "CELPO", "configs", "celpo_train.yaml"
-    )
+    exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
+    
+    # 修改为你的模型实际路径
+    MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
     try:
-        config = GRPOConfig.load_yaml(exam_file_path)
-        math_500 = Math_500(config)
-
-        test_dataset = math_500.get_test_data()
-        train_dataset = math_500.get_train_data()
-
-        question = test_dataset.problems + train_dataset.problems
-        solution = test_dataset.solutions + train_dataset.solutions
-        answer = test_dataset.answers + train_dataset.answers
+        # --- 测试用 Mock 数据 ---
+        question = ["Find the value of x if 2x + 3 = 7.", "Calculate 15 * 15."]
+        solution = ["2x=4 -> x=2", "225"]
+        answer = ["2", "225"]
         question_idx = list(range(len(question)))
 
         logger.info(f"Dataset size: {len(question)}")
         
-        LORA_PATH = os.path.join(project_root, "CELPO", "output", "hint_sft_XXXX_XXXX") 
-
         take_exam = TakeExam(
-            model_path="/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct",
-            use_lora=True,          
-            adapter_path=LORA_PATH  
+            model_path=MODEL_PATH,
+            use_lora=False,
+            adapter_path=None  
         )
         
-        take_exam.exam_roll_k(
+        # ✅ 先进行一致性测试
+        logger.info("=" * 60)
+        logger.info("Running consistency test...")
+        logger.info("=" * 60)
+        test_consistency(take_exam, question[0], n_runs=5)
+        
+        # ✅ 然后运行正式考试
+        logger.info("=" * 60)
+        logger.info("Running standard exam...")
+        logger.info("=" * 60)
+        take_exam.exam(
             question, 
             solution, 
             answer, 
-            question_idx, 
-            k=8, 
-            temperature=0.7
+            question_idx
         )
 
     except Exception as e:

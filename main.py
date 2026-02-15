@@ -163,7 +163,7 @@ def exam_roll_recheck_hints():
 
 
 
-def process_exam_file_batch(file_path, lora_path):
+def process_exam_file_batch(file_path, lora_path:str = None):
     """
     读取JSON文件，提取所有字段为列表，然后一次性调用 student_exam.exam
     """
@@ -184,7 +184,12 @@ def process_exam_file_batch(file_path, lora_path):
         
         indices = [item.get('question_idx', 0) for item in data]
         
-        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path)
+        student_exam = None
+
+        if lora_path:
+            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path)
+        else:
+            student_exam = TakeExam(model_path=model_path )
         # 3. 一次性调用 exam 方法，传入数组
         student_exam.exam(
             question=questions, 
@@ -543,7 +548,7 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500()
-    # student_take_exam_Gsm8k(False)
+    student_take_exam_Gsm8k(False)
     # student_take_exam_Math_sub(train=False,subset="prealgebra" )
 
     # #2. teacher judges
@@ -570,13 +575,14 @@ if __name__ == "__main__":
     # run_sira_training_v2(model_path=model_path)
     # 4. check
     # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0214_1459")
-    student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
-    teacher.teacher_mark_paper_with_save()
+    # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_3")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/corr_DS_gsm8k.json","/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_1635")
-    # teacher.teacher_mark_paper_with_save()
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
+    teacher.teacher_mark_paper_with_save()
+    # exam_roll_recheck_mistake(False)

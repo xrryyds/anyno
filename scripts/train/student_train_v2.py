@@ -43,6 +43,9 @@ try:
 except ImportError:
     GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
 
+# [FIX] 定义标准的 System Prompt，确保与推理时一致
+SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
+
 # ==========================================
 # 1. 配置与工具类
 # ==========================================
@@ -180,10 +183,10 @@ class TrainingMetricsTracker:
 tracker = TrainingMetricsTracker()
 
 # ==========================================
-# 3. Data Collator
+# 3. Data Collator (Modified)
 # ==========================================
 class FixedModeCollator:
-    def __init__(self, tokenizer, max_length: int = 2048): 
+    def __init__(self, tokenizer, max_length: int = 4096): 
         self.tokenizer = tokenizer
         self.max_length = max_length
         if self.tokenizer.pad_token_id is None:
@@ -200,12 +203,19 @@ class FixedModeCollator:
             c = item.get('answer') 
             data_type = item.get('type', 'anchor_data') 
 
-            # 1. 构造 Prompt
+            # [FIX] 1. 构造带 System Prompt 的输入，与推理时对齐
+            # 只有 User Role 可能会导致 Qwen2.5-Math-Instruct 表现下降
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": str(q)}
+            ]
+            
             prompt_str = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": str(q)}],
+                messages,
                 tokenize=False,
                 add_generation_prompt=True 
             )
+            
             prompt_ids = self.tokenizer(prompt_str, add_special_tokens=False).input_ids
             len_prompt = len(prompt_ids)
 
@@ -688,9 +698,10 @@ def run_sira_training_v2(
     logger.info(f"Simulating {real_data_epochs} Epochs.")
     logger.info(f"Total Steps: {total_steps} | Steps per Logical Epoch: {steps_per_logical_epoch}")
 
+    # [FIX] 使用 bfloat16 以匹配 Qwen2.5-Math
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path, 
-        torch_dtype=torch.float16, 
+        torch_dtype=torch.bfloat16, 
         device_map="auto", 
         trust_remote_code=True
     )
@@ -724,7 +735,9 @@ def run_sira_training_v2(
         save_strategy="steps",           
         save_steps=steps_per_logical_epoch,
         save_total_limit=2,
-        fp16=True,
+        # [FIX] 改为 bf16
+        fp16=False,
+        bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
