@@ -562,7 +562,7 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    # student_correct()
+    student_correct()
     # exam_roll_recheck_hints()
 
     # ** sft
@@ -583,6 +583,6 @@ if __name__ == "__main__":
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    teacher.teacher_mark_paper_with_save()
-    exam_roll_recheck_mistake(False)
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
+    # teacher.teacher_mark_paper_with_save()
+    # exam_roll_recheck_mistake(False)
