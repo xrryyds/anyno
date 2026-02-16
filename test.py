@@ -1,181 +1,173 @@
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-import numpy as np
-import matplotlib.gridspec as gridspec
+import os
+import torch
+from transformers import AutoTokenizer
+import logging
 
-# ==========================================
-# 1. 全局绘图设置
-# ==========================================
-# 字体设置：防止 Mac 上找不到字体报错
-try:
-    plt.rcParams['font.family'] = 'serif'
-    # Mac 用户通常有 STSong (宋体) 或 Times New Roman
-    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif', 'Songti SC']
-except Exception as e:
-    pass
+# ================= 配置 =================
+# 替换为你的本地 Qwen2.5 模型路径
+MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B" 
+model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+# 保持与你的训练/推理代码一致的常量
+SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
+GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
+HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"  # 推理时用的模板
 
-plt.rcParams['font.size'] = 11
-plt.rcParams['axes.linewidth'] = 1.2
-plt.rcParams['figure.dpi'] = 300 
-# 关闭自动紧凑布局警告
-plt.rcParams['figure.autolayout'] = False 
+# 设置日志
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
-# ==========================================
-# 2. 辅助绘图函数
-# ==========================================
-def draw_box(ax, center_x, center_y, text, color, w=0.22, h=0.15, label=None, subtext=None, highlight=False):
-    # 计算左下角坐标
-    xy = (center_x - w/2, center_y - h/2)
+def load_tokenizer():
+    try:
+        logger.info(f"Loading tokenizer from {MODEL_PATH}...")
+        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+        return tokenizer
+    except Exception as e:
+        logger.error(f"Failed to load tokenizer: {e}")
+        return None
+
+# ================= 验证 1: Mask 定位精准度 =================
+def verify_mask_alignment(tokenizer):
+    logger.info("=" * 60)
+    logger.info("TEST 1: Verifying Mask Alignment (Train Logic)")
+    logger.info("=" * 60)
+
+    # 模拟一条数据
+    q = "Calculate 12 + 34."
+    h = "First add the units digits, then the tens digits." # Hint
+    a = "46" # Answer
+
+    # --- 1. 复现 FixedModeCollator 的逻辑 ---
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": q}
+    ]
+    prompt_str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_ids = tokenizer(prompt_str, add_special_tokens=False).input_ids
+    len_prompt = len(prompt_ids)
+
+    # 构造完整目标文本
+    target_text = GEN_HINTS_WIH_ANSWER.format(hints=h, answer=a)
+    # 模拟 Answer 结尾加 EOS (训练代码逻辑)
+    target_ids = tokenizer(target_text, add_special_tokens=False).input_ids + [tokenizer.eos_token_id]
     
-    if highlight:
-        bg_color = color + '20' # 16进制颜色加透明度
-        edge_width = 2.0
+    full_ids = prompt_ids + target_ids
+
+    # 计算 Hint 长度 (训练代码核心逻辑)
+    hint_only_text = f"# known:\n{h}\n"
+    hint_ids_only = tokenizer(hint_only_text, add_special_tokens=False).input_ids
+    len_hint_part = len(hint_ids_only)
+
+    hint_end_idx = min(len_prompt + len_hint_part, len(full_ids))
+
+    # 生成 Mask
+    h_mask = [0] * len(full_ids)
+    a_mask = [0] * len(full_ids)
+
+    for i in range(len_prompt, hint_end_idx):
+        h_mask[i] = 1
+    for i in range(hint_end_idx, len(full_ids)):
+        a_mask[i] = 1
+
+    # --- 2. 验证提取内容 ---
+    # 将 list 转 tensor 方便操作
+    full_tensor = torch.tensor(full_ids)
+    h_mask_tensor = torch.tensor(h_mask)
+    a_mask_tensor = torch.tensor(a_mask)
+
+    # 提取被 mask 标记为 1 的 token
+    extracted_hint_ids = full_tensor[h_mask_tensor == 1].tolist()
+    extracted_answer_ids = full_tensor[a_mask_tensor == 1].tolist()
+
+    decoded_hint = tokenizer.decode(extracted_hint_ids)
+    decoded_answer = tokenizer.decode(extracted_answer_ids)
+
+    # --- 3. 打印结果与断言 ---
+    logger.info(f"[Original Hint]   : {hint_only_text.__repr__()}")
+    logger.info(f"[Extracted Hint]  : {decoded_hint.__repr__()}")
+    logger.info(f"[Original Answer] : {a.__repr__()} (+ EOS)")
+    logger.info(f"[Extracted Answer]: {decoded_answer.__repr__()}")
+
+    # 验证 Hint
+    # 注意：decode 可能会产生轻微空格差异，所以这里去头尾空格比较，或者包含比较
+    if hint_only_text.strip() == decoded_hint.strip():
+        logger.info("✅ Hint Mask Alignment: SUCCESS")
     else:
-        bg_color = '#f5f5f5'
-        edge_width = 1.2
+        logger.error("❌ Hint Mask Alignment: FAILED")
+        logger.error(f"Expected: {hint_only_text.__repr__()}")
+        logger.error(f"Got:      {decoded_hint.__repr__()}")
 
-    # 绘制圆角矩形
-    rect = patches.FancyBboxPatch(xy, w, h, boxstyle="round,pad=0.02", 
-                                  linewidth=edge_width, edgecolor=color, facecolor=bg_color,
-                                  mutation_scale=0.8) # 减小 mutation_scale 防止圆角过大
-    ax.add_patch(rect)
+    # 验证 Answer (注意 extracted 包含 EOS，decode 不会显示 EOS，所以这很安全)
+    if decoded_answer.strip() == a.strip():
+        logger.info("✅ Answer Mask Alignment: SUCCESS")
+    else:
+        logger.error("❌ Answer Mask Alignment: FAILED")
+
+
+# ================= 验证 2: 训练 vs 推理 序列一致性 =================
+def verify_train_inference_consistency(tokenizer):
+    logger.info("\n" + "=" * 60)
+    logger.info("TEST 2: Verifying Train vs. Inference Consistency")
+    logger.info("=" * 60)
+
+    q = "Solve x + 5 = 10."
+    h = "Subtract 5 from both sides."
+    a = "5" # 假设这是推理生成出来的答案，我们需要验证序列拼接是否一致
+
+    # --- 方式 A: 训练模式 (List Concatenation) ---
+    # 逻辑：token(Prompt) + token(Hint_Block) + token(Answer)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": q}]
+    prompt_str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    prompt_ids = tokenizer(prompt_str, add_special_tokens=False).input_ids
     
-    # 绘制框内文字
-    ax.text(center_x, center_y, text, ha='center', va='center', 
-            fontsize=10, fontweight='bold', color='black')
+    # 训练中 Hint 和 Answer 是在一个字符串里 tokenized 的
+    target_text = GEN_HINTS_WIH_ANSWER.format(hints=h, answer=a)
+    target_ids = tokenizer(target_text, add_special_tokens=False).input_ids
     
-    # 顶部标签 (如 LLM)
-    if label:
-        ax.text(center_x, center_y + h/2 + 0.02, label, ha='center', va='bottom', 
-                fontsize=9, color='dimgray', style='italic')
-        
-    # 底部说明 (如 Loss weight)
-    if subtext:
-        ax.text(center_x, center_y - h/2 - 0.02, subtext, ha='center', va='top', 
-                fontsize=9, color='#d62728', fontweight='bold')
+    train_seq_ids = prompt_ids + target_ids
 
-def draw_arrow(ax, x_start, x_end, y, color='black'):
-    ax.annotate('', xy=(x_end, y), xytext=(x_start, y),
-                arrowprops=dict(arrowstyle="->", color=color, lw=1.5, shrinkA=0, shrinkB=0))
-
-# ==========================================
-# 3. 主绘图函数
-# ==========================================
-def main():
-    # 创建画布
-    fig = plt.figure(figsize=(15, 5.5))
-    gs = gridspec.GridSpec(1, 3, width_ratios=[1, 1.6, 1.2], figure=fig, wspace=0.25)
-
-    # -------------------------------------------------------
-    # Panel A: Curriculum Schedule
-    # -------------------------------------------------------
-    ax1 = fig.add_subplot(gs[0])
+    # --- 方式 B: 推理模式 (String Concatenation) ---
+    # 逻辑：vLLM 接收的是 full_prompt 字符串，然后一次性 tokenize
+    # Inference logic: full_prompt = base_prompt + prefix_text + (generation)
+    # 我们模拟生成完后的完整字符串
     
-    steps = np.linspace(0, 100, 100)
-    p_start, p_end = 0.95, 0.10
-    p_hint = p_start - (steps / 100) * (p_start - p_end)
-
-    ax1.plot(steps, p_hint, color='#1f77b4', linewidth=2.5, label='$p_{hint}(t)$')
-    ax1.fill_between(steps, 0, p_hint, color='#1f77b4', alpha=0.15)
-    ax1.fill_between(steps, p_hint, 1.1, color='#ff7f0e', alpha=0.15)
-
-    ax1.text(35, 0.3, 'Mode A:\nHint Utilization\n(Scaffolding)', 
-             ha='center', va='center', color='#0d4f8b', fontweight='bold', fontsize=9)
-    ax1.text(65, 0.8, 'Mode B:\nHint Generation\n(Internalization)', 
-             ha='center', va='center', color='#b45f06', fontweight='bold', fontsize=9)
-
-    ax1.set_xlim(0, 100)
-    ax1.set_ylim(0, 1.05)
-    ax1.set_xlabel('Training Steps (t)')
-    ax1.set_ylabel('Probability ($p_{hint}$)')
-    ax1.set_title('(a) Curriculum Schedule', fontweight='bold', y=-0.18)
-    ax1.grid(True, linestyle='--', alpha=0.3)
+    # 1. Base Prompt (System + User + Assistant Header)
+    base_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
     
-    # -------------------------------------------------------
-    # Panel B: Dual-Mode Training
-    # -------------------------------------------------------
-    ax2 = fig.add_subplot(gs[1])
-    ax2.axis('off')
-
-    # --- 上分支: Mode A ---
-    y_top = 0.75
-    ax2.text(0.05, y_top + 0.12, 'Mode A: Hint Utilization', color='#1f77b4', fontweight='bold', ha='left')
+    # 2. Prefix (Hint)
+    prefix_text = HINT_PREFIX_TEMPLATE.format(hint=h)
     
-    draw_box(ax2, 0.15, y_top, "Q + Hint", '#808080', w=0.2)
-    draw_box(ax2, 0.5, y_top, "Student\nModel", '#1f77b4', label="LLM", highlight=True)
-    draw_box(ax2, 0.85, y_top, "Answer", '#2ca02c', subtext="w = 1.0", highlight=True)
+    # 3. Generated Answer (模拟)
+    generated_text = a
     
-    draw_arrow(ax2, 0.26, 0.39, y_top)
-    draw_arrow(ax2, 0.61, 0.74, y_top)
-
-    # --- 下分支: Mode B ---
-    y_bot = 0.3
-    ax2.text(0.05, y_bot + 0.12, 'Mode B: Hint Generation', color='#ff7f0e', fontweight='bold', ha='left')
+    # 4. 拼接完整字符串
+    full_inference_str = base_prompt + prefix_text + generated_text
     
-    draw_box(ax2, 0.15, y_bot, "Question", '#808080', w=0.2)
-    draw_box(ax2, 0.42, y_bot, "Student\nModel", '#ff7f0e', label="LLM", highlight=True)
-    
-    # --- 修复点：这里使用了 mathtext 支持的语法 ---
-    # 使用 \mathtt 代替 \texttt，或者直接用换行符
-    # 这里的字符串被Matplotlib直接渲染，不需要 $$ 包裹复杂的LaTeX命令，简单的字符串更稳健
-    hint_text = "<KNOWN>\nHint\n</KNOWN>" 
-    draw_box(ax2, 0.68, y_bot, hint_text, '#ff7f0e', w=0.22, h=0.18, 
-             subtext="λ = 4.0", highlight=True)
-    
-    draw_box(ax2, 0.92, y_bot, "Answer", '#2ca02c', w=0.15, subtext="w = 1.0", highlight=True)
+    # 5. Tokenize
+    inference_seq_ids = tokenizer(full_inference_str, add_special_tokens=False).input_ids
 
-    draw_arrow(ax2, 0.26, 0.31, y_bot)
-    draw_arrow(ax2, 0.53, 0.57, y_bot)
-    draw_arrow(ax2, 0.79, 0.84, y_bot)
-    
-    ax2.set_title('(b) Dual-Mode Training & Loss Weights', fontweight='bold', y=-0.18)
+    # --- 比较 ---
+    logger.info(f"Train Sequence Length:     {len(train_seq_ids)}")
+    logger.info(f"Inference Sequence Length: {len(inference_seq_ids)}")
 
-    # -------------------------------------------------------
-    # Panel C: Theoretical Anchor
-    # -------------------------------------------------------
-    ax3 = fig.add_subplot(gs[2])
-    ax3.axis('off')
-
-    # 绘制流形
-    for i in range(1, 4):
-        ellipse = patches.Ellipse((0.5, 0.4), width=i*0.25, height=i*0.15, angle=20, 
-                                  fill=False, edgecolor='green', alpha=0.4 - i*0.05, lw=1.5)
-        ax3.add_patch(ellipse)
-    ax3.text(0.5, 0.4, 'Reasoning\nManifold', ha='center', va='center', fontsize=8, color='green')
-
-    # 当前参数点
-    tx, ty = 0.7, 0.75
-    ax3.scatter([tx], [ty], color='black', s=50, zorder=10)
-    ax3.text(tx + 0.05, ty, r'$\theta_t$', fontsize=12, va='center')
-
-    # 向量 1
-    ax3.arrow(tx, ty, 0.2, 0.05, head_width=0.03, head_length=0.03, 
-              fc='#ff7f0e', ec='#ff7f0e', lw=2)
-    # 修复点：确保 math text 正确
-    ax3.text(tx + 0.1, ty + 0.08, r'$\nabla \mathcal{L}_{B}$', color='#ff7f0e', fontsize=11)
-    
-    # 向量 2
-    ax3.arrow(tx, ty, -0.15, -0.25, head_width=0.03, head_length=0.03, 
-              fc='#1f77b4', ec='#1f77b4', lw=2, linestyle='--')
-    ax3.text(tx - 0.22, ty - 0.15, r'$\nabla \mathcal{L}_{A}$', color='#1f77b4', fontsize=11)
-    ax3.text(tx - 0.15, ty - 0.3, '(Implicit Anchor)', color='#1f77b4', fontsize=8, ha='center')
-
-    # 合成向量
-    ax3.arrow(tx, ty, 0.05, -0.2, head_width=0.03, head_length=0.03, 
-              fc='black', ec='black', lw=2.5)
-    ax3.text(tx + 0.08, ty - 0.2, 'Update', color='black', fontsize=10)
-
-    ax3.set_xlim(0.2, 1.1)
-    ax3.set_ylim(0.1, 0.9)
-    ax3.set_title('(c) Implicit Regularization', fontweight='bold', y=-0.18)
-
-    # 调整布局
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
-    
-    # 保存
-    plt.savefig('dha_ft_overview.pdf', bbox_inches='tight')
-    plt.savefig('dha_ft_overview.png', bbox_inches='tight', dpi=300)
-    print("Done! Saved as dha_ft_overview.png and .pdf")
+    if train_seq_ids == inference_seq_ids:
+        logger.info("✅ Consistency Check: PASS (Perfect Match)")
+    else:
+        logger.error("❌ Consistency Check: FAILED (Mismatch Detected!)")
+        # 找出哪里不一样
+        min_len = min(len(train_seq_ids), len(inference_seq_ids))
+        for i in range(min_len):
+            if train_seq_ids[i] != inference_seq_ids[i]:
+                logger.error(f"Mismatch at index {i}:")
+                logger.error(f"  Train Token: {train_seq_ids[i]} ({tokenizer.decode([train_seq_ids[i]])})")
+                logger.error(f"  Infer Token: {inference_seq_ids[i]} ({tokenizer.decode([inference_seq_ids[i]])})")
+                # 通常这里不一样是因为边界融合
+                context_start = max(0, i-5)
+                context_end = min(min_len, i+5)
+                logger.info(f"  Context around mismatch (Train): {tokenizer.decode(train_seq_ids[context_start:context_end])}")
+                break
 
 if __name__ == "__main__":
-    main()
+    tokenizer = load_tokenizer()
+    if tokenizer:
+        verify_mask_alignment(tokenizer)
+        verify_train_inference_consistency(tokenizer)

@@ -37,6 +37,11 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
 warnings.filterwarnings("ignore", message="Could not find a config file in")
 
+# ==========================================
+# 【关键修改 1】确保 System Prompt 与推理完全一致
+# ==========================================
+SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
+
 try:
     from prompt import GEN_HINTS_WIH_ANSWER
 except ImportError:
@@ -59,7 +64,6 @@ class HintSFTConfig:
     anchor_sigmoid_slope: float = 1000.0 
     anchor_loss_tolerance: float = 1.00
     
-    # 【新增】早停目标倍率
     target_loss_ratio: float = 1.01
     
     metrics_log_interval: int = 8   
@@ -185,8 +189,14 @@ class FixedModeCollator:
             data_type = item.get('type', 'anchor_data') 
 
             # 1. 构造 Prompt
+            # 【关键修改 2】添加 System Prompt，与推理逻辑对齐
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": str(q)}
+            ]
+            
             prompt_str = self.tokenizer.apply_chat_template(
-                [{"role": "user", "content": str(q)}],
+                messages,
                 tokenize=False,
                 add_generation_prompt=True 
             )
@@ -206,11 +216,13 @@ class FixedModeCollator:
 
             else:
                 mode_str = "mode_b_generation"
+                # 目标格式: "# known:\n{hints}\n{answer}"
                 target_text = GEN_HINTS_WIH_ANSWER.format(hints=b, answer=c)
                 target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + target_ids
                 
                 # 计算 Hint 长度
+                # 这里的格式必须匹配 HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
                 hint_only_text = f"# known:\n{b}\n" 
                 hint_ids_only = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
                 len_hint_part = len(hint_ids_only)
@@ -378,20 +390,14 @@ class SequentialTrainer(Trainer):
                 dynamic_beta_val = batch_ref_mean.item()
                 safe_beta = batch_ref_mean.detach() + 1e-6
                 
-                # 计算 Alpha
                 r = self.hint_config.split_r
                 vol_balance = (1 - r) / r
                 
-                # 【修改点】: 使用对数平滑(Log Smoothing)来处理巨大的 Loss 差异
-                # 原逻辑: ratio = scaling_gen_loss / safe_beta (例如 6.5/0.08 = 80)
-                # 新逻辑: 如果 ratio > 1, 则使用 1 + log(ratio)
                 raw_loss_ratio = scaling_gen_loss / safe_beta
                 
                 if raw_loss_ratio > 1.0:
-                    # 例如: log(80) ≈ 4.38, 结果 ≈ 5.38 (从80倍抑制到5倍)
                     smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio)
                 else:
-                    # 如果 Gen Loss 已经比 Anchor Loss 小，保持线性比例
                     smooth_scaler = raw_loss_ratio
                 
                 alpha_balance = vol_balance * smooth_scaler
@@ -489,11 +495,10 @@ class StepLogCallback(TrainerCallback):
                 log_parts.append(f"{k}: {val_str}")
             logger.info(" | ".join(log_parts))
             
-            # 【新增：Early Stopping 检查】
+            # 【Early Stopping】
             avg_mode_b = stats.get("avg_mode_b_loss_raw", 999.0)
             avg_beta = stats.get("avg_dynamic_beta", 0.0)
             
-            # 只有当 Beta 有效且 Mode B 确实下降到了目标值以下
             if avg_beta > 0 and avg_mode_b <= avg_beta * self.config.target_loss_ratio:
                 logger.info(f"="*60)
                 logger.info(f"*** EARLY STOPPING TRIGGERED ***")
@@ -550,18 +555,12 @@ def run_sira_training(
         model_path=model_path, 
         data_path=data_path, 
         output_base_dir=output_base_dir,
-        
         split_r=spilt,           
-        
-        # 保持你原始的参数设置
         anchor_loss_weight_k=1, 
         suppress_max_scale=1.0,
         anchor_sigmoid_slope=50.0, 
         anchor_loss_tolerance=1.01,
-        
-        # 【配置】设定停止倍率
         target_loss_ratio=1.01,
-        
         metrics_log_interval=batch_size
     )
     
@@ -580,9 +579,10 @@ def run_sira_training(
     dataset = Dataset.from_json(hint_config.data_path)
     logger.info(f"Loaded dataset size: {len(dataset)}")
 
+    # 【关键修改 3】使用 bfloat16 加载模型，与推理保持一致
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path, 
-        torch_dtype=torch.float16, 
+        torch_dtype=torch.bfloat16, 
         device_map="auto", 
         trust_remote_code=True
     )
@@ -613,7 +613,9 @@ def run_sira_training(
         warmup_ratio=0,
         lr_scheduler_type="cosine", 
         logging_steps=hint_config.metrics_log_interval, 
-        fp16=True,
+        # 【关键修改 4】开启 BF16，关闭 FP16
+        fp16=False,
+        bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         save_strategy="epoch",           
@@ -631,7 +633,7 @@ def run_sira_training(
         train_dataset=dataset,
         data_collator=collator,
         callbacks=[
-            StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config), # 传入 config
+            StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config), 
             EpochLogCallback(epoch_log_file)
         ]
     )
