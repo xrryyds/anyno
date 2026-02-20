@@ -62,7 +62,7 @@ def exam_roll_recheck_hints():
 
         logger.info("Step 2: Student Rolling Exam...")
         student_exam = TakeExam(model_path=model_path)
-        student_exam.exam_roll_k(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
+        student_exam.exam_roll_k_with_hints(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
         
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
@@ -221,7 +221,7 @@ def student_correct():
     logger.info("Step 2: Student Taking Exam...")
     student_exam = TakeExam(model_path=model_path)
     # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
-    student_exam.exam(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx)
+    student_exam.exam_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
     # 3. 老师批改
     logger.info("Step 3: Teacher Grading...")
@@ -562,7 +562,7 @@ if __name__ == "__main__":
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
-    student_correct()
+    # student_correct()
     # exam_roll_recheck_hints()
 
     # ** sft
@@ -572,7 +572,7 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16) 
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    # run_sira_training_v2(model_path=model_path)
+    run_sira_training_v2(model_path=model_path)
     # 4. check
     # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0214_1459")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
@@ -583,6 +583,6 @@ if __name__ == "__main__":
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # teacher.teacher_mark_paper_with_save()
     # exam_roll_recheck_mistake(False)

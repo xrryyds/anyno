@@ -8,6 +8,7 @@ import random
 import torch
 import logging
 import warnings
+import numpy as np 
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
@@ -35,13 +36,11 @@ logger = logging.getLogger(__name__)
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
-warnings.filterwarnings("ignore", message="Could not find a config file in")
 
 # ==========================================
-# 【关键修改 1】确保 System Prompt 与推理完全一致
+# System Prompt
 # ==========================================
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
-
 try:
     from prompt import GEN_HINTS_WIH_ANSWER
 except ImportError:
@@ -57,15 +56,11 @@ class HintSFTConfig:
     gate_threshold: float = 0.3
     gate_slope: float = 3.0
     split_r: float = 0.5
-    
-    # 核心超参
     anchor_loss_weight_k: float = 1
     suppress_max_scale: float = 5.0
     anchor_sigmoid_slope: float = 1000.0 
     anchor_loss_tolerance: float = 1.00
-    
     target_loss_ratio: float = 1.01
-    
     metrics_log_interval: int = 8   
     model_path: str = "" 
     data_path: str = ""  
@@ -111,7 +106,6 @@ class TrainingMetricsTracker:
         if current_beta is not None:
              self.win_beta_values.append(current_beta)
              self.ep_beta_values.append(current_beta)
-        
         if current_alpha is not None:
              self.win_alpha_values.append(current_alpha)
              self.ep_alpha_values.append(current_alpha)
@@ -128,7 +122,6 @@ class TrainingMetricsTracker:
                 self.win_mode_b_losses.append(loss_contrib); self.ep_mode_b_losses.append(loss_contrib)
                 self.win_gate_values.append(gate_val); self.ep_gate_values.append(gate_val)
                 self.win_mode_b_raw.append(raw_loss); self.ep_mode_b_raw.append(raw_loss)
-            
             elif mode == "pure_sft_anchor":
                 self.win_counts["anchor"] += 1; self.ep_counts["anchor"] += 1
                 self.win_anchor_losses_weighted.append(loss_contrib); self.ep_anchor_losses_weighted.append(loss_contrib)
@@ -149,27 +142,16 @@ class TrainingMetricsTracker:
         }
 
     def get_window_stats(self):
-        return self._calculate_stats(
-            self.win_loss, self.win_steps, self.win_gate_values, 
-            self.win_anchor_losses_weighted, self.win_anchor_losses_raw, 
-            self.win_mode_b_losses, self.win_mode_b_raw, 
-            self.win_counts, self.win_alpha_values, self.win_beta_values
-        )
+        return self._calculate_stats(self.win_loss, self.win_steps, self.win_gate_values, self.win_anchor_losses_weighted, self.win_anchor_losses_raw, self.win_mode_b_losses, self.win_mode_b_raw, self.win_counts, self.win_alpha_values, self.win_beta_values)
 
     def get_epoch_stats(self):
-        return self._calculate_stats(
-            self.ep_loss, self.ep_steps, self.ep_gate_values, 
-            self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, 
-            self.ep_mode_b_losses, self.ep_mode_b_raw, 
-            self.ep_counts, self.ep_alpha_values, self.ep_beta_values
-        )
+        return self._calculate_stats(self.ep_loss, self.ep_steps, self.ep_gate_values, self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, self.ep_mode_b_losses, self.ep_mode_b_raw, self.ep_counts, self.ep_alpha_values, self.ep_beta_values)
 
 tracker = TrainingMetricsTracker()
 
 # ==========================================
 # 3. Data Collator
 # ==========================================
-
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = 2048): 
         self.tokenizer = tokenizer
@@ -188,64 +170,35 @@ class FixedModeCollator:
             c = item.get('answer') 
             data_type = item.get('type', 'anchor_data') 
 
-            # 1. 构造 Prompt
-            # 【关键修改 2】添加 System Prompt，与推理逻辑对齐
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": str(q)}
-            ]
-            
-            prompt_str = self.tokenizer.apply_chat_template(
-                messages,
-                tokenize=False,
-                add_generation_prompt=True 
-            )
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": str(q)}]
+            prompt_str = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             prompt_ids = self.tokenizer(prompt_str, add_special_tokens=False).input_ids
             len_prompt = len(prompt_ids)
 
-            # 2. 构造 Output
             if data_type == 'anchor_data':
                 mode_str = "pure_sft_anchor"
                 answer_ids = self.tokenizer(str(c), add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + answer_ids
-                
                 h_mask = [0] * len(full_ids)
                 a_mask = [0] * len(full_ids)
-                for i in range(len_prompt, len(full_ids)):
-                    a_mask[i] = 1
-
+                for i in range(len_prompt, len(full_ids)): a_mask[i] = 1
             else:
                 mode_str = "mode_b_generation"
-                # 目标格式: "# known:\n{hints}\n{answer}"
                 target_text = GEN_HINTS_WIH_ANSWER.format(hints=b, answer=c)
                 target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + target_ids
-                
-                # 计算 Hint 长度
-                # 这里的格式必须匹配 HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
                 hint_only_text = f"# known:\n{b}\n" 
-                hint_ids_only = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
-                len_hint_part = len(hint_ids_only)
-                
+                len_hint_part = len(self.tokenizer(hint_only_text, add_special_tokens=False).input_ids)
                 h_mask = [0] * len(full_ids)
                 a_mask = [0] * len(full_ids)
-                
                 hint_end_idx = min(len_prompt + len_hint_part, len(full_ids))
-                
-                for i in range(len_prompt, hint_end_idx):
-                    h_mask[i] = 1
-                for i in range(hint_end_idx, len(full_ids)):
-                    a_mask[i] = 1
+                for i in range(len_prompt, hint_end_idx): h_mask[i] = 1
+                for i in range(hint_end_idx, len(full_ids)): a_mask[i] = 1
 
-            # 3. 截断
             if len(full_ids) > self.max_length:
-                full_ids = full_ids[:self.max_length]
-                h_mask = h_mask[:self.max_length]
-                a_mask = a_mask[:self.max_length]
+                full_ids = full_ids[:self.max_length]; h_mask = h_mask[:self.max_length]; a_mask = a_mask[:self.max_length]
 
-            # 4. Labels
             labels = [full_ids[i] if (h_mask[i] or a_mask[i]) else -100 for i in range(len(full_ids))]
-            
             input_ids_batch.append(torch.tensor(full_ids, dtype=torch.long))
             labels_batch.append(torch.tensor(labels, dtype=torch.long))
             hint_masks_batch.append(torch.tensor(h_mask, dtype=torch.float32))
@@ -272,33 +225,17 @@ class SequentialTrainer(Trainer):
         self.hint_config = hint_config
         self.running_gen_loss = 1.0 
 
-    def get_train_dataloader(self) -> DataLoader:
-        if self.train_dataset is None:
-            raise ValueError("Trainer: training requires a train_dataset.")
-        train_dataset = self.train_dataset
-        return DataLoader(
-            train_dataset,
-            batch_size=self._train_batch_size,
-            sampler=SequentialSampler(train_dataset), 
-            collate_fn=self.data_collator,
-            drop_last=self.args.dataloader_drop_last,
-            num_workers=self.args.dataloader_num_workers,
-            pin_memory=self.args.dataloader_pin_memory,
-        )
-
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         labels = inputs.get("labels")
         hint_masks = inputs.pop("hint_masks")
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
         
-        # Step 1: Base Model (Ref) Logits
         with torch.no_grad():
             with self.model.disable_adapter():
                 ref_outputs = model(**inputs)
                 ref_logits = ref_outputs.get("logits")
         
-        # Step 2: Current Model Logits
         outputs = model(**inputs)
         logits = outputs.get("logits")
         
@@ -320,11 +257,8 @@ class SequentialTrainer(Trainer):
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         
-        token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
-        token_losses = token_losses.view(shift_labels.shape)
-
-        ref_token_losses = loss_fct(shift_ref_logits.view(-1, shift_ref_logits.size(-1)), shift_labels.view(-1))
-        ref_token_losses = ref_token_losses.view(shift_labels.shape)
+        token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.shape)
+        ref_token_losses = loss_fct(shift_ref_logits.view(-1, shift_ref_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.shape)
 
         gen_losses = []      
         anchor_indices = [] 
@@ -339,10 +273,7 @@ class SequentialTrainer(Trainer):
             if h_count > 0:
                 gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
-                
-                gate_input = self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
-                gate = torch.sigmoid(gate_input)
-                
+                gate = torch.sigmoid(self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach()))
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
@@ -351,7 +282,7 @@ class SequentialTrainer(Trainer):
                 gen_losses.append(l_gen)
 
                 total_valid_tokens = h_count + a_count
-                raw_b_loss = ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum()) / total_valid_tokens if total_valid_tokens > 0 else torch.tensor(0.0)
+                raw_b_loss = ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum()) / total_valid_tokens
                 debug_map[i] = {"gate": gate.item(), "loss_contrib": l_gen.item(), "raw_loss": raw_b_loss.item()}
             else:
                 anchor_indices.append(i)
@@ -375,7 +306,6 @@ class SequentialTrainer(Trainer):
             current_raw_sum = torch.tensor(0.0, device=logits.device)
             ref_raw_sum = torch.tensor(0.0, device=logits.device)
             valid_anchor_count = 0
-            
             for idx in anchor_indices:
                 a_m = shift_a_masks[idx]
                 a_count = a_m.sum()
@@ -390,26 +320,14 @@ class SequentialTrainer(Trainer):
                 dynamic_beta_val = batch_ref_mean.item()
                 safe_beta = batch_ref_mean.detach() + 1e-6
                 
-                r = self.hint_config.split_r
-                vol_balance = (1 - r) / r
-                
                 raw_loss_ratio = scaling_gen_loss / safe_beta
+                smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
                 
-                if raw_loss_ratio > 1.0:
-                    smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio)
-                else:
-                    smooth_scaler = raw_loss_ratio
+                alpha_balance = ((1 - self.hint_config.split_r) / self.hint_config.split_r) * smooth_scaler
                 
-                alpha_balance = vol_balance * smooth_scaler
-                
-                target_threshold = safe_beta * self.hint_config.anchor_loss_tolerance
-                ratio = batch_current_mean.detach() / target_threshold
-                sigmoid_input = (ratio - 1.0) * self.hint_config.anchor_sigmoid_slope
-                alpha_suppress = torch.sigmoid(sigmoid_input) * self.hint_config.suppress_max_scale 
-                
-                k = self.hint_config.anchor_loss_weight_k
-                final_alpha_tensor = k * alpha_balance * alpha_suppress
-                final_alpha_val = final_alpha_tensor.item()
+                ratio = batch_current_mean.detach() / (safe_beta * self.hint_config.anchor_loss_tolerance)
+                alpha_suppress = torch.sigmoid((ratio - 1.0) * self.hint_config.anchor_sigmoid_slope) * self.hint_config.suppress_max_scale 
+                final_alpha_val = (self.hint_config.anchor_loss_weight_k * alpha_balance * alpha_suppress).item()
         
         # Part 3: 组合
         for idx in anchor_indices:
@@ -419,17 +337,13 @@ class SequentialTrainer(Trainer):
             applied_alpha = max(final_alpha_val, 0.0001)
             weighted_anchor_loss = applied_alpha * raw_anchor_loss
             final_losses_map[idx] = weighted_anchor_loss
-            debug_map[idx] = {
-                "gate": 0.0, 
-                "loss_contrib": weighted_anchor_loss.item(), 
-                "raw_loss": raw_anchor_loss.item(),
-                "scale_factor": applied_alpha 
-            }
+            debug_map[idx] = {"gate": 0.0, "loss_contrib": weighted_anchor_loss.item(), "raw_loss": raw_anchor_loss.item(), "scale_factor": applied_alpha}
 
         debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
         
         # Part 4: Task Reweighting & Norm
         batch_size = token_losses.size(0)
+        # 确保按顺序堆叠
         raw_loss_vector = torch.stack([final_losses_map[i] for i in range(batch_size)])
 
         num_gen = len(gen_indices)
@@ -437,217 +351,135 @@ class SequentialTrainer(Trainer):
         task_weights = torch.zeros(batch_size, device=raw_loss_vector.device)
         
         if num_gen > 0:
-            w_gen = 0.5 / num_gen
-            for idx in gen_indices: task_weights[idx] = w_gen
+            for idx in gen_indices: task_weights[idx] = 0.5 / num_gen
         if num_anchor > 0:
-            w_anchor = 0.5 / num_anchor
-            for idx in anchor_indices: task_weights[idx] = w_anchor
+            for idx in anchor_indices: task_weights[idx] = 0.5 / num_anchor
 
         weighted_loss_vec = raw_loss_vector * task_weights * 2.0 
 
+        # Norm Logic
+        scale_factor_debug = 1.0 # for printing
+        norm_b_debug = 0.0
+        norm_total_debug = 0.0
+        
         if num_gen > 0:
-            is_mode_b = torch.zeros(batch_size, device=logits.device)
+            # 修改: 显式指定 is_mode_b 的 device
+            is_mode_b = torch.zeros(batch_size, device=weighted_loss_vec.device)
             for idx in gen_indices: is_mode_b[idx] = 1.0
-            loss_b_vec = weighted_loss_vec * is_mode_b
-
-            norm_b = torch.norm(loss_b_vec, p=2) 
-            norm_total = torch.norm(weighted_loss_vec, p=2)
             
-            if norm_total > 1e-6:
-                scale_factor = (norm_b / norm_total).detach()
-                final_loss_tensor = weighted_loss_vec * scale_factor
-                final_loss = final_loss_tensor.sum()
-            else:
-                final_loss = weighted_loss_vec.sum()
+            loss_b_vec = weighted_loss_vec * is_mode_b
+            norm_b = torch.norm(loss_b_vec, p=2) 
+            norm_total = torch.norm(weighted_loss_vec, p=2) + 1e-9 # 防止除0
+            
+            # 使用 item() 进行安全除法，避免 detach 问题
+            ratio = norm_b / norm_total
+            scale_factor = ratio.detach()
+            
+            # 安全逻辑：如果 scale_factor 极小，回退到 1
+            if scale_factor < 1e-6:
+                scale_factor = torch.tensor(1.0, device=scale_factor.device)
+
+            final_loss_tensor = weighted_loss_vec * scale_factor
+            final_loss = final_loss_tensor.sum()
+            
+            # 记录 debug 变量
+            scale_factor_debug = scale_factor.item()
+            norm_b_debug = norm_b.item()
+            norm_total_debug = norm_total.item()
         else:
             final_loss = weighted_loss_vec.sum()
 
-        return final_loss, debug_info_list, final_alpha_val, dynamic_beta_val
+        # =========================================================================
+        # >>>>>> [CRITICAL DEBUG] DIAGNOSTIC PRINT <<<<<<
+        # =========================================================================
+        # 随机打印或在前几个 step 打印，用于排查 Loss 为 0 的原因
+        if self.model.training and random.random() < 0.2: # 20% 概率打印
+            print("\n" + "!"*20 + " [CRITICAL DEBUG] LOSS=0 INVESTIGATION " + "!"*20)
+            print(f"  Batch Size: {batch_size}")
+            print(f"  Gen Indices: {gen_indices}")
+            print(f"  Anchor Indices: {anchor_indices}")
+            
+            # 1. 检查原始 Loss Vector 是否全 0
+            raw_vec_cpu = raw_loss_vector.detach().cpu().numpy()
+            print(f"  Raw Loss Vector: {raw_vec_cpu} (Any Zero? {np.all(raw_vec_cpu == 0)})")
+            
+            # 2. 检查权重是否全 0
+            weights_cpu = task_weights.detach().cpu().numpy()
+            print(f"  Task Weights:    {weights_cpu} (Any Zero? {np.all(weights_cpu == 0)})")
+            
+            # 3. 检查加权后向量
+            weighted_cpu = weighted_loss_vec.detach().cpu().numpy()
+            print(f"  Weighted Vector: {weighted_cpu}")
+            
+            # 4. 重点：检查 Scale Factor
+            if num_gen > 0:
+                print(f"  Norm B: {norm_b_debug:.6f}")
+                print(f"  Norm Total: {norm_total_debug:.6f}")
+                print(f"  Scale Factor: {scale_factor_debug:.6f}")
+                if scale_factor_debug == 0:
+                    print(f"  [ERROR] SCALE FACTOR IS 0! This is why Loss is 0.")
+            
+            # 5. 最终 Loss
+            print(f"  >>> FINAL LOSS RETURNED: {final_loss.item():.8f}")
+            print("!"*70 + "\n")
+        # =========================================================================
 
-# ==========================================
-# 5. Callbacks
-# ==========================================
+        return final_loss, debug_info_list, final_alpha_val, dynamic_beta_val
 
 class StepLogCallback(TrainerCallback):
     def __init__(self, log_file, log_interval, config: HintSFTConfig):
-        self.log_file = log_file
-        self.log_interval = log_interval
-        self.config = config
-
+        self.log_file = log_file; self.log_interval = log_interval; self.config = config
     def on_step_end(self, args, state, control, **kwargs):
         if state.global_step > 0 and state.global_step % self.log_interval == 0:
             stats = tracker.get_window_stats() 
-            json_stats = stats.copy()
-            json_stats.update({
-                "epoch": state.epoch, 
-                "global_step": state.global_step, 
-                "timestamp": datetime.now().isoformat()
-            })
-            with open(self.log_file, "a", encoding="utf-8") as f: 
-                f.write(json.dumps(json_stats) + "\n")
-            
+            stats.update({"epoch": state.epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
+            with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(stats) + "\n")
             log_parts = [f"[Step {state.global_step}]"]
             for k, v in stats.items():
-                if isinstance(v, float):
-                    val_str = f"{v:.6f}"
-                else:
-                    val_str = str(v)
+                val_str = f"{v:.6f}" if isinstance(v, float) else str(v)
                 log_parts.append(f"{k}: {val_str}")
             logger.info(" | ".join(log_parts))
-            
-            # 【Early Stopping】
-            avg_mode_b = stats.get("avg_mode_b_loss_raw", 999.0)
-            avg_beta = stats.get("avg_dynamic_beta", 0.0)
-            
+            avg_mode_b = stats.get("avg_mode_b_loss_raw", 999.0); avg_beta = stats.get("avg_dynamic_beta", 0.0)
             if avg_beta > 0 and avg_mode_b <= avg_beta * self.config.target_loss_ratio:
-                logger.info(f"="*60)
-                logger.info(f"*** EARLY STOPPING TRIGGERED ***")
-                logger.info(f"Mode B Loss ({avg_mode_b:.4f}) reached {self.config.target_loss_ratio}x Beta ({avg_beta:.4f})")
-                logger.info(f"="*60)
+                logger.info(f"*** EARLY STOPPING *** Mode B Loss ({avg_mode_b:.4f}) reached target ratio.")
                 control.should_training_stop = True
-            
             tracker.reset_window()
 
 class EpochLogCallback(TrainerCallback):
     def __init__(self, log_file): self.log_file = log_file
     def on_epoch_end(self, args, state, control, **kwargs):
         stats = tracker.get_epoch_stats()
-        stats.update({"epoch": state.epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
+        stats.update({"epoch": state.epoch, "global_step": state.global_step})
         with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(stats) + "\n")
-        logger.info(f"="*60)
-        logger.info(f"*** EPOCH {state.epoch} FINISHED ***")
-        logger.info(f"  Avg Epoch Loss: {stats['avg_train_loss']:.4f}")
-        logger.info(f"  Avg Gate:       {stats['avg_gate_value']:.4f}")
-        logger.info(f"  Avg Beta (Dyn): {stats['avg_dynamic_beta']:.4f}")
-        logger.info(f"  Avg ModeB (W):  {stats['avg_mode_b_loss']:.4f}")
-        logger.info(f"  Avg Anc Raw:    {stats['avg_anchor_loss_raw']:.4f}")
-        logger.info(f"  Avg Alpha:      {stats['avg_final_alpha']:.4f}")
-        logger.info(f"="*60)
+        logger.info(f"*** EPOCH {state.epoch} FINISHED *** Avg Loss: {stats['avg_train_loss']:.4f}")
         tracker.reset_epoch()
 
-# ==========================================
-# 6. Main Execution Function
-# ==========================================
-
-def run_sira_training(
-    model_path: str,
-    data_path: Optional[str] = None,
-    output_base_dir: Optional[str] = None,
-    batch_size: int = 16,
-    epoch: int = 20, 
-    device_num: int = 1,
-    spilt: float = 0.5
-):
+def run_sira_training(model_path: str, data_path: Optional[str] = None, output_base_dir: Optional[str] = None, batch_size: int = 16, epoch: int = 20, device_num: int = 1, spilt: float = 0.5):
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
-    project_root = os.path.dirname(os.path.dirname(project_root)) 
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file_path)))) 
+    if data_path is None: data_path = os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
+    if output_base_dir is None: output_base_dir = os.path.join(project_root, "CELPO", "output")
+    set_seed(42); tracker.reset_window(); tracker.reset_epoch()
 
-    if data_path is None:
-        data_path = os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
-    if output_base_dir is None:
-        output_base_dir = os.path.join(project_root, "CELPO", "output")
-        
-    set_seed(42)
-    tracker.reset_window()
-    tracker.reset_epoch()
-
-    hint_config = HintSFTConfig(
-        model_path=model_path, 
-        data_path=data_path, 
-        output_base_dir=output_base_dir,
-        split_r=spilt,           
-        anchor_loss_weight_k=1, 
-        suppress_max_scale=1.0,
-        anchor_sigmoid_slope=50.0, 
-        anchor_loss_tolerance=1.01,
-        target_loss_ratio=1.01,
-        metrics_log_interval=batch_size
-    )
-    
-    output_dir = f"{hint_config.output_base_dir}/sira_sft_{datetime.now().strftime('%m%d_%H%M')}"
+    hint_config = HintSFTConfig(model_path=model_path, data_path=data_path, output_base_dir=output_base_dir, split_r=spilt, metrics_log_interval=batch_size)
+    output_dir = f"{hint_config.output_base_dir}/sira_sft_DEBUG_{datetime.now().strftime('%m%d_%H%M')}"
     step_log_file, epoch_log_file = setup_logging(output_dir)
     
-    logger.info(f"Model Path: {hint_config.model_path}")
-    logger.info(f"Output Dir: {output_dir}")
-
-    try:
-        tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
-    except Exception as e:
-        logger.error(f"Failed to load tokenizer: {e}"); raise e
-
-    if not os.path.exists(hint_config.data_path): raise FileNotFoundError(f"Dataset not found at {hint_config.data_path}")
+    tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
     dataset = Dataset.from_json(hint_config.data_path)
-    logger.info(f"Loaded dataset size: {len(dataset)}")
-
-    # 【关键修改 3】使用 bfloat16 加载模型，与推理保持一致
-    model = AutoModelForCausalLM.from_pretrained(
-        hint_config.model_path, 
-        torch_dtype=torch.bfloat16, 
-        device_map="auto", 
-        trust_remote_code=True
-    )
+    model = AutoModelForCausalLM.from_pretrained(hint_config.model_path, torch_dtype=torch.float32, device_map="auto", trust_remote_code=True)
     model.config.use_cache = False  
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    peft_config = LoraConfig(r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"], task_type="CAUSAL_LM", bias="none")
+    model = get_peft_model(model, peft_config); model.enable_input_require_grads() 
     
-    peft_config = LoraConfig(
-        r=16, 
-        lora_alpha=32, 
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        task_type="CAUSAL_LM", 
-        bias="none"
-    )
-    model = get_peft_model(model, peft_config)
-    model.enable_input_require_grads() 
-    
-    trainable_params, all_param = model.get_nb_trainable_parameters()
-    logger.info(f"trainable params: {trainable_params:,d} || all params: {all_param:,d} || trainable%: {100 * trainable_params / all_param:.4f}")
+    training_args = TrainingArguments(output_dir=output_dir, num_train_epochs=epoch, per_device_train_batch_size=2, gradient_accumulation_steps=int(batch_size/2/device_num), learning_rate=1e-4, warmup_ratio=0, logging_steps=hint_config.metrics_log_interval, fp16=False, bf16=False, gradient_checkpointing=True, save_strategy="epoch", remove_unused_columns=False, dataloader_drop_last=True, report_to="none")
 
-    collator = FixedModeCollator(tokenizer)
-
-    training_args = TrainingArguments(
-        output_dir=output_dir,
-        num_train_epochs=epoch, 
-        per_device_train_batch_size=2,   
-        gradient_accumulation_steps=int(batch_size/2/device_num),
-        learning_rate=1e-4, 
-        warmup_ratio=0,
-        lr_scheduler_type="cosine", 
-        logging_steps=hint_config.metrics_log_interval, 
-        # 【关键修改 4】开启 BF16，关闭 FP16
-        fp16=False,
-        bf16=True,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
-        save_strategy="epoch",           
-        save_total_limit=2,
-        remove_unused_columns=False,
-        dataloader_drop_last=True,       
-        group_by_length=False,           
-        report_to="none"                 
-    )
-
-    trainer = SequentialTrainer(
-        hint_config=hint_config,
-        model=model,
-        args=training_args,
-        train_dataset=dataset,
-        data_collator=collator,
-        callbacks=[
-            StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config), 
-            EpochLogCallback(epoch_log_file)
-        ]
-    )
-
-    logger.info(f"Starting SIRA training with Early Stopping (Ratio={hint_config.target_loss_ratio})...")
-    trainer.train()
-    trainer.save_model(output_dir)
-    logger.info(f"Training finished. Model saved to {output_dir}")
+    trainer = SequentialTrainer(hint_config=hint_config, model=model, args=training_args, train_dataset=dataset, data_collator=FixedModeCollator(tokenizer), callbacks=[StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config), EpochLogCallback(epoch_log_file)])
+    logger.info("Starting Debug Training..."); trainer.train(); trainer.save_model(output_dir)
 
 if __name__ == "__main__":
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
-    project_root = os.path.dirname(os.path.dirname(project_root))
-    default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
-    default_model_url = os.path.join(default_model_dir, "OREAL-7B")
-
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(current_file_path))))
+    default_model_url = os.path.join(project_root, "CELPO", "model", "OREAL", "OREAL-7B")
     run_sira_training(model_path=default_model_url)

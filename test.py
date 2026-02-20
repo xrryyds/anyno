@@ -6,7 +6,6 @@ import logging
 # ================= 配置 =================
 # 替换为你的本地 Qwen2.5 模型路径
 MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B" 
-model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 # 保持与你的训练/推理代码一致的常量
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"

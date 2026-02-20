@@ -1,20 +1,18 @@
 import os
-# ==================== 环境变量设置 ====================
-os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 同步
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # 确定性 CUBLAS
-os.environ["PYTHONHASHSEED"] = "42"  # Python 哈希种子
-
 import json
 import logging
 import random
 import numpy as np
 import torch
-from tqdm import tqdm
 from transformers import AutoTokenizer, set_seed
-
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
+
+# ==================== 环境变量设置 ====================
+os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 同步
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # 确定性 CUBLAS
+os.environ["PYTHONHASHSEED"] = "42"  # Python 哈希种子
 
 # =====================================================
 # Logger
@@ -273,6 +271,204 @@ class TakeExam:
 
         logger.info(f"Standard Exam done! Saved to {self.OUTPUT_JSON_PATH}")
 
+    # =====================================================
+    # 新增：带 Hint 的 Prefix-Forcing 考试 (Q + H -> A)
+    # =====================================================
+    def exam_with_hints(self, question, solution, answer, question_idx, hints):
+        """
+        使用 Prefix-Forcing 模式进行推理。
+        
+        原理：
+        构造 Prompt = System + User(Question) + Assistant(# known:\n{Hint}\n)
+        强制模型认为它已经输出了 Hint，从而接着生成 Answer。
+        """
+        logger.info(f"Starting vLLM Exam (Prefix-Forcing): total_questions={len(question)}")
+        
+        # 1. 确保随机种子一致
+        set_all_seeds(self.seed)
+        
+        # 2. 构建带有预填充(Pre-fill)的 Prompts
+        prompts = []
+        # 必须严格匹配训练代码中的 GEN_HINTS_WIH_ANSWER 格式
+        HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
+
+        for i, q in enumerate(question):
+            # A. 构建基础 ChatML (System + User)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": str(q)}
+            ]
+            base_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            
+            # B. 拼接 Hint 到 Assistant 的开头
+            current_hint = hints[i] if i < len(hints) else ""
+            
+            if current_hint and current_hint.strip() != "":
+                # 拼接逻辑：Assistant标签 + Hint前缀
+                prefix_text = HINT_PREFIX_TEMPLATE.format(hint=current_hint)
+                full_prompt = base_prompt + prefix_text
+            else:
+                # 如果没有 Hint，就按普通模式推理
+                full_prompt = base_prompt
+                
+            prompts.append(full_prompt)
+
+        # 3. 设置采样参数 (Greedy Search)
+        sampling_params = SamplingParams(
+            n=1,
+            temperature=0.0,
+            top_p=1.0,
+            max_tokens=self.MAX_NEW_TOKENS,
+            stop_token_ids=self.stop_token_ids,
+            seed=self.seed
+        )
+
+        # 4. 执行推理
+        outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
+
+        # 5. 处理结果
+        results = []
+        for i, output in enumerate(outputs):
+            # generated_text 仅包含模型新生成的 Answer 部分
+            generated_answer = output.outputs[0].text.strip()
+            
+            current_hint = hints[i] if i < len(hints) else ""
+            
+            # 为了数据完整性，模拟拼接出完整的 Assistant 输出
+            if current_hint:
+                full_response = HINT_PREFIX_TEMPLATE.format(hint=current_hint) + generated_answer
+            else:
+                full_response = generated_answer
+
+            results.append({
+                "question": question[i],
+                # ✅ 【已修改】将 "model_answer" 改为 "answer"，与标准 exam() 格式保持一致
+                "answer": generated_answer,       
+                "provided_hint": current_hint,    # 保留此字段用于分析
+                "full_response": full_response,   # 保留此字段用于后续SFT或分析
+                "ref_answer": answer[i].strip(),
+                "ref_solution": solution[i].strip(),
+                "question_idx": question_idx[i],
+            })
+
+        # 6. 保存结果
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+        with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Prefix-Forcing Exam done! Saved to {self.OUTPUT_JSON_PATH}")
+
+
+
+    # =====================================================
+    # 新增：带 Hint 的 Roll-K 考试 (Prefix-Forcing + Sampling)
+    # =====================================================
+    def exam_roll_k_with_hints(
+        self,
+        question,
+        solution,
+        answer,
+        question_idx,
+        hints,
+        k: int = 8,
+        temperature: float = 0.7
+    ):
+        """
+        使用 Prefix-Forcing 模式配合 Roll-K 采样进行推理。
+        
+        功能：
+        1. 强制模型基于给定的 Hint 开始生成。
+        2. 对每个问题生成 K 个不同的回答 (Sampling)。
+        """
+        logger.info(f"Starting vLLM Roll-K Exam with Hints: k={k}, temp={temperature}, total_questions={len(question)}")
+        
+        # 1. 确保随机种子一致
+        set_all_seeds(self.seed)
+        
+        # 2. 构建带有预填充(Pre-fill)的 Prompts
+        prompts = []
+        HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
+
+        for i, q in enumerate(question):
+            # A. 构建基础 ChatML (System + User)
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": str(q)}
+            ]
+            base_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            
+            # B. 拼接 Hint
+            current_hint = hints[i] if i < len(hints) else ""
+            
+            if current_hint and current_hint.strip() != "":
+                prefix_text = HINT_PREFIX_TEMPLATE.format(hint=current_hint)
+                full_prompt = base_prompt + prefix_text
+            else:
+                full_prompt = base_prompt
+            
+            prompts.append(full_prompt)
+
+        # 3. 设置采样参数 (Sampling Mode)
+        # 注意：这里 n=k，temperature > 0
+        sampling_params = SamplingParams(
+            n=k,  # ✅ 每个 Prompt 生成 k 条回复
+            temperature=temperature,
+            top_p=1.0 if temperature == 0 else 0.9,
+            max_tokens=self.MAX_NEW_TOKENS,
+            stop_token_ids=self.stop_token_ids,
+            seed=self.seed
+        )
+
+        # 4. 执行推理
+        outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
+
+        # 5. 处理结果
+        results = []
+        logger.info("Processing Roll-K outputs...")
+
+        for i, output in enumerate(outputs):
+            # 获取当前问题的元数据
+            q_text = question[i]
+            ref_ans = answer[i]
+            ref_sol = solution[i]
+            q_idx = question_idx[i]
+            current_hint = hints[i] if i < len(hints) else ""
+
+            # 遍历 K 个采样结果
+            for sample in output.outputs:
+                generated_answer = sample.text.strip()
+                
+                # 拼接完整回复
+                if current_hint:
+                    full_response = HINT_PREFIX_TEMPLATE.format(hint=current_hint) + generated_answer
+                else:
+                    full_response = generated_answer
+
+                results.append({
+                    "question": q_text,
+                    "answer": generated_answer,       # ✅ 保持统一格式 "answer"
+                    "provided_hint": current_hint,    # 记录 Hint
+                    "full_response": full_response,   # 完整序列
+                    "ref_answer": ref_ans.strip(),
+                    "ref_solution": ref_sol.strip(),
+                    "question_idx": q_idx,
+                })
+
+        # 6. 保存结果
+        os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
+        with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"Roll-K Exam with Hints done! {len(results)} entries saved to {self.OUTPUT_JSON_PATH_ROLL}")
+
 
 # =====================================================
 # 一致性测试函数
@@ -301,122 +497,8 @@ def test_consistency(take_exam, question, n_runs=3):
             logger.error(f"  Run {i+1}: {r[:200]}")
         return False
 
-    # =====================================================
-    # 新增：带 Hint 的 Prefix-Forcing 考试 (Q + H -> A)
-    # =====================================================
-def exam_with_hints(self, question, solution, answer, question_idx, hints):
-    """
-    使用 Prefix-Forcing 模式进行推理。
-    
-    原理：
-    构造 Prompt = System + User(Question) + Assistant(# known:\n{Hint}\n)
-    强制模型认为它已经输出了 Hint，从而接着生成 Answer。
-    这保证了推理时的上下文状态与训练时完全一致。
-    """
-    logger.info(f"Starting vLLM Exam (Prefix-Forcing): total_questions={len(question)}")
-    
-    # 1. 确保随机种子一致
-    set_all_seeds(self.seed)
-    
-    # 2. 构建带有预填充(Pre-fill)的 Prompts
-    prompts = []
-    # 必须严格匹配训练代码中的 GEN_HINTS_WIH_ANSWER 格式: "# known:\n{hints}\n{answer}"
-    # 因此前缀应该是 "# known:\n{hint}\n"
-    HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
-
-    for i, q in enumerate(question):
-        # A. 构建基础 ChatML (System + User)
-        # add_generation_prompt=True 会在最后加上 <|im_start|>assistant\n
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": str(q)}
-        ]
-        base_prompt = self.tokenizer.apply_chat_template(
-            messages,
-            tokenize=False,
-            add_generation_prompt=True,
-        )
-        
-        # B. 拼接 Hint 到 Assistant 的开头
-        current_hint = hints[i] if i < len(hints) else ""
-        
-        if current_hint and current_hint.strip() != "":
-            # 拼接逻辑：Assistant标签 + Hint前缀
-            prefix_text = HINT_PREFIX_TEMPLATE.format(hint=current_hint)
-            full_prompt = base_prompt + prefix_text
-        else:
-            # 如果没有 Hint，就按普通模式推理
-            full_prompt = base_prompt
-            
-        prompts.append(full_prompt)
-
-    # 3. 设置采样参数 (Greedy Search)
-    sampling_params = SamplingParams(
-        n=1,
-        temperature=0.0,
-        top_p=1.0,
-        max_tokens=self.MAX_NEW_TOKENS,
-        stop_token_ids=self.stop_token_ids,
-        seed=self.seed
-    )
-
-    # 4. 执行推理
-    # vLLM 会自动识别 prompt 中的 prefix，并从 prefix 后面继续生成
-    outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
-
-    # 5. 处理结果
-    results = []
-    for i, output in enumerate(outputs):
-        # generated_text 仅包含模型新生成的 Answer 部分 (不包含 Hint)
-        generated_answer = output.outputs[0].text.strip()
-        
-        current_hint = hints[i] if i < len(hints) else ""
-        
-        # 为了数据完整性，我们模拟拼接出完整的 Assistant 输出
-        if current_hint:
-            full_response = HINT_PREFIX_TEMPLATE.format(hint=current_hint) + generated_answer
-        else:
-            full_response = generated_answer
-
-        results.append({
-            "question": question[i],
-            "provided_hint": current_hint,      # 记录输入的 Hint
-            "model_answer": generated_answer,   # 模型生成的 Answer
-            "full_response": full_response,     # 完整回复 (Hint + Answer)，可直接用于后续 SFT 数据构造
-            "ref_answer": answer[i].strip(),
-            "ref_solution": solution[i].strip(),
-            "question_idx": question_idx[i],
-        })
-
-    # 6. 保存结果
-    os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
-    with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=2)
-
-    logger.info(f"Prefix-Forcing Exam done! Saved to {self.OUTPUT_JSON_PATH}")
-
 
 if __name__ == "__main__":
-    # 假设你也有这些文件
-    try:
-        from configs import GRPOConfig
-        from data_math import Math_500
-    except ImportError:
-        # Fallback for standalone testing
-        class MockDataset:
-            def __init__(self):
-                self.problems = ["What is 1+1?"]
-                self.solutions = ["1+1=2"]
-                self.answers = ["2"]
-        logger.warning("Could not import configs/data_math. Using mock data.")
-        Math_500 = lambda x: MockDataset()
-
-    current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path))
-    project_root = os.path.dirname(os.path.dirname(project_root))
-
-    exam_file_path = os.path.join(project_root, "CELPO", "configs", "celpo_train.yaml")
-    
     # 修改为你的模型实际路径
     MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
@@ -425,6 +507,8 @@ if __name__ == "__main__":
         question = ["Find the value of x if 2x + 3 = 7.", "Calculate 15 * 15."]
         solution = ["2x=4 -> x=2", "225"]
         answer = ["2", "225"]
+        # 注意：测试 hints 时需要提供 hints 列表
+        hints = ["First subtract 3 from both sides.", "Multiply 10 by 15 first then add 5 times 15."] 
         question_idx = list(range(len(question)))
 
         logger.info(f"Dataset size: {len(question)}")
@@ -439,17 +523,18 @@ if __name__ == "__main__":
         logger.info("=" * 60)
         logger.info("Running consistency test...")
         logger.info("=" * 60)
-        test_consistency(take_exam, question[0], n_runs=5)
+        test_consistency(take_exam, question[0], n_runs=3)
         
-        # ✅ 然后运行正式考试
+        # ✅ 然后运行正式考试 (这里示例运行带 Hint 的模式)
         logger.info("=" * 60)
-        logger.info("Running standard exam...")
+        logger.info("Running Exam with Hints...")
         logger.info("=" * 60)
-        take_exam.exam(
+        take_exam.exam_with_hints(
             question, 
             solution, 
             answer, 
-            question_idx
+            question_idx,
+            hints
         )
 
     except Exception as e:
