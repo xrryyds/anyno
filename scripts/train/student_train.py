@@ -216,7 +216,7 @@ class FixedModeCollator:
         }
 
 # ==========================================
-# 4. SIRA Trainer
+# 4. SIRA Trainer (MODIFIED)
 # ==========================================
 
 class SequentialTrainer(Trainer):
@@ -341,7 +341,9 @@ class SequentialTrainer(Trainer):
 
         debug_info_list = [debug_map[i] for i in range(token_losses.size(0))]
         
-        # Part 4: Task Reweighting & Norm
+        # =========================================================================
+        # Part 4: Task Reweighting & Norm [MODIFIED / FIXED]
+        # =========================================================================
         batch_size = token_losses.size(0)
         # 确保按顺序堆叠
         raw_loss_vector = torch.stack([final_losses_map[i] for i in range(batch_size)])
@@ -363,7 +365,7 @@ class SequentialTrainer(Trainer):
         norm_total_debug = 0.0
         
         if num_gen > 0:
-            # 修改: 显式指定 is_mode_b 的 device
+            # 1. FIX DEVICE MISMATCH
             is_mode_b = torch.zeros(batch_size, device=weighted_loss_vec.device)
             for idx in gen_indices: is_mode_b[idx] = 1.0
             
@@ -375,7 +377,7 @@ class SequentialTrainer(Trainer):
             ratio = norm_b / norm_total
             scale_factor = ratio.detach()
             
-            # 安全逻辑：如果 scale_factor 极小，回退到 1
+            # 2. FIX SCALE FACTOR ZERO (Gradient Collapse)
             if scale_factor < 1e-6:
                 scale_factor = torch.tensor(1.0, device=scale_factor.device)
 
@@ -394,34 +396,20 @@ class SequentialTrainer(Trainer):
         # =========================================================================
         # 随机打印或在前几个 step 打印，用于排查 Loss 为 0 的原因
         if self.model.training and random.random() < 0.2: # 20% 概率打印
-            print("\n" + "!"*20 + " [CRITICAL DEBUG] LOSS=0 INVESTIGATION " + "!"*20)
-            print(f"  Batch Size: {batch_size}")
-            print(f"  Gen Indices: {gen_indices}")
-            print(f"  Anchor Indices: {anchor_indices}")
-            
-            # 1. 检查原始 Loss Vector 是否全 0
-            raw_vec_cpu = raw_loss_vector.detach().cpu().numpy()
-            print(f"  Raw Loss Vector: {raw_vec_cpu} (Any Zero? {np.all(raw_vec_cpu == 0)})")
-            
-            # 2. 检查权重是否全 0
-            weights_cpu = task_weights.detach().cpu().numpy()
-            print(f"  Task Weights:    {weights_cpu} (Any Zero? {np.all(weights_cpu == 0)})")
-            
-            # 3. 检查加权后向量
-            weighted_cpu = weighted_loss_vec.detach().cpu().numpy()
-            print(f"  Weighted Vector: {weighted_cpu}")
-            
-            # 4. 重点：检查 Scale Factor
-            if num_gen > 0:
-                print(f"  Norm B: {norm_b_debug:.6f}")
-                print(f"  Norm Total: {norm_total_debug:.6f}")
-                print(f"  Scale Factor: {scale_factor_debug:.6f}")
-                if scale_factor_debug == 0:
-                    print(f"  [ERROR] SCALE FACTOR IS 0! This is why Loss is 0.")
-            
-            # 5. 最终 Loss
-            print(f"  >>> FINAL LOSS RETURNED: {final_loss.item():.8f}")
-            print("!"*70 + "\n")
+            # 只有当 Loss 异常小时才强制打印
+            if final_loss.item() < 1e-6:
+                print("\n" + "!"*20 + " [CRITICAL DEBUG] LOSS=0 INVESTIGATION " + "!"*20)
+                print(f"  Batch Size: {batch_size}")
+                print(f"  Gen Indices: {gen_indices}")
+                print(f"  Anchor Indices: {anchor_indices}")
+                print(f"  Raw Loss Vector Sum: {raw_loss_vector.sum().item()}")
+                print(f"  Weighted Vector Sum: {weighted_loss_vec.sum().item()}")
+                if num_gen > 0:
+                    print(f"  Norm B: {norm_b_debug:.6f}")
+                    print(f"  Norm Total: {norm_total_debug:.6f}")
+                    print(f"  Scale Factor: {scale_factor_debug:.6f}")
+                print(f"  >>> FINAL LOSS RETURNED: {final_loss.item():.8f}")
+                print("!"*70 + "\n")
         # =========================================================================
 
         return final_loss, debug_info_list, final_alpha_val, dynamic_beta_val
