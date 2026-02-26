@@ -548,7 +548,7 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500(True)
-    # student_take_exam_Gsm8k(False)
+    # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
@@ -572,17 +572,17 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(16) 
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    run_sira_training_v2(model_path=model_path)
-    # 4. check
-    # student_take_exam_Math_sub(train=True, subset="prealgebra", lora_path="/root/autodl-tmp/CELPO/output/sira_sft_0214_1459")
+    # run_sira_training_v2(model_path=model_path)
+    # 4. check 
+    student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0226_2354/checkpoint-target-reached-epoch-10")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_3")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/hints_AL_MATH_8.json")
     # teacher.teacher_mark_paper_with_save()
     # exam_roll_recheck_mistake(False)
