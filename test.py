@@ -1,172 +1,169 @@
 import os
 import torch
 from transformers import AutoTokenizer
-import logging
 
-# ================= 配置 =================
-# 替换为你的本地 Qwen2.5 模型路径
-MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B" 
-# 保持与你的训练/推理代码一致的常量
+# ==========================================
+# 配置与模板 (严格复制自你的代码)
+# ==========================================
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
+
+# Training 模板
 GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
-HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"  # 推理时用的模板
 
-# 设置日志
-logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-logger = logging.getLogger(__name__)
+# Inference 模板
+HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
 
-def load_tokenizer():
-    try:
-        logger.info(f"Loading tokenizer from {MODEL_PATH}...")
-        tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
-        return tokenizer
-    except Exception as e:
-        logger.error(f"Failed to load tokenizer: {e}")
-        return None
+class ConsistencyDebugger:
+    def __init__(self, model_path):
+        print(f"Loading tokenizer from: {model_path} ...")
+        self.tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+        if self.tokenizer.pad_token_id is None:
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        
+    def debug_consistency(self, question, hints, answer):
+        print("\n" + "#" * 60)
+        print("🔍 深度一致性检查 (Deep Consistency Check)")
+        print("#" * 60)
 
-# ================= 验证 1: Mask 定位精准度 =================
-def verify_mask_alignment(tokenizer):
-    logger.info("=" * 60)
-    logger.info("TEST 1: Verifying Mask Alignment (Train Logic)")
-    logger.info("=" * 60)
+        # ==============================================================================
+        # Part 1: 模拟训练输入 (Mode B Generation)
+        # 逻辑来源: FixedModeCollator
+        # ==============================================================================
+        print("\n" + "="*20 + " [1] TRAINING INPUT (Mode B) " + "="*20)
+        
+        # 1.1 构建 Prompt ID
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": str(question)}]
+        prompt_str = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        prompt_ids = self.tokenizer(prompt_str, add_special_tokens=False).input_ids
+        
+        # 1.2 构建 Target ID (Hint + Answer)
+        target_text = GEN_HINTS_WIH_ANSWER.format(hints=hints, answer=answer)
+        target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
+        
+        # 1.3 拼接 (List Concatenation) -> 这是模型在训练时实际接收到的序列
+        train_full_ids = prompt_ids + target_ids
+        
+        # 1.4 计算 Mask 边界 (为了截取展示)
+        hint_only_text = f"# known:\n{hints}\n"
+        hint_part_ids = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
+        
+        len_prompt = len(prompt_ids)
+        len_hint = len(hint_part_ids)
+        
+        # 截取各部分
+        real_prompt_part = train_full_ids[:len_prompt]
+        real_hint_part = train_full_ids[len_prompt : len_prompt + len_hint]
+        real_answer_part = train_full_ids[len_prompt + len_hint :]
+        
+        # 解码回字符串 (模型看到的实际内容)
+        decoded_train_full = self.tokenizer.decode(train_full_ids)
+        decoded_train_prompt = self.tokenizer.decode(real_prompt_part)
+        decoded_train_hint = self.tokenizer.decode(real_hint_part)
+        decoded_train_answer = self.tokenizer.decode(real_answer_part)
 
-    # 模拟一条数据
-    q = "Calculate 12 + 34."
-    h = "First add the units digits, then the tens digits." # Hint
-    a = "46" # Answer
+        print(f"【完整输入 (Decoded String)】:\n{repr(decoded_train_full)}")
+        print(f"\n【截取: Prompt部分】:\n{repr(decoded_train_prompt)}")
+        print(f"\n【截取: Hints部分 (Train)】:\n{repr(decoded_train_hint)}")
+        print(f"\n【截取: Answer部分 (Train)】:\n{repr(decoded_train_answer)}")
+        print(f"\n【Token IDs (前10个)】: {train_full_ids[:10]}")
+        print(f"【Token IDs (接缝处 ±5个)】: ... {train_full_ids[len_prompt-5 : len_prompt+5]} ...")
 
-    # --- 1. 复现 FixedModeCollator 的逻辑 ---
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": q}
-    ]
-    prompt_str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    prompt_ids = tokenizer(prompt_str, add_special_tokens=False).input_ids
-    len_prompt = len(prompt_ids)
+        # ==============================================================================
+        # Part 2: 模拟推理输入 (Inference / vLLM)
+        # 逻辑来源: exam_with_hints
+        # ==============================================================================
+        print("\n" + "="*20 + " [2] INFERENCE INPUT (Prompt + Hint) " + "="*20)
+        
+        # 2.1 构建 Base Prompt
+        base_prompt = self.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        
+        # 2.2 构建 Prefix (Hint)
+        prefix_text = HINT_PREFIX_TEMPLATE.format(hint=hints)
+        
+        # 2.3 字符串拼接 (String Concatenation) -> 这是喂给 vLLM 的原始字符串
+        infer_full_prompt_str = base_prompt + prefix_text
+        
+        # 2.4 vLLM 内部会做的 Tokenize
+        infer_full_ids = self.tokenizer(infer_full_prompt_str, add_special_tokens=False).input_ids
 
-    # 构造完整目标文本
-    target_text = GEN_HINTS_WIH_ANSWER.format(hints=h, answer=a)
-    # 模拟 Answer 结尾加 EOS (训练代码逻辑)
-    target_ids = tokenizer(target_text, add_special_tokens=False).input_ids + [tokenizer.eos_token_id]
-    
-    full_ids = prompt_ids + target_ids
+        print(f"【完整Prompt (String喂给vLLM)】:\n{repr(infer_full_prompt_str)}")
+        print(f"\n【vLLM Tokenize后的 IDs (前10个)】: {infer_full_ids[:10]}")
+        
+        # 找到接缝处 (Base Prompt 结束的地方)
+        # 注意：这里我们大致估算接缝位置，通过长度对比
+        boundary_idx = len(prompt_ids) 
+        if boundary_idx < len(infer_full_ids):
+             print(f"【Token IDs (接缝处 ±5个)】: ... {infer_full_ids[boundary_idx-5 : boundary_idx+5]} ...")
 
-    # 计算 Hint 长度 (训练代码核心逻辑)
-    hint_only_text = f"# known:\n{h}\n"
-    hint_ids_only = tokenizer(hint_only_text, add_special_tokens=False).input_ids
-    len_hint_part = len(hint_ids_only)
+        # ==============================================================================
+        # Part 3: 核心对比结果
+        # ==============================================================================
+        print("\n" + "="*20 + " [3] COMPARISON RESULT " + "="*20)
+        
+        # 比较点：模型在生成 Answer 之前，看到的输入是否一致？
+        # 训练时看到的 = Prompt IDs + Hint IDs
+        # 推理时看到的 = Tokenize(Prompt Str + Hint Str)
+        
+        train_input_prefix_ids = train_full_ids[:len_prompt + len_hint]
+        infer_input_prefix_ids = infer_full_ids # 推理时整个就是输入
+        
+        # 检查长度
+        len_train = len(train_input_prefix_ids)
+        len_infer = len(infer_input_prefix_ids)
+        
+        print(f"Length Check: Train={len_train} tokens vs Inference={len_infer} tokens")
+        
+        if train_input_prefix_ids == infer_input_prefix_ids:
+            print("\n✅ [PERFECT MATCH] 完美一致！")
+            print("训练代码中的 List拼接 与 推理代码中的 String拼接 产生了完全相同的 Token 序列。")
+            print("你可以放心地使用这套代码。")
+        else:
+            print("\n❌ [MISMATCH] 不一致！")
+            print("警告：训练时模型看到的 Token 与推理时喂给模型的 Token 不一样。")
+            
+            # 寻找第一个不一致的地方
+            min_len = min(len_train, len_infer)
+            for i in range(min_len):
+                if train_input_prefix_ids[i] != infer_input_prefix_ids[i]:
+                    t_id = train_input_prefix_ids[i]
+                    i_id = infer_input_prefix_ids[i]
+                    print(f"\n第一个差异点 (Index {i}):")
+                    print(f"  Train Token: {t_id} -> {repr(self.tokenizer.decode([t_id]))}")
+                    print(f"  Infer Token: {i_id} -> {repr(self.tokenizer.decode([i_id]))}")
+                    
+                    # 打印上下文
+                    start = max(0, i-10)
+                    print(f"  Context (Train): {self.tokenizer.decode(train_input_prefix_ids[start:i+1])}")
+                    print(f"  Context (Infer): {self.tokenizer.decode(infer_input_prefix_ids[start:i+1])}")
+                    break
+            
+            if len_train != len_infer:
+                print(f"\n长度差异原因分析: 可能是字符串拼接处的空格或换行符被 Tokenizer 合并了。")
+                print("Train (List Join): [End_Prompt] + [Start_Hint]")
+                print("Infer (Str Join) : '...End_Prompt' + 'Start_Hint...' -> Tokenize")
 
-    hint_end_idx = min(len_prompt + len_hint_part, len(full_ids))
-
-    # 生成 Mask
-    h_mask = [0] * len(full_ids)
-    a_mask = [0] * len(full_ids)
-
-    for i in range(len_prompt, hint_end_idx):
-        h_mask[i] = 1
-    for i in range(hint_end_idx, len(full_ids)):
-        a_mask[i] = 1
-
-    # --- 2. 验证提取内容 ---
-    # 将 list 转 tensor 方便操作
-    full_tensor = torch.tensor(full_ids)
-    h_mask_tensor = torch.tensor(h_mask)
-    a_mask_tensor = torch.tensor(a_mask)
-
-    # 提取被 mask 标记为 1 的 token
-    extracted_hint_ids = full_tensor[h_mask_tensor == 1].tolist()
-    extracted_answer_ids = full_tensor[a_mask_tensor == 1].tolist()
-
-    decoded_hint = tokenizer.decode(extracted_hint_ids)
-    decoded_answer = tokenizer.decode(extracted_answer_ids)
-
-    # --- 3. 打印结果与断言 ---
-    logger.info(f"[Original Hint]   : {hint_only_text.__repr__()}")
-    logger.info(f"[Extracted Hint]  : {decoded_hint.__repr__()}")
-    logger.info(f"[Original Answer] : {a.__repr__()} (+ EOS)")
-    logger.info(f"[Extracted Answer]: {decoded_answer.__repr__()}")
-
-    # 验证 Hint
-    # 注意：decode 可能会产生轻微空格差异，所以这里去头尾空格比较，或者包含比较
-    if hint_only_text.strip() == decoded_hint.strip():
-        logger.info("✅ Hint Mask Alignment: SUCCESS")
-    else:
-        logger.error("❌ Hint Mask Alignment: FAILED")
-        logger.error(f"Expected: {hint_only_text.__repr__()}")
-        logger.error(f"Got:      {decoded_hint.__repr__()}")
-
-    # 验证 Answer (注意 extracted 包含 EOS，decode 不会显示 EOS，所以这很安全)
-    if decoded_answer.strip() == a.strip():
-        logger.info("✅ Answer Mask Alignment: SUCCESS")
-    else:
-        logger.error("❌ Answer Mask Alignment: FAILED")
-
-
-# ================= 验证 2: 训练 vs 推理 序列一致性 =================
-def verify_train_inference_consistency(tokenizer):
-    logger.info("\n" + "=" * 60)
-    logger.info("TEST 2: Verifying Train vs. Inference Consistency")
-    logger.info("=" * 60)
-
-    q = "Solve x + 5 = 10."
-    h = "Subtract 5 from both sides."
-    a = "5" # 假设这是推理生成出来的答案，我们需要验证序列拼接是否一致
-
-    # --- 方式 A: 训练模式 (List Concatenation) ---
-    # 逻辑：token(Prompt) + token(Hint_Block) + token(Answer)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": q}]
-    prompt_str = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    prompt_ids = tokenizer(prompt_str, add_special_tokens=False).input_ids
-    
-    # 训练中 Hint 和 Answer 是在一个字符串里 tokenized 的
-    target_text = GEN_HINTS_WIH_ANSWER.format(hints=h, answer=a)
-    target_ids = tokenizer(target_text, add_special_tokens=False).input_ids
-    
-    train_seq_ids = prompt_ids + target_ids
-
-    # --- 方式 B: 推理模式 (String Concatenation) ---
-    # 逻辑：vLLM 接收的是 full_prompt 字符串，然后一次性 tokenize
-    # Inference logic: full_prompt = base_prompt + prefix_text + (generation)
-    # 我们模拟生成完后的完整字符串
-    
-    # 1. Base Prompt (System + User + Assistant Header)
-    base_prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-    
-    # 2. Prefix (Hint)
-    prefix_text = HINT_PREFIX_TEMPLATE.format(hint=h)
-    
-    # 3. Generated Answer (模拟)
-    generated_text = a
-    
-    # 4. 拼接完整字符串
-    full_inference_str = base_prompt + prefix_text + generated_text
-    
-    # 5. Tokenize
-    inference_seq_ids = tokenizer(full_inference_str, add_special_tokens=False).input_ids
-
-    # --- 比较 ---
-    logger.info(f"Train Sequence Length:     {len(train_seq_ids)}")
-    logger.info(f"Inference Sequence Length: {len(inference_seq_ids)}")
-
-    if train_seq_ids == inference_seq_ids:
-        logger.info("✅ Consistency Check: PASS (Perfect Match)")
-    else:
-        logger.error("❌ Consistency Check: FAILED (Mismatch Detected!)")
-        # 找出哪里不一样
-        min_len = min(len(train_seq_ids), len(inference_seq_ids))
-        for i in range(min_len):
-            if train_seq_ids[i] != inference_seq_ids[i]:
-                logger.error(f"Mismatch at index {i}:")
-                logger.error(f"  Train Token: {train_seq_ids[i]} ({tokenizer.decode([train_seq_ids[i]])})")
-                logger.error(f"  Infer Token: {inference_seq_ids[i]} ({tokenizer.decode([inference_seq_ids[i]])})")
-                # 通常这里不一样是因为边界融合
-                context_start = max(0, i-5)
-                context_end = min(min_len, i+5)
-                logger.info(f"  Context around mismatch (Train): {tokenizer.decode(train_seq_ids[context_start:context_end])}")
-                break
-
+# ==========================================
+# 运行配置
+# ==========================================
 if __name__ == "__main__":
-    tokenizer = load_tokenizer()
-    if tokenizer:
-        verify_mask_alignment(tokenizer)
-        verify_train_inference_consistency(tokenizer)
+    # 请修改为你的模型路径
+    # model_path = "/root/autodl-tmp/model/OREAL-7B" 
+    # 如果你在本地测试，可以用 Qwen/Qwen2.5-7B-Instruct 等
+    model_path =  "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+
+    # 检查路径
+    if not os.path.exists(model_path):
+        print(f"Error: 路径 {model_path} 不存在，请修改脚本底部的 model_path。")
+    else:
+        debugger = ConsistencyDebugger(model_path)
+        
+        # 测试用例 (包含 LaTeX 和 换行，这是最容易出错的地方)
+        q = "Calculate $\\int x dx$."
+        h = "Recall that $\\int x^n dx = \\frac{x^{n+1}}{n+1}$."
+        a = "The answer is $\\frac{x^2}{2} + C$."
+        
+        debugger.debug_consistency(q, h, a)

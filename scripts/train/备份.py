@@ -346,9 +346,7 @@ class SequentialTrainer(Trainer):
             batch_ref_mean = batch_ref_anchor_loss_sum / valid_anchor_count
             batch_beta_val = batch_ref_mean.item()
             safe_batch_beta = batch_ref_mean.detach() + 1e-6
-            # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
-            total_valid = valid_anchor_count + len(gen_indices)
-            r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
+            r = self.hint_config.split_r
             vol_balance = (1 - r) / r
             raw_loss_ratio = scaling_gen_loss / safe_batch_beta
             smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
