@@ -313,7 +313,7 @@ class TeacherCorrecter:
                             {"role": "user", "content": prompt},
                         ],
                         temperature=0.0,
-                        max_tokens=10 
+                        max_completion_tokens=100
                     )
                     response_content = completion.choices[0].message.content.strip()
                     break
