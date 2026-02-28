@@ -69,7 +69,7 @@ class TakeExam:
         set_all_seeds(self.seed)  # 再次确保种子设置
 
         self.MAX_NEW_TOKENS = 2048
-        self.MAX_MODEL_LEN = 4096 
+        self.MAX_MODEL_LEN = 2048
 
         self.LOCAL_MODEL_PATH = model_path
         self.use_lora = use_lora

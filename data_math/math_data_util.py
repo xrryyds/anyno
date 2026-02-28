@@ -17,7 +17,7 @@ class Math_data():
             dataset_loader.get_dataset())
 
 
-        self.gen_prompt(self.problems, max_token=4096)
+        self.gen_prompt(self.problems, max_token=2048)
         self.gen_answer(self.answers)
         
         (self.train_problems, self.test_problems,

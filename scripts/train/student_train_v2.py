@@ -150,10 +150,10 @@ class TrainingMetricsTracker:
             "avg_train_loss": loss_sum / max(steps, 1), 
             "avg_gate_value": avg(gate_vals),
             "avg_anchor_loss_weighted": avg(anchor_w), 
-            "avg_anchor_loss_raw": avg(anchor_raw),    
             "avg_mode_b_loss": avg(mode_b), 
-            "avg_mode_b_loss_raw": avg(mode_b_raw), 
-            "avg_final_alpha": avg(alpha_vals), 
+            "avg_final_alpha": avg(alpha_vals),   
+            "avg_mode_b_loss_raw": avg(mode_b_raw),
+            "avg_anchor_loss_raw": avg(anchor_raw),   
             "avg_dynamic_beta": avg(beta_vals),
             "sample_counts": counts
         }
@@ -170,7 +170,7 @@ tracker = TrainingMetricsTracker()
 # 3. Data Collator (保持不变)
 # ==========================================
 class FixedModeCollator:
-    def __init__(self, tokenizer, max_length: int = 4096): 
+    def __init__(self, tokenizer, max_length: int = 2048):
         self.tokenizer = tokenizer
         self.max_length = max_length
         if self.tokenizer.pad_token_id is None:
@@ -180,12 +180,14 @@ class FixedModeCollator:
         input_ids_batch, labels_batch = [], []
         hint_masks_batch, answer_masks_batch = [], []
         attention_mask_batch, metadata_batch = [], []
+        ref_betas_batch = []
 
         for item in batch:
             q = item['question']
             b = item.get('hints', "")
-            c = item.get('answer') 
-            data_type = item.get('type', 'anchor_data') 
+            c = item.get('answer')
+            data_type = item.get('type', 'anchor_data')
+            ref_betas_batch.append(item.get('ref_beta'))
 
             messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": str(q)}]
             prompt_str = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
@@ -232,26 +234,26 @@ class FixedModeCollator:
             "attention_mask": torch.nn.utils.rnn.pad_sequence(attention_mask_batch, batch_first=True, padding_value=0),
             "hint_masks": torch.nn.utils.rnn.pad_sequence(hint_masks_batch, batch_first=True, padding_value=0.0),
             "answer_masks": torch.nn.utils.rnn.pad_sequence(answer_masks_batch, batch_first=True, padding_value=0.0),
-            "metadata": metadata_batch
+            "metadata": metadata_batch,
+            "ref_betas": ref_betas_batch,
         }
 
 # ==========================================
-# 4. SIRA Trainer (保持不变)
+# 4. SIRA Trainer
 # ==========================================
 class SequentialTrainer(Trainer):
     def __init__(self, hint_config: HintSFTConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
-        self.running_gen_loss = 1.0 
+        self.running_gen_loss = 1.0
 
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
-        train_dataset = self.train_dataset
         return DataLoader(
-            train_dataset,
+            self.train_dataset,
             batch_size=self._train_batch_size,
-            sampler=SequentialSampler(train_dataset), 
+            sampler=SequentialSampler(self.train_dataset),
             collate_fn=self.data_collator,
             drop_last=self.args.dataloader_drop_last,
             num_workers=self.args.dataloader_num_workers,
@@ -259,38 +261,32 @@ class SequentialTrainer(Trainer):
         )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        labels = inputs.get("labels")
         hint_masks = inputs.pop("hint_masks")
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
-        
-        with torch.no_grad():
-            with self.model.disable_adapter():
-                ref_outputs = model(**inputs)
-                ref_logits = ref_outputs.get("logits")
-        
+        ref_betas = inputs.pop("ref_betas")
+
         outputs = model(**inputs)
         logits = outputs.get("logits")
-        
+        labels = inputs.get("labels")
+
         loss, debug_info_list, current_alpha, dynamic_beta = self.adaptive_gating_loss(
-            logits, ref_logits, labels, hint_masks, answer_masks
+            logits, labels, hint_masks, answer_masks, ref_betas
         )
-        
+
         if self.model.training:
             tracker.update(loss.item(), metadata, debug_info_list, current_alpha, dynamic_beta)
-            
+
         return (loss, outputs) if return_outputs else loss
 
-    def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
+    def adaptive_gating_loss(self, logits, labels, hint_masks, answer_masks, cached_betas):
         shift_logits = logits[..., :-1, :].contiguous()
-        shift_ref_logits = ref_logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.shape)
-        ref_token_losses = loss_fct(shift_ref_logits.view(-1, shift_ref_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.shape)
 
         gen_losses = []      
         anchor_indices, gen_indices = [], []    
@@ -331,7 +327,8 @@ class SequentialTrainer(Trainer):
             a_count = a_m.sum()
             if a_count > 0:
                 raw_curr = (token_losses[idx] * a_m).sum() / a_count
-                raw_ref = (ref_token_losses[idx] * a_m).sum() / a_count
+                cached = cached_betas[idx]
+                raw_ref = torch.tensor(cached, device=logits.device, dtype=logits.dtype) if cached is not None else raw_curr.detach()
                 batch_ref_anchor_loss_sum += raw_ref
                 valid_anchor_count += 1
                 instance_beta = raw_ref.detach() + 1e-6
@@ -469,7 +466,7 @@ def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 16,
+    batch_size: int = 8,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
@@ -515,10 +512,12 @@ def run_sira_training_v2(
         logger.error(f"Failed to load tokenizer: {e}")
         raise e
 
-    if not os.path.exists(hint_config.data_path): 
+    if not os.path.exists(hint_config.data_path):
         raise FileNotFoundError(f"Dataset not found at {hint_config.data_path}")
     dataset = Dataset.from_json(hint_config.data_path)
-    
+
+    collator = FixedModeCollator(tokenizer)
+
     total_samples = len(dataset)
     total_steps = total_samples // batch_size
     steps_per_logical_epoch = total_steps // real_data_epochs
@@ -541,16 +540,14 @@ def run_sira_training_v2(
         task_type="CAUSAL_LM", bias="none"
     )
     model = get_peft_model(model, peft_config)
-    model.enable_input_require_grads() 
-    
-    collator = FixedModeCollator(tokenizer)
+    model.enable_input_require_grads()
 
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=1,
-        per_device_train_batch_size=2,
-        gradient_accumulation_steps=int(batch_size/2/device_num),
-        learning_rate=3e-4, 
+        per_device_train_batch_size=batch_size // device_num,
+        gradient_accumulation_steps=1,
+        learning_rate=3e-5, 
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=hint_config.metrics_log_interval, 
@@ -595,7 +592,7 @@ if __name__ == "__main__":
 
     run_sira_training_v2(
         model_path=default_model_url,
-        batch_size=16,
+        batch_size=8,
         real_data_epochs=50,
         target_mode_b=1.2  # 在这里修改你的目标阈值
     )

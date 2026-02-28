@@ -379,6 +379,26 @@ def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:st
     take_exam.exam(question, solution, answer, question_idx)
 
 
+def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:str = None):
+    data = Math_500()
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = None
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+    else:
+        take_exam = TakeExam(model_path)
+
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
 def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
@@ -399,14 +419,60 @@ def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
     take_exam.exam(question, solution, answer, question_idx)
 
 
+def compute_and_save_ref_loss():
+    """用 ref 模型计算 corr_path 每条数据的 answer tokens 平均 CE loss，写回 ref_beta 字段。"""
+    import torch
+    from tqdm import tqdm
+    from transformers import AutoTokenizer, AutoModelForCausalLM
+    from scripts.train.student_train_v2 import FixedModeCollator, SYSTEM_PROMPT
+
+    with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    # 已全部计算过则跳过
+    if all('ref_beta' in item for item in data):
+        logger.info("ref_beta already computed for all items, skipping.")
+        return
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+    collator = FixedModeCollator(tokenizer)
+    ref_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype=torch.bfloat16, device_map="auto", trust_remote_code=True)
+    ref_model.eval()
+    loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+
+    with torch.no_grad():
+        for item in tqdm(data, desc="Computing ref_beta", ncols=100):
+            if 'ref_beta' in item:
+                continue
+            # corr_path 的样本作为 anchor_data 处理
+            sample = {"question": item["question"], "answer": item.get("answer", item.get("ref_solution", "")), "type": "anchor_data"}
+            batch = collator([sample])
+            input_ids = batch["input_ids"].to(ref_model.device)
+            attention_mask = batch["attention_mask"].to(ref_model.device)
+            labels = batch["labels"].to(ref_model.device)
+            a_mask = batch["answer_masks"][0, 1:].to(ref_model.device)
+            logits = ref_model(input_ids=input_ids, attention_mask=attention_mask).logits
+            token_losses = loss_fct(logits[0, :-1], labels[0, 1:])
+            a_count = a_mask.sum()
+            item['ref_beta'] = ((token_losses * a_mask).sum() / a_count).item() if a_count > 0 else 0.0
+
+    del ref_model
+    torch.cuda.empty_cache()
+
+    with open(exam_paper.corr_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    logger.info(f"ref_beta saved to {exam_paper.corr_path}")
+
+
 def gen_IRDCL_dataset(batch_size):
+    compute_and_save_ref_loss()
     remove_null_hints(exam_paper.adv_hints_dataset_path)
     generate_irdcl_dataset(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 50)
+                        0.875, 50)
     
 def gen_IRDCL_dataset_v2(batch_size):
     remove_null_hints(exam_paper.adv_hints_dataset_path)
@@ -655,21 +721,22 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    # student_take_exam_Math500()
+    student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake() 
+    # exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
     # teacher.teacher_hints() 
 
+    # 5. student correct
     # student_correct()
     # exam_roll_recheck_hints()
 
@@ -677,12 +744,13 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(16) 
+    # gen_IRDCL_dataset(8) 
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
     # run_sira_training_v2(model_path=model_path)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1545/checkpoint-target-reached-epoch-15")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
@@ -691,8 +759,8 @@ if __name__ == "__main__":
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")

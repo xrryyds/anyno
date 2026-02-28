@@ -481,6 +481,11 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
         # 每个 epoch 开始前打乱 hints 数据的顺序
         # 这样每个 epoch 的 batch 组合都会不同
         random.shuffle(combined_hints_data)
+        
+        # 每个 epoch 开始前打乱 anchor 数据池，用于无放回抽样
+        shuffled_anchors = corr_data.copy()
+        random.shuffle(shuffled_anchors)
+        anchor_pool_idx = 0
 
         # 遍历 hints 数据生成 batch
         for i in range(0, total_hints, std_num_hints):
@@ -511,8 +516,11 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
                 ratio_factor = anchor_k / (1.0 - anchor_k)
                 needed_anchor_count = int(round(actual_hint_count * ratio_factor))
             
-            # 随机抽取 anchor 数据 (随机性体现在这里，每个epoch抽到的都可能不同)
-            anchors_chunk = random.choices(corr_data, k=needed_anchor_count)
+            # 无放回抽样 anchor 数据，如果不够则循环使用
+            anchors_chunk = []
+            for _ in range(needed_anchor_count):
+                anchors_chunk.append(shuffled_anchors[anchor_pool_idx % len(corr_data)])
+                anchor_pool_idx += 1
 
             # 添加 anchor 数据
             for item in anchors_chunk:
@@ -523,7 +531,8 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
                     "ref_answer": item.get("ref_answer"),
                     "ref_solution": item.get("ref_solution"),
                     "hints": None,
-                    "type": "anchor_data"
+                    "type": "anchor_data",
+                    "ref_beta": item.get("ref_beta"),
                 }
                 current_batch.append(entry)
             
