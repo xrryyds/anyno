@@ -500,8 +500,16 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     teacher = TeacherCorrecter()
     
     _, correct_data = teacher.teacher_mark_paper(roll=True)
-    correct_question_idx, _, _, _, _, _ = correct_data
+    correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers, correct_entropy = correct_data
     solved_ids = set(correct_question_idx)
+
+    # 准备roll 8做对的题目数据
+    roll8_solved_question_idx = []
+    roll8_solved_questions = []
+    roll8_solved_answers = []
+    roll8_solved_ref_solutions = []
+    roll8_solved_ref_answers = []
+    roll8_solved_entropy = []
 
     err_question_idx = []
     err_questions = []
@@ -514,21 +522,71 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
         if idx not in solved_ids:
             err_question_idx.append(idx)
             err_questions.append(m_question[i])
-            err_answers.append(m_answer[i])          
+            err_answers.append(m_answer[i])
             err_ref_answers.append(m_ref_answer[i])
             err_ref_solutions.append(m_ref_solution[i])
             err_entropy.append(m_entropy[i])
+        else:
+            # roll 8做对的题目，需要找到对应的正确答案
+            # 从correct_data中找到对应question_idx的答案
+            for j, corr_idx in enumerate(correct_question_idx):
+                if corr_idx == idx:
+                    roll8_solved_question_idx.append(idx)
+                    roll8_solved_questions.append(m_question[i])
+                    roll8_solved_answers.append(correct_answers[j])  # 使用roll 8中的正确答案
+                    roll8_solved_ref_solutions.append(m_ref_solution[i])
+                    roll8_solved_ref_answers.append(m_ref_answer[i])
+                    roll8_solved_entropy.append(m_entropy[i])
+                    break
 
     logger.info(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
     logger.info(f"mistake:{len(err_question_idx)}")
+    
+    # 保存roll 8还没做对的题目
     exam_paper.save_mistakes(
-        err_question_idx, 
-        err_questions, 
-        err_answers, 
-        err_ref_solutions, 
-        err_ref_answers, 
+        err_question_idx,
+        err_questions,
+        err_answers,
+        err_ref_solutions,
+        err_ref_answers,
         err_entropy
     )
+    
+    # 将roll 8做对的题目补充进corr_answer.json
+    if len(roll8_solved_question_idx) > 0:
+        logger.info(f"Adding {len(roll8_solved_question_idx)} newly solved questions to corr_answer.json")
+        
+        # 读取现有的corr_answer.json
+        existing_corr_data = []
+        try:
+            with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
+                existing_corr_data = json.load(f)
+            logger.info(f"Loaded {len(existing_corr_data)} existing correct answers")
+        except Exception as e:
+            logger.warning(f"Failed to load existing corr_answer.json: {e}, will create new file")
+        
+        # 获取已存在的question_idx集合，避免重复
+        existing_idx_set = {item.get("question_idx") for item in existing_corr_data}
+        
+        # 合并新做对的题目
+        for i in range(len(roll8_solved_question_idx)):
+            if roll8_solved_question_idx[i] not in existing_idx_set:
+                existing_corr_data.append({
+                    "question_idx": roll8_solved_question_idx[i],
+                    "question": roll8_solved_questions[i],
+                    "answer": roll8_solved_answers[i],
+                    "ref_solution": roll8_solved_ref_solutions[i],
+                    "ref_answer": roll8_solved_ref_answers[i],
+                    "entropy": roll8_solved_entropy[i]
+                })
+        
+        # 保存合并后的数据
+        try:
+            with open(exam_paper.corr_path, 'w', encoding='utf-8') as f:
+                json.dump(existing_corr_data, f, ensure_ascii=False, indent=2)
+            logger.info(f"Successfully saved {len(existing_corr_data)} total correct answers to corr_answer.json")
+        except Exception as e:
+            logger.error(f"Failed to save corr_answer.json: {e}")
 
 
 def sft_on_adv_Data():
@@ -721,13 +779,13 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    # student_take_exam_Math500()
+    student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
     exam_roll_recheck_mistake() 
@@ -744,22 +802,22 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(8) 
+    # gen_IRDCL_dataset(8)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
     # run_sira_training_v2(model_path=model_path)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1545/checkpoint-target-reached-epoch-15")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-8")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_3")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-8")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_2129/checkpoint-target-reached-epoch-26")
     # teacher.teacher_mark_paper_with_save()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
 
