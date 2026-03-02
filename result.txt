@@ -61,7 +61,7 @@ torchrun --nproc_per_node=2 main.py
 
 train           MATH500
                 -pass@1     -pass@8          -pass@1     -pass@8         -pass@1     -pass@8 
-OREAL 7B        110/500.    50(39)/500
+OREAL 7B        110/500.    53(39)/500
 adv(157/61)                             
 OREAL (EHC_1)   
 OREAL (sft)    

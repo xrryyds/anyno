@@ -779,16 +779,16 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    student_take_exam_Math500()
+    # student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake() 
+    # exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -808,17 +808,17 @@ if __name__ == "__main__":
     # run_sira_training_v2(model_path=model_path)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-8")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1554/checkpoint-target-reached-epoch-10")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-8")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1554/checkpoint-target-reached-epoch-10")
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_2129/checkpoint-target-reached-epoch-26")
-    # teacher.teacher_mark_paper_with_save()
+    process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
+    teacher.teacher_mark_paper_with_save()
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
