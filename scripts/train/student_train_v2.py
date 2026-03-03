@@ -286,7 +286,12 @@ class SequentialTrainer(Trainer):
         shift_a_masks = answer_masks[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        token_losses = loss_fct(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1)).view(shift_labels.shape)
+        # 逐样本计算 cross-entropy，避免将整个 batch 展平为 (batch*seq, vocab) 导致 OOM
+        token_losses_list = []
+        for j in range(shift_logits.size(0)):
+            tl = loss_fct(shift_logits[j], shift_labels[j])  # (seq_len,)
+            token_losses_list.append(tl)
+        token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
 
         gen_losses = []      
         anchor_indices, gen_indices = [], []    
