@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training, run_sft_training, run_grpo_training, run_sira_training_v2
+from scripts import run_sira_training_v2
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -1045,36 +1045,36 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    student_take_exam_Math500()
+    # student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
     exam_roll_recheck_mistake() 
-    teacher.check_answers_equivalence()
+    # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    teacher.teacher_hints() 
+    # teacher.teacher_hints() 
 
     # 5. student correct
-    student_correct()
-    exam_roll_recheck_hints()
+    # student_correct()
+    # exam_roll_recheck_hints()
 
     # ** sft
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    gen_IRDCL_dataset(8, 0.875, 10)
+    # gen_IRDCL_dataset(8, 0.875, 10)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
-    student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
