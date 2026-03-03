@@ -1072,7 +1072,7 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 10)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
+    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
