@@ -474,14 +474,15 @@ def gen_IRDCL_dataset(batch_size, spilt, epoch):
                         batch_size,
                         spilt, epoch)
     
-def gen_IRDCL_dataset_v2(batch_size):
+def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
+    compute_and_save_ref_loss()
     remove_null_hints(exam_paper.adv_hints_dataset_path)
     generate_irdcl_datase_v2(exam_paper.corr_path,
                         exam_paper.adv_hints_dataset_path,
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.5, 50)
+                        spilt, epoch)
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):

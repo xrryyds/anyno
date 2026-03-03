@@ -278,165 +278,112 @@ def generate_irdcl_dataset_syn(corr_path, adv_hints_path, disadv_hints_path, out
 
 def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
     """
-    Construct IRDCL training data.
-    - If anchor_k == 0: Pure Mode B (Hint) training, no anchors.
-    - If anchor_k > 0: Interleaved training (Hint, Anchor, Hint, Anchor...).
+    Construct IRDCL training data (v2).
+    Logic: Same as generate_irdcl_dataset, but anchor pool uses cross-epoch
+    non-replacement sampling. The anchor pool is shuffled once at the start,
+    and a global index advances across all epochs without resetting.
+    When the pool is exhausted, it reshuffles and restarts.
     """
+    # 计算标准的 batch 分配
+    std_num_anchors = int(batch_size * anchor_k)
+    std_num_hints = batch_size - std_num_anchors
     
-    print(f"Generating Dataset with anchor_k={anchor_k}...")
+    if std_num_hints <= 0:
+        raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
 
-    # --- 1. 加载 Hint 数据 (Mode B) ---
-    # 这里假设 adv_hints 和 disadv_hints 都属于 Hint 数据，如果有区分需求请自行筛选
-    if os.path.exists(adv_hints_path):
-        with open(adv_hints_path, 'r', encoding='utf-8') as f:
-            adv_data = json.load(f)
-    else:
-        adv_data = []
-        print(f"Warning: {adv_hints_path} not found.")
+    print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
 
-    # 如果需要合并 disadv_hints_path，可以在这里加载并 extend
-    # combined_hints_data = adv_data + disadv_data 
-    combined_hints_data = adv_data 
+    print("Loading data...")
+    with open(corr_path, 'r', encoding='utf-8') as f:
+        corr_data = json.load(f)
+    
+    with open(adv_hints_path, 'r', encoding='utf-8') as f:
+        adv_data = json.load(f)
+        
+    # with open(disadv_hints_path, 'r', encoding='utf-8') as f:
+    #     disadv_data = json.load(f)
+
+    # combined_hints_data = adv_data + disadv_data
+    combined_hints_data = adv_data
     total_hints = len(combined_hints_data)
-    print(f"Loaded {total_hints} Hint samples.")
+    print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
 
     final_dataset = []
-    
-    # --- 2. 纯 Mode B 模式 (anchor_k == 0) ---
-    if anchor_k == 0:
-        print(">>> Mode: Pure Mode B (No Anchors)")
+
+    # 全 epoch 共享的 anchor 池：初始打乱一次，全局索引跨 epoch 不重置
+    shuffled_anchors = corr_data.copy()
+    random.shuffle(shuffled_anchors)
+    anchor_pool_idx = 0
+
+    # --- 开始 Epoch 循环 ---
+    for ep in range(epoch):
+        print(f"Processing Epoch {ep + 1}/{epoch}...")
         
-        for ep in range(epoch):
-            print(f"Processing Epoch {ep + 1}/{epoch}...")
-            # 每个 epoch 打乱一次数据
-            random.shuffle(combined_hints_data)
+        # 每个 epoch 开始前打乱 hints 数据的顺序
+        # 这样每个 epoch 的 batch 组合都会不同
+        random.shuffle(combined_hints_data)
+
+        # 遍历 hints 数据生成 batch
+        for i in range(0, total_hints, std_num_hints):
+            current_batch = []
             
-            for item in combined_hints_data:
-                final_dataset.append({
+            # 切片获取当前的 hints 块
+            hints_chunk = combined_hints_data[i : i + std_num_hints]
+            actual_hint_count = len(hints_chunk)
+            
+            # 添加 hints 数据
+            for item in hints_chunk:
+                entry = {
                     "question_idx": item.get("question_idx"),
                     "question": item.get("question"),
-                    # 注意：SIRA Trainer 中通常期望 key 为 'hints' 和 'answer'
-                    "hints": item.get("hints"),
-                    "answer": item.get("student_answer") or item.get("ref_answer"), # 优先用学生答案，或者参考答案
+                    "answer": item.get("student_answer"),
                     "ref_answer": item.get("ref_answer"),
                     "ref_solution": item.get("ref_solution"),
-                    "type": "mode_b_generation"  # 标记为 Mode B
-                })
-
-    # --- 3. 混合穿插模式 (anchor_k > 0) ---
-    else:
-        print(f">>> Mode: Interleaved (Hint + Anchor), Ratio ~ {anchor_k}")
-        
-        # 3.1 加载 Anchor 数据
-        with open(corr_path, 'r', encoding='utf-8') as f:
-            corr_data = json.load(f)
-        
-        # 3.2 计算 Batch 分配
-        std_num_anchors = int(batch_size * anchor_k)
-        std_num_hints = batch_size - std_num_anchors
-        
-        if std_num_hints <= 0:
-            raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
-
-        # 3.3 Anchor 池扩充逻辑
-        total_batches = (total_hints + std_num_hints - 1) // std_num_hints
-        approx_anchors_per_epoch = total_batches * std_num_anchors
-        total_anchors_needed = approx_anchors_per_epoch * epoch
-        
-        repeat_factor = max(1, (total_anchors_needed + len(corr_data) - 1) // len(corr_data))
-        extended_corr_data = []
-        for i in range(repeat_factor):
-            shuffled_copy = corr_data.copy()
-            random.shuffle(shuffled_copy)
-            extended_corr_data.extend(shuffled_copy)
-        
-        print(f"Extended anchor pool size: {len(extended_corr_data)}")
-        
-        anchor_idx = 0
-
-        # 3.4 Epoch 循环
-        for ep in range(epoch):
-            print(f"Processing Epoch {ep + 1}/{epoch}...")
-            random.shuffle(combined_hints_data)
+                    "hints": item.get("hints"),
+                    "type": "hint_data"
+                }
+                current_batch.append(entry)
             
-            # 按 Batch 步长遍历 Hints
-            for i in range(0, total_hints, std_num_hints):
-                
-                # A. 获取 Hints Chunk
-                hints_chunk = combined_hints_data[i : i + std_num_hints]
-                actual_hint_count = len(hints_chunk)
-                
-                # B. 获取 Anchors Chunk
+            # 计算需要补充的 anchor 数量
+            # 如果是最后一个 batch，hints 数量可能少于 std_num_hints，所以按比例重新计算
+            if anchor_k >= 1.0 or anchor_k <= 0.0:
+                needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
+            else:
                 ratio_factor = anchor_k / (1.0 - anchor_k)
                 needed_anchor_count = int(round(actual_hint_count * ratio_factor))
-                
-                # 边界保护
-                if anchor_idx + needed_anchor_count > len(extended_corr_data):
-                    # 如果不够了，从头再取（循环利用）
-                    anchor_idx = 0
-                
-                anchors_chunk = extended_corr_data[anchor_idx : anchor_idx + needed_anchor_count]
-                anchor_idx += needed_anchor_count
+            
+            # 跨 epoch 不放回抽样 anchor 数据
+            # 当池用完时，重新打乱并从头开始
+            anchors_chunk = []
+            for _ in range(needed_anchor_count):
+                if anchor_pool_idx >= len(shuffled_anchors):
+                    # 池耗尽，重新打乱并重置索引
+                    random.shuffle(shuffled_anchors)
+                    anchor_pool_idx = 0
+                anchors_chunk.append(shuffled_anchors[anchor_pool_idx])
+                anchor_pool_idx += 1
 
-                # C. 交替穿插 (Zip)
-                min_len = min(len(hints_chunk), len(anchors_chunk))
-                
-                for k in range(min_len):
-                    h_item = hints_chunk[k]
-                    a_item = anchors_chunk[k]
-                    
-                    # 添加 Hint (Mode B)
-                    final_dataset.append({
-                        "question_idx": h_item.get("question_idx"),
-                        "question": h_item.get("question"),
-                        "hints": h_item.get("hints"),
-                        "answer": h_item.get("student_answer") or h_item.get("ref_answer"),
-                        "ref_answer": h_item.get("ref_answer"),
-                        "ref_solution": h_item.get("ref_solution"),
-                        "type": "mode_b_generation"
-                    })
-                    
-                    # 添加 Anchor (Pure SFT)
-                    final_dataset.append({
-                        "question_idx": a_item.get("question_idx"),
-                        "question": a_item.get("question"),
-                        "hints": None, # Anchor 没有 Hints
-                        "answer": a_item.get("answer") or a_item.get("ref_answer"),
-                        "ref_answer": a_item.get("ref_answer"),
-                        "ref_solution": a_item.get("ref_solution"),
-                        "type": "anchor_data",
-                        "ref_beta": a_item.get("ref_beta"),
-                    })
+            # 添加 anchor 数据
+            for item in anchors_chunk:
+                entry = {
+                    "question_idx": item.get("question_idx"),
+                    "question": item.get("question"),
+                    "answer": item.get("answer"),
+                    "ref_answer": item.get("ref_answer"),
+                    "ref_solution": item.get("ref_solution"),
+                    "hints": None,
+                    "type": "anchor_data",
+                    "ref_beta": item.get("ref_beta"),
+                }
+                current_batch.append(entry)
+            
+            # 打乱当前 batch 内部顺序
+            random.shuffle(current_batch)
+            
+            # 将当前 batch 加入总数据集
+            final_dataset.extend(current_batch)
 
-                # D. 处理多出来的部分 (Tail)
-                # 只有当 hints 和 anchors 数量不对等时才会执行这里
-                if len(hints_chunk) > min_len:
-                    for h_item in hints_chunk[min_len:]:
-                        final_dataset.append({
-                            "question_idx": h_item.get("question_idx"),
-                            "question": h_item.get("question"),
-                            "hints": h_item.get("hints"),
-                            "answer": h_item.get("student_answer") or h_item.get("ref_answer"),
-                            "ref_answer": h_item.get("ref_answer"),
-                            "ref_solution": h_item.get("ref_solution"),
-                            "type": "mode_b_generation"
-                        })
-                
-                if len(anchors_chunk) > min_len:
-                    for a_item in anchors_chunk[min_len:]:
-                        final_dataset.append({
-                            "question_idx": a_item.get("question_idx"),
-                            "question": a_item.get("question"),
-                            "hints": None,
-                            "answer": a_item.get("answer") or a_item.get("ref_answer"),
-                            "ref_answer": a_item.get("ref_answer"),
-                            "ref_solution": a_item.get("ref_solution"),
-                            "type": "anchor_data",
-                            "ref_beta": a_item.get("ref_beta"),
-                        })
-
-    # --- 4. 保存 ---
-    print(f"\nSaved {len(final_dataset)} items to {output_path}")
+    # --- 保存结果 ---
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -444,11 +391,8 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
     with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(final_dataset, f, ensure_ascii=False, indent=4)
 
-    print("Dataset generation complete.")
-
-
-# 使用示例
-# generate_irdcl_dataset_interleaved(..., batch_size=32, anchor_k=0.5, ...)
+    print(f"Done. Generated total {len(final_dataset)} items over {epoch} epochs.")
+    print(f"Saved to {output_path}")
 
 
 
