@@ -807,6 +807,169 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     return accuracy
 
 
+def analyze_knowledge_change(corr_pre: str):
+    """
+    分析 SIRA 训练前后的知识变化，识别遗忘的知识和新学到的知识。
+    
+    遗忘的知识: mistake_collection_book.json 中的题目，如果在 corr_pre 中存在，
+                说明模型之前做对了但现在做错了（遗忘）。
+    新学到的知识: corr_answer.json 中的题目，如果在 adv_hints.json 中存在，
+                说明模型之前需要提示才能做对，现在不需要提示也能做对（新学到）。
+    
+    Args:
+        corr_pre (str): JSON 文件路径，代表模型在 SIRA 训练前做对的题目，
+                        格式与 corr_answer.json 一致。
+    
+    Returns:
+        dict: 包含处理结果的字典
+    """
+    try:
+        # =====================================================
+        # Step 1: 读取所有需要的数据文件
+        # =====================================================
+        logger.info("Step 1: Loading data files...")
+
+        # 读取 corr_pre (SIRA 前做对的题目)
+        with open(corr_pre, 'r', encoding='utf-8') as f:
+            corr_pre_data = json.load(f)
+        logger.info(f"Loaded corr_pre: {len(corr_pre_data)} items from {corr_pre}")
+
+        # 读取 corr_answer.json (SIRA 后做对的题目)
+        with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
+            corr_answer_data = json.load(f)
+        logger.info(f"Loaded corr_answer: {len(corr_answer_data)} items from {exam_paper.corr_path}")
+
+        # 读取 adv_hints.json
+        with open(exam_paper.adv_hints_dataset_path, 'r', encoding='utf-8') as f:
+            adv_hints_data = json.load(f)
+        logger.info(f"Loaded adv_hints: {len(adv_hints_data)} items from {exam_paper.adv_hints_dataset_path}")
+
+        # 读取 mistake_collection_book.json
+        exam_paper.load_mistakes()
+        mistake_data = exam_paper.mistakes
+        logger.info(f"Loaded mistake_collection_book: {len(mistake_data)} items from {exam_paper.mistake_file_path}")
+
+        # =====================================================
+        # Step 2: 构建索引映射
+        # =====================================================
+        logger.info("Step 2: Building index maps...")
+
+        # corr_pre 按 question_idx 建立映射
+        corr_pre_map = {}
+        for item in corr_pre_data:
+            qid = item.get("question_idx")
+            if qid is not None:
+                corr_pre_map[qid] = item
+
+        # adv_hints 按 question_idx 建立映射
+        adv_hints_map = {}
+        for item in adv_hints_data:
+            qid = item.get("question_idx")
+            if qid is not None:
+                adv_hints_map[qid] = item
+
+        # =====================================================
+        # Step 3: 识别遗忘的知识
+        # =====================================================
+        logger.info("Step 3: Identifying forgotten knowledge...")
+
+        forgotten_knowledge = []
+        for item in mistake_data:
+            qid = item.get("question_idx")
+            if qid in corr_pre_map:
+                # 该题之前做对了，现在做错了 -> 遗忘
+                pre_item = corr_pre_map[qid]
+                forgotten_item = {
+                    "question_idx": qid,
+                    "question": item.get("question", ""),
+                    "answer": item.get("answer", ""),           # 当前（错误的）答案
+                    "pre_answer": pre_item.get("answer", ""),   # SIRA 前的正确答案
+                    "ref_solution": item.get("ref_solution", ""),
+                    "ref_answer": item.get("ref_answer", ""),
+                    "entropy": item.get("entropy", ""),
+                }
+                forgotten_knowledge.append(forgotten_item)
+
+        logger.info(f"Forgotten knowledge: {len(forgotten_knowledge)} items "
+                     f"(out of {len(mistake_data)} mistakes, {len(corr_pre_map)} pre-correct)")
+
+        # =====================================================
+        # Step 4: 识别新学到的知识
+        # =====================================================
+        logger.info("Step 4: Identifying newly learned knowledge...")
+
+        newly_learned_knowledge = []
+        for item in corr_answer_data:
+            qid = item.get("question_idx")
+            if qid in adv_hints_map:
+                # 该题之前需要提示才能做对，现在不需要提示也能做对 -> 新学到
+                adv_item = adv_hints_map[qid]
+                learned_item = {
+                    "question_idx": qid,
+                    "question": item.get("question", ""),
+                    "answer": item.get("answer", ""),                       # 当前正确答案
+                    "pre_answer": adv_item.get("student_answer", ""),       # 之前在 adv_hints 中的答案
+                    "ref_solution": item.get("ref_solution", ""),
+                    "ref_answer": item.get("ref_answer", ""),
+                    "entropy": item.get("entropy", ""),
+                }
+                newly_learned_knowledge.append(learned_item)
+
+        logger.info(f"Newly learned knowledge: {len(newly_learned_knowledge)} items "
+                     f"(out of {len(corr_answer_data)} correct, {len(adv_hints_map)} adv_hints)")
+
+        # =====================================================
+        # Step 5: 保存结果到项目目录
+        # =====================================================
+        logger.info("Step 5: Saving results...")
+
+        current_file_path = os.path.abspath(__file__)
+        project_root = os.path.dirname(current_file_path)
+
+        forgotten_path = os.path.join(project_root, "datasets", "exam", "forgotten_knowledge.json")
+        learned_path = os.path.join(project_root, "datasets", "exam", "newly_learned_knowledge.json")
+
+        exam_paper.save_results_to_json(forgotten_knowledge, forgotten_path)
+        exam_paper.save_results_to_json(newly_learned_knowledge, learned_path)
+
+        logger.info(f"Forgotten knowledge saved to {forgotten_path} ({len(forgotten_knowledge)} items)")
+        logger.info(f"Newly learned knowledge saved to {learned_path} ({len(newly_learned_knowledge)} items)")
+
+        return {
+            'success': True,
+            'forgotten_count': len(forgotten_knowledge),
+            'learned_count': len(newly_learned_knowledge),
+            'forgotten_path': forgotten_path,
+            'learned_path': learned_path,
+        }
+
+    except FileNotFoundError as e:
+        error_msg = f'file not found: {e.filename}'
+        logger.error(error_msg)
+        return {
+            'success': False,
+            'error': error_msg
+        }
+
+    except json.JSONDecodeError as e:
+        error_msg = f'JSON decode error: {str(e)}'
+        logger.error(error_msg)
+        return {
+            'success': False,
+            'error': error_msg
+        }
+
+    except Exception as e:
+        error_msg = f'unknown error: {str(e)}'
+        logger.error(error_msg)
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': error_msg
+        }
+
+
 def test_grpo_on_MATH500(grpo_lora_path: str):
     """
     测试 GRPO 训练后的模型在 MATH500 上的表现
@@ -882,41 +1045,41 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    # student_take_exam_Math500()
+    student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake() 
-    # teacher.check_answers_equivalence()
+    exam_roll_recheck_mistake() 
+    teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
     # 5. student correct
-    # student_correct()
-    # exam_roll_recheck_hints()
+    student_correct()
+    exam_roll_recheck_hints()
 
     # ** sft
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(8, 0.875, 10)
+    gen_IRDCL_dataset(8, 0.875, 10)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
+    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
     student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
     # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-10")
     

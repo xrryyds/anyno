@@ -392,6 +392,7 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
                         "hints": h_item.get("hints"),
                         "answer": h_item.get("student_answer") or h_item.get("ref_answer"),
                         "ref_answer": h_item.get("ref_answer"),
+                        "ref_solution": h_item.get("ref_solution"),
                         "type": "mode_b_generation"
                     })
                     
@@ -402,7 +403,9 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
                         "hints": None, # Anchor 没有 Hints
                         "answer": a_item.get("answer") or a_item.get("ref_answer"),
                         "ref_answer": a_item.get("ref_answer"),
-                        "type": "anchor_data"
+                        "ref_solution": a_item.get("ref_solution"),
+                        "type": "anchor_data",
+                        "ref_beta": a_item.get("ref_beta"),
                     })
 
                 # D. 处理多出来的部分 (Tail)
@@ -410,19 +413,26 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
                 if len(hints_chunk) > min_len:
                     for h_item in hints_chunk[min_len:]:
                         final_dataset.append({
+                            "question_idx": h_item.get("question_idx"),
                             "question": h_item.get("question"),
                             "hints": h_item.get("hints"),
-                            "answer": h_item.get("student_answer"),
+                            "answer": h_item.get("student_answer") or h_item.get("ref_answer"),
+                            "ref_answer": h_item.get("ref_answer"),
+                            "ref_solution": h_item.get("ref_solution"),
                             "type": "mode_b_generation"
                         })
                 
                 if len(anchors_chunk) > min_len:
                     for a_item in anchors_chunk[min_len:]:
                         final_dataset.append({
+                            "question_idx": a_item.get("question_idx"),
                             "question": a_item.get("question"),
                             "hints": None,
-                            "answer": a_item.get("answer"),
-                            "type": "anchor_data"
+                            "answer": a_item.get("answer") or a_item.get("ref_answer"),
+                            "ref_answer": a_item.get("ref_answer"),
+                            "ref_solution": a_item.get("ref_solution"),
+                            "type": "anchor_data",
+                            "ref_beta": a_item.get("ref_beta"),
                         })
 
     # --- 4. 保存 ---

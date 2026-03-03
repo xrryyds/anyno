@@ -156,13 +156,14 @@ Target: # known:\n{hints}\n# Answer:\n{answer}
 
 | 参数 | 值 | 评估 |
 |------|-----|------|
-| learning_rate | `3e-4` | ⚠️ 非常高。即使是 LoRA，3e-4 对 7B 模型也偏激进 |
+| learning_rate | `1e-5` | ✅ 合理范围 |
 | warmup_ratio | `0.05` | ✅ 有 warmup |
 | lr_scheduler | `cosine` | ✅ |
 | dtype | `bfloat16` | ✅ |
 | LoRA r | 16 | OK |
 | anchor_sigmoid_slope | `50.0`（v2）vs `1000.0`（v1） | v2 更合理，v1 的 1000 基本等于 hard threshold |
 | suppress_max_scale | `1.0`（v2）vs `5.0`（v1） | v2 更保守 |
+| anchor_loss_tolerance | `1.01` | ✅ 非常紧的容忍度，几乎不允许 anchor loss 上升 |
 
 ### GRPO（`student_grpo.py:112-139`）
 
@@ -187,24 +188,161 @@ Target: # known:\n{hints}\n# Answer:\n{answer}
 
 ---
 
-## 六、总结：关键修复优先级
+## 六、训练数据量与有效性分析（14 adv_hints + r=0.875）
+
+### 6.1 实际数据统计
+
+根据对当前数据文件的分析：
+
+| 文件 | 总条目 | 唯一题目数 | 每题答案数 |
+|------|--------|-----------|-----------|
+| `adv_hints.json` | 70 | 14 | 5（每题 Roll@8 中 5 条正确） |
+| `corr_answer.json`（当前） | 42 | 12 | 1~5 不等 |
+| `irdcl_data.json` | 5600 | — | — |
+| ├─ hint_data | 700 | 14 | 每题重复 50 次 |
+| └─ anchor_data | 4900 | 447 | 每题重复 ~11 次 |
+
+> **注意**：当前 `corr_answer.json` 只有 12 个唯一题目（42 条），但 IRDCL 中的 anchor 数据有 447 个唯一题目。这说明 IRDCL 是用**之前的** corr 文件（包含 Pass@1 答对的 ~447 题）生成的，之后 `corr_answer.json` 被 [`exam_roll_recheck_mistake()`](main.py:487) 重写为只包含 Roll@K 新解出的 12 题。**当前 `corr_answer.json` 缺少 `ref_beta` 字段**，如果重新生成 IRDCL 会出错。
+
+### 6.2 IRDCL 数据集构成分析
+
+调用参数：[`gen_IRDCL_dataset(8, 0.875, 10)`](main.py:467)
+
+- `batch_size=8`, `anchor_k=0.875` → `std_num_anchors = int(8 * 0.875) = 7`, `std_num_hints = 1`
+- `epoch=10`
+- 每个 epoch：70 条 hint / 1 条 per batch = 70 个 batch，每 batch 配 7 条 anchor
+- 10 个 epoch → 70 × 10 = **700 hint items** + 70 × 7 × 10 = **4900 anchor items** = **5600 total**
+
+**每条 hint 数据被看到的次数**：
+
+```
+70 条 hint × 10 epoch = 700 次出现
+14 个唯一题目 → 每个题目出现 700/14 = 50 次
+```
+
+**每条 anchor 数据被看到的次数**：
+
+```
+4900 anchor items / 447 唯一题目 ≈ 11 次/题
+```
+
+### 6.3 训练步数计算
+
+在 [`run_sira_training_v2()`](scripts/train/student_train_v2.py:465) 中：
+
+```python
+total_samples = 5600
+total_steps = 5600 // 8 = 700  # batch_size=8
+steps_per_logical_epoch = 700 // 50 = 14  # real_data_epochs=50
+```
+
+- **总训练步数**：700 步
+- **每个 logical epoch**：14 步
+- **50 个 logical epoch** 用于 early stopping 检查
+
+### 6.4 有效性评估
+
+#### ✅ 可行的方面
+
+1. **Anchor 数据覆盖面足够**：447 个唯一题目的 anchor 数据覆盖了原始 500 题中 ~89.4% 的题目，这为防遗忘提供了充分的数据基础。
+
+2. **r=0.875 的比例设计合理**：
+   - 每个 batch 中 1 hint + 7 anchor，确保模型在学习新知识时有大量"旧知识复习"
+   - [`adaptive_gating_loss()`](scripts/train/student_train_v2.py:282) 中的 task reweighting（line 367-370）将 hint 和 anchor 各分配 50% 权重，所以 1 条 hint 获得 50% 的 loss 权重，7 条 anchor 平分另外 50%
+   - 这意味着 hint 的**单条梯度贡献**是 anchor 的 7 倍，有效放大了少量 hint 数据的学习信号
+
+3. **Anchor suppression 机制有效**：
+   - `anchor_loss_tolerance=1.01` 意味着只要 anchor loss 超过 ref_beta 的 1.01 倍就会被抑制
+   - `anchor_sigmoid_slope=50.0` 提供了较陡的抑制曲线
+   - 这确保 anchor 不会过度训练，只在模型"快要遗忘"时才产生有效梯度
+
+4. **Norm-based scaling 倾向 Mode B**：[line 373-379](scripts/train/student_train_v2.py:373) 用 `norm_b / norm_total` 缩放最终 loss，使梯度方向偏向 Mode B（hint 学习），这对少量 hint 数据是有利的。
+
+#### ⚠️ 存在的风险
+
+1. **14 个唯一题目的 hint 数据严重不足**：
+   - 14 个题目 × 5 个答案 = 70 条 hint 数据，但只覆盖 14 种"知识模式"
+   - 每个题目被看到 50 次（10 epoch × 5 答案），**极易过拟合到这 14 个特定题目的模式**
+   - 模型可能学会的是"记住这 14 道题的答案"，而非"学会利用 hint 进行推理"的通用能力
+   - **类比**：这相当于让学生反复做同样 14 道题 50 遍，学生会背答案而非理解方法
+
+2. **Hint 多样性不足**：
+   - 14 个题目的 hint 来自同一个 Teacher 模型，hint 的风格和知识类型高度相似
+   - 如果这 14 题集中在某些数学子领域（如代数），模型不会学到其他领域（如几何、数论）的 hint 利用能力
+
+3. **Gate 机制可能过早饱和**：
+   - [`gate_threshold=0.3`](scripts/train/student_train_v2.py:54)，[`gate_slope=3.0`](scripts/train/student_train_v2.py:55)
+   - 当 hint loss < 0.3 时，gate → 1.0（完全打开 answer loss）
+   - 由于只有 14 个题目重复 50 次，hint loss 会很快降到 0.3 以下
+   - 一旦 gate 饱和，Mode B 就退化为普通 SFT（hint + answer 都全权重学习）
+   - 这时 gate 机制失去了"先学 hint 再学 answer"的课程学习效果
+
+4. **corr_answer.json 数据不一致** ⚠️ 严重：
+   - 当前 `corr_answer.json` 只有 12 题 42 条，且**没有 `ref_beta` 字段**
+   - 但 IRDCL 中的 anchor 数据有 447 题且包含 `ref_beta`
+   - 这说明 IRDCL 是用旧版 corr 文件生成的，之后 corr 被覆盖
+   - 如果需要重新生成 IRDCL，[`gen_IRDCL_dataset()`](main.py:467) 会先调用 [`compute_and_save_ref_loss()`](main.py:422) 计算 ref_beta，但只会为当前 12 题计算
+   - **结果**：重新生成的 IRDCL 只有 12 题 anchor，远不足以防遗忘
+
+### 6.5 量化评估：这样训练能学到什么？
+
+| 指标 | 值 | 评估 |
+|------|-----|------|
+| Hint 题目覆盖率 | 14/500 = 2.8% | ❌ 极低 |
+| Anchor 题目覆盖率 | 447/500 = 89.4% | ✅ 充足 |
+| Hint 每题重复次数 | 50 次 | ⚠️ 过高，过拟合风险 |
+| Anchor 每题重复次数 | ~11 次 | ✅ 合理 |
+| 有效训练步数 | 700 步 | ⚠️ 偏少 |
+| Hint 梯度放大倍数 | 7× (vs anchor) | ✅ 合理 |
+
+### 6.6 结论与建议
+
+**当前配置的训练是否有效？**
+
+- **防遗忘**：✅ 有效。447 题 anchor + r=0.875 + anchor suppression 机制，足以维持模型在已答对题目上的能力。
+- **学习新知识**：⚠️ 效果有限。14 个题目的 hint 数据太少，模型大概率会过拟合到这 14 个特定模式，而非学到通用的 hint 利用能力。
+
+**改进建议**：
+
+1. **增加 hint 数据量**：
+   - 使用更大的训练集（如 MATH train 的 7500 题而非 500 题）
+   - 或降低 Pass@1 的阈值，让更多"边界题"进入 hint 流程
+   - 目标：至少 50-100 个唯一 hint 题目
+
+2. **减少 epoch 数**：
+   - 当前 `epoch=10` 导致每题重复 50 次，建议降到 `epoch=3`（每题 15 次）
+   - 配合 early stopping（`target_mode_b=0.023`）防止过拟合
+
+3. **增加 hint 数据增强**：
+   - 对同一题目生成多个不同风格的 hint（不同 Teacher prompt）
+   - 或对 hint 进行随机 dropout（训练时随机删除部分 hint 条目），增加泛化能力
+
+4. **修复 corr_answer.json 数据**：
+   - 恢复原始的 Pass@1 正确答案文件（447 题）
+   - 将 Roll@K 新解出的 12 题合并进去，而非覆盖
+   - 重新运行 [`compute_and_save_ref_loss()`](main.py:422) 为所有 anchor 计算 ref_beta
+
+---
+
+## 七、总结：关键修复优先级
 
 ### P0（必须修复，影响正确性）
 
-1. **统一 System Prompt**：所有训练脚本（`sft_train.py`, `student_grpo.py`）必须加上与推理一致的 System Prompt
-2. **修复 `filter_json_by_question_idx` 函数签名**：参数数量和内部变量引用不匹配
-3. **统一 dtype 为 bfloat16**：`student_train.py` 的 float32 和 `celpo_train.py` 的 float16 都应改为 bfloat16
+1. **修复 corr_answer.json 数据丢失**：恢复 447 题的原始 corr 数据，合并 Roll@K 新解出的题目，重新计算 ref_beta
+2. **统一 System Prompt**：所有训练脚本（`sft_train.py`, `student_grpo.py`）必须加上与推理一致的 System Prompt
+3. **修复 `filter_json_by_question_idx` 函数签名**：参数数量和内部变量引用不匹配
+4. **统一 dtype 为 bfloat16**：`student_train.py` 的 float32 和 `celpo_train.py` 的 float16 都应改为 bfloat16
 
 ### P1（强烈建议修复，影响效果）
 
-4. **训练 target 应使用 `ref_solution` 而非 `student_answer`**：至少对 Anchor 数据如此
-5. **降低 SIRA v1 的 learning_rate**：从 `1e-4` 降到 `2e-5`，并加 warmup
-6. **降低 SIRA v2 的 learning_rate**：从 `3e-4` 降到 `5e-5`
-7. **统一 LoRA 配置**：确保 SIRA 和 GRPO 使用相同的 rank 和 target_modules，否则权重无法正确传递
+5. **增加 hint 数据量**：14 个唯一题目远不足以学到通用能力，目标至少 50-100 题
+6. **减少 epoch 数**：从 10 降到 3，避免 hint 数据过拟合
+7. **训练 target 应使用 `ref_solution` 而非 `student_answer`**：至少对 Anchor 数据如此
+8. **统一 LoRA 配置**：确保 SIRA 和 GRPO 使用相同的 rank 和 target_modules，否则权重无法正确传递
 
 ### P2（建议优化，提升效果）
 
-8. **解决 Mode B 训练与推理格式不兼容的问题**：推理时也应支持 Hint 生成格式，或将 Mode B 改为 CoT 格式
-9. **修复 Norm Scaling 导致的梯度消失风险**：当 Mode B loss 很小时，应有下限保护
-10. **GRPO 的 `max_completion_length` 应与推理一致**：从 1024 提升到 2048
-11. **CELPO 训练的 `num_generations` 应增加到 8**
+9. **解决 Mode B 训练与推理格式不兼容的问题**：推理时也应支持 Hint 生成格式，或将 Mode B 改为 CoT 格式
+10. **修复 Norm Scaling 导致的梯度消失风险**：当 Mode B loss 很小时，应有下限保护
+11. **增加 hint 数据增强**：多风格 hint、hint dropout 等
+12. **GRPO 的 `max_completion_length` 应与推理一致**：从 1024 提升到 2048
