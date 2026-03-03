@@ -464,7 +464,7 @@ def compute_and_save_ref_loss():
     logger.info(f"ref_beta saved to {exam_paper.corr_path}")
 
 
-def gen_IRDCL_dataset(batch_size):
+def gen_IRDCL_dataset(batch_size, spilt, epoch):
     compute_and_save_ref_loss()
     remove_null_hints(exam_paper.adv_hints_dataset_path)
     generate_irdcl_dataset(exam_paper.corr_path,
@@ -472,7 +472,7 @@ def gen_IRDCL_dataset(batch_size):
                         exam_paper.disadv_hints_dataset_path,
                         exam_paper.irdcl_dataset_path,
                         batch_size,
-                        0.875, 50)
+                        spilt, epoch)
     
 def gen_IRDCL_dataset_v2(batch_size):
     remove_null_hints(exam_paper.adv_hints_dataset_path)
@@ -668,6 +668,38 @@ def grpo_on_MATH(lora_path:str, subset:str ="all"):
     run_grpo_training(model_path, lora_path, question, answer)
 
 
+def grpo_on_MATH500(lora_path: str, num_generations: int = 8):
+    """
+    在 MATH500 数据集上进行 GRPO 训练
+    
+    Args:
+        lora_path: SIRA 训练后的 LoRA checkpoint 路径
+        num_generations: GRPO 每个问题生成的样本数量，默认 8
+    """
+    logger.info("="*60)
+    logger.info("Starting GRPO Training on MATH500")
+    logger.info(f"Base Model: {model_path}")
+    logger.info(f"SFT LoRA Path: {lora_path}")
+    logger.info(f"Num Generations: {num_generations}")
+    logger.info("="*60)
+    
+    data = Math_500()
+    question = data.problems
+    answer = data.answers
+    
+    logger.info(f"Dataset size: {len(question)} questions")
+    
+    run_grpo_training(
+        base_model_path=model_path,
+        sft_lora_path=lora_path,
+        questions=question,
+        answers=answer,
+        num_generations=num_generations
+    )
+    
+    logger.info("GRPO Training completed!")
+
+
 
 def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     """
@@ -775,8 +807,79 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     return accuracy
 
 
+def test_grpo_on_MATH500(grpo_lora_path: str):
+    """
+    测试 GRPO 训练后的模型在 MATH500 上的表现
+    
+    Args:
+        grpo_lora_path: GRPO 训练后的 LoRA checkpoint 路径
+        
+    Returns:
+        dict: 包含准确率等统计信息的字典
+    """
+    logger.info("="*60)
+    logger.info("Testing GRPO Model on MATH500")
+    logger.info(f"Base Model: {model_path}")
+    logger.info(f"GRPO LoRA Path: {grpo_lora_path}")
+    logger.info("="*60)
+    
+    # 1. 加载 MATH500 数据集
+    data = Math_500()
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    question_idx = list(range(len(question)))
+    
+    logger.info(f"Dataset size: {len(question)} questions")
+    
+    # 2. 使用 GRPO LoRA 进行推理
+    logger.info("Step 1: Running inference with GRPO LoRA...")
+    take_exam = TakeExam(
+        model_path=model_path,
+        use_lora=True,
+        adapter_path=grpo_lora_path
+    )
+    
+    take_exam.exam(
+        question=question,
+        solution=solution,
+        answer=answer,
+        question_idx=question_idx
+    )
+    
+    # 3. 批改结果
+    logger.info("Step 2: Grading results...")
+    teacher = TeacherCorrecter()
+    incorrect_data, correct_data = teacher.teacher_mark_paper()
+    
+    # 4. 计算统计信息
+    num_correct = len(correct_data[0]) if correct_data else 0
+    num_incorrect = len(incorrect_data[0]) if incorrect_data else 0
+    total_count = len(question)
+    accuracy = (num_correct / total_count * 100.0) if total_count > 0 else 0.0
+    
+    # 5. 输出结果
+    print("\n" + "="*60)
+    print(f"📊 GRPO MODEL PERFORMANCE ON MATH500")
+    print("="*60)
+    print(f"Total Questions    : {total_count}")
+    print(f"Correct Answers    : {num_correct}")
+    print(f"Incorrect Answers  : {num_incorrect}")
+    print(f"Accuracy           : {accuracy:.2f}%")
+    print("="*60 + "\n")
+    
+    logger.info(f"Test completed! Accuracy: {accuracy:.2f}%")
+    
+    return {
+        "total": total_count,
+        "correct": num_correct,
+        "incorrect": num_incorrect,
+        "accuracy": accuracy
+    }
+
+
 if __name__ == "__main__":
-    # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py
+    # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
     # student_take_exam_Math500()
@@ -802,23 +905,29 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(8)
+    # gen_IRDCL_dataset(8, 0.875, 10)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    # run_sira_training_v2(model_path=model_path)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
-    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0227_2153/checkpoint-target-reached-epoch-13")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1554/checkpoint-target-reached-epoch-10")
+    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
+    student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1554/checkpoint-target-reached-epoch-10")
+    exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # 示例：使用 SIRA 训练的结果进行 GRPO
+    # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-10")
+    
+    # 示例：测试 GRPO 后的模型
+    # test_grpo_on_MATH500(grpo_lora_path="/root/autodl-tmp/CELPO/output/grpo_stable")
+    
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra")
 
     #####################################################################################################
-    process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0228_1505/checkpoint-target-reached-epoch-14")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # teacher.teacher_mark_paper_with_save()
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")

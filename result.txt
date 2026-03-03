@@ -59,12 +59,19 @@ torchrun --nproc_per_node=2 main.py
 
 
 
-train           MATH500
-                -pass@1     -pass@8          -pass@1     -pass@8         -pass@1     -pass@8 
-OREAL 7B        110/500.    53(39)/500
-adv(157/61)                             
-OREAL (EHC_1)   
-OREAL (sft)    
+train                       MATH500
+                            -pass@1     -pass@8          -pass@1     -pass@8         -pass@1     -pass@8 
+OREAL 7B                    110/500.    53(39)/500
+adv(14)                             
+OREAL (EHC_all_10/0.23)     145/500     57/500
+                            (9/70)       (4/70)
+OREAL (EHC_all_10/0.23)     
+
+
+OREAL (EHC_seq)   
+OREAL (sft3_with_hints)     (119/500)
+
+OREAL (sft3_no_hints)       (119/500)
 
 DS 7B          
 DS (EHC)                                                                    
