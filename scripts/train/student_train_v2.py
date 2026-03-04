@@ -351,7 +351,8 @@ class SequentialTrainer(Trainer):
             # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
             total_valid = valid_anchor_count + len(gen_indices)
             r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
-            vol_balance = (1 - r) / r
+            # vol_balance = (1 - r) / r
+            vol_balance = 1
             raw_loss_ratio = scaling_gen_loss / safe_batch_beta
             smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
             alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
@@ -497,7 +498,7 @@ def run_sira_training_v2(
         output_base_dir=output_base_dir,
         split_r=spilt,
         anchor_loss_weight_k=1, 
-        suppress_max_scale=1.0,
+        suppress_max_scale=3.0,
         anchor_sigmoid_slope=50.0, 
         anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
