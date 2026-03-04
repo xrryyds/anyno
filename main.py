@@ -1072,15 +1072,15 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 10)
     # gen_IRDCL_dataset_v2(16)
     # run_sira_training(model_path=model_path)
-    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1902")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
     # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-10")
     
@@ -1095,3 +1095,4 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
+    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
