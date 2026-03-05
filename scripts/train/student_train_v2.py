@@ -477,7 +477,7 @@ def run_sira_training_v2(
     device_num: int = 1,
     spilt: float = 0.5,
     # 默认值可以设为您期望的停止阈值
-    target_mode_b: float = 0.023
+    target_mode_b: float = 0.03
 ):
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
@@ -498,9 +498,9 @@ def run_sira_training_v2(
         output_base_dir=output_base_dir,
         split_r=spilt,
         anchor_loss_weight_k=1, 
-        suppress_max_scale=1.5,
+        suppress_max_scale=1.2,
         anchor_sigmoid_slope=50.0, 
-        anchor_loss_tolerance=1.00,
+        anchor_loss_tolerance=1.001,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
         target_mode_b=target_mode_b 
