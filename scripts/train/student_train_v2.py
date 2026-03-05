@@ -498,9 +498,9 @@ def run_sira_training_v2(
         output_base_dir=output_base_dir,
         split_r=spilt,
         anchor_loss_weight_k=1, 
-        suppress_max_scale=3.0,
+        suppress_max_scale=1.5,
         anchor_sigmoid_slope=50.0, 
-        anchor_loss_tolerance=1.01,
+        anchor_loss_tolerance=1.00,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
         target_mode_b=target_mode_b 

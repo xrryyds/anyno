@@ -168,5 +168,5 @@ if __name__ == "__main__":
     run_sft_baseline_training(
         model_path=model_path,
         batch_size=8,
-        epochs=3,
+        epochs=10,
     )
