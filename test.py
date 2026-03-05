@@ -8,10 +8,10 @@ from transformers import AutoTokenizer
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # Training 模板
-GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
+GEN_HINTS_WIH_ANSWER = "{hints}{answer}"
 
 # Inference 模板
-HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
+HINT_PREFIX_TEMPLATE = "{hint}"
 
 class ConsistencyDebugger:
     def __init__(self, model_path):
@@ -44,7 +44,7 @@ class ConsistencyDebugger:
         train_full_ids = prompt_ids + target_ids
         
         # 1.4 计算 Mask 边界 (为了截取展示)
-        hint_only_text = f"# known:\n{hints}\n"
+        hint_only_text = f"{hints}"
         hint_part_ids = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
         
         len_prompt = len(prompt_ids)

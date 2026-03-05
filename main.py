@@ -1046,16 +1046,16 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    # student_take_exam_Math500()
+    student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake() 
+    exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1063,7 +1063,7 @@ if __name__ == "__main__":
 
     # 5. student correct
     # student_correct()
-    exam_roll_recheck_hints()
+    # exam_roll_recheck_hints()
 
     # ** sft
     # sft_on_adv_Data()

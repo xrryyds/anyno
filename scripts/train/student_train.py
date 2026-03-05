@@ -44,7 +44,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 try:
     from prompt import GEN_HINTS_WIH_ANSWER
 except ImportError:
-    GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
+    GEN_HINTS_WIH_ANSWER = "{hints}{answer}"
 
 # ==========================================
 # 1. 配置与工具类
@@ -187,7 +187,7 @@ class FixedModeCollator:
                 target_text = GEN_HINTS_WIH_ANSWER.format(hints=b, answer=c)
                 target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + target_ids
-                hint_only_text = f"# known:\n{b}\n" 
+                hint_only_text = f"{b}" 
                 len_hint_part = len(self.tokenizer(hint_only_text, add_special_tokens=False).input_ids)
                 h_mask = [0] * len(full_ids)
                 a_mask = [0] * len(full_ids)

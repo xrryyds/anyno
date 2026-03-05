@@ -78,10 +78,7 @@ JUDGER_GEN_REASON_PROMPT= """
 
 #############################################################################################
 # Mode A: 输入包含 Hint
-GEN_ENHANCE_PROMPT = """{question}
-# known:
-{hints}
-# Answer:
+GEN_ENHANCE_PROMPT = """{question}{hints}
 """
 
 # Mode B: 输入只包含 Question
@@ -90,10 +87,7 @@ GEN_PROMPT = """{question}
 
 # Mode B: 模型的输出目标 (Hint + Answer)
 # 注意：这里开头补上了 prompt 结尾可能需要的换行或标识
-GEN_HINTS_WIH_ANSWER = """# known:
-{hints}
-# Answer:
-{answer}"""
+GEN_HINTS_WIH_ANSWER = """{hints}{answer}"""
 
 
 

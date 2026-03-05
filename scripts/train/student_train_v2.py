@@ -40,7 +40,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.chec
 try:
     from prompt import GEN_HINTS_WIH_ANSWER
 except ImportError:
-    GEN_HINTS_WIH_ANSWER = "# known:\n{hints}\n{answer}"
+    GEN_HINTS_WIH_ANSWER = "{hints}{answer}"
 
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
@@ -207,7 +207,7 @@ class FixedModeCollator:
                 target_text = GEN_HINTS_WIH_ANSWER.format(hints=b, answer=c)
                 target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + target_ids
-                hint_only_text = f"# known:\n{b}\n" 
+                hint_only_text = f"{b}" 
                 hint_ids_only = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
                 len_hint_part = len(hint_ids_only)
                 h_mask, a_mask = [0] * len(full_ids), [0] * len(full_ids)

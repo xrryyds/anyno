@@ -279,7 +279,7 @@ class TakeExam:
         使用 Prefix-Forcing 模式进行推理。
         
         原理：
-        构造 Prompt = System + User(Question) + Assistant(# known:\n{Hint}\n)
+        构造 Prompt = System + User(Question) + Assistant({Hint})
         强制模型认为它已经输出了 Hint，从而接着生成 Answer。
         """
         logger.info(f"Starting vLLM Exam (Prefix-Forcing): total_questions={len(question)}")
@@ -290,7 +290,7 @@ class TakeExam:
         # 2. 构建带有预填充(Pre-fill)的 Prompts
         prompts = []
         # 必须严格匹配训练代码中的 GEN_HINTS_WIH_ANSWER 格式
-        HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
+        HINT_PREFIX_TEMPLATE = "{hint}"
 
         for i, q in enumerate(question):
             # A. 构建基础 ChatML (System + User)
@@ -391,7 +391,7 @@ class TakeExam:
         
         # 2. 构建带有预填充(Pre-fill)的 Prompts
         prompts = []
-        HINT_PREFIX_TEMPLATE = "# known:\n{hint}\n"
+        HINT_PREFIX_TEMPLATE = "{hint}"
 
         for i, q in enumerate(question):
             # A. 构建基础 ChatML (System + User)
