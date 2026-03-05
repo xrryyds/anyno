@@ -52,7 +52,7 @@ def exam_roll_recheck_hints():
             data = json.load(f)
             
         # 解析原始输入数据，获取元数据（hints, from_entropy等）
-        question_idx, _, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(data)
+        question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(data)
         
         # 建立元数据映射字典，方便后续根据ID找回 hints 和 原始熵
         # Key: question_idx, Value: {hints, entropy}
@@ -62,7 +62,7 @@ def exam_roll_recheck_hints():
 
         logger.info("Step 2: Student Rolling Exam...")
         student_exam = TakeExam(model_path=model_path)
-        student_exam.exam_roll_k_with_hints(question=question_with_hint, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
+        student_exam.exam_roll_k_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
         
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
