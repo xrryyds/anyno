@@ -1063,7 +1063,7 @@ if __name__ == "__main__":
 
     # 5. student correct
     # student_correct()
-    # exam_roll_recheck_hints()
+    exam_roll_recheck_hints()
 
     # ** sft
     # sft_on_adv_Data()
@@ -1095,4 +1095,4 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
