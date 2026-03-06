@@ -58,19 +58,21 @@ class HintSFTConfig:
     # 核心超参
     anchor_loss_weight_k: float = 1
     suppress_max_scale: float = 1.0
-    anchor_sigmoid_slope: float = 1000.0 
+    anchor_sigmoid_slope: float = 1000.0
     anchor_loss_tolerance: float = 1.00
     
     # === [关键修改] ===
     # 移除了 target_loss_ratio
     # 仅保留 target_mode_b 作为早停标准
-    target_mode_b: Optional[float] = None 
+    target_mode_b: Optional[float] = None
     
-    metrics_log_interval: int = 8   
-    model_path: str = "" 
-    data_path: str = ""  
+    metrics_log_interval: int = 8
+    model_path: str = ""
+    data_path: str = ""
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
+    kl_lambda: float = 0.5   # KL(teacher||student) weight for mode_b
+    kl_beta: float = 0.05    # KL(ref||student) weight for anchor
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -266,12 +268,16 @@ class SequentialTrainer(Trainer):
         metadata = inputs.pop("metadata")
         ref_betas = inputs.pop("ref_betas")
 
+        with torch.no_grad():
+            with self.model.disable_adapter():
+                ref_logits = model(**inputs).get("logits")
+
         outputs = model(**inputs)
         logits = outputs.get("logits")
         labels = inputs.get("labels")
 
         loss, debug_info_list, current_alpha, dynamic_beta = self.adaptive_gating_loss(
-            logits, labels, hint_masks, answer_masks, ref_betas
+            logits, ref_logits, labels, hint_masks, answer_masks, ref_betas
         )
 
         if self.model.training:
@@ -279,8 +285,14 @@ class SequentialTrainer(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-    def adaptive_gating_loss(self, logits, labels, hint_masks, answer_masks, cached_betas):
+    @staticmethod
+    def _per_token_kl(log_p_s, log_p_t):
+        """KL(p_t || p_s) per token, summed over vocab. Inputs: log-probs [T, V]."""
+        return torch.nn.functional.kl_div(log_p_s, log_p_t, log_target=True, reduction='none').sum(-1)
+
+    def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas):
         shift_logits = logits[..., :-1, :].contiguous()
+        shift_ref_logits = ref_logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
@@ -293,9 +305,16 @@ class SequentialTrainer(Trainer):
             token_losses_list.append(tl)
         token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
 
-        gen_losses = []      
-        anchor_indices, gen_indices = [], []    
-        debug_map, final_losses_map = {}, {}      
+        # Pre-compute log-probs for KL (ref detached — no grad through teacher)
+        log_p_s = torch.nn.functional.log_softmax(shift_logits, dim=-1)           # [B, T, V]
+        log_p_t = torch.nn.functional.log_softmax(shift_ref_logits, dim=-1).detach()  # [B, T, V]
+        # kl_ts[i, t] = KL(p_t || p_s) at token t
+        kl_ts = torch.stack([self._per_token_kl(log_p_s[j], log_p_t[j]) for j in range(log_p_s.size(0))])  # [B, T]
+
+        eps = 1e-8
+        gen_losses = []
+        anchor_indices, gen_indices = [], []
+        debug_map, final_losses_map = {}, {}
 
         for i in range(token_losses.size(0)):
             h_m = shift_h_masks[i]
@@ -307,7 +326,13 @@ class SequentialTrainer(Trainer):
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
-                l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+
+                # KL(teacher||student): hint always, answer weighted by gate
+                kl_w = h_m + gate.detach() * a_m
+                l_kl = (kl_ts[i] * kl_w).sum() / (kl_w.sum() + eps)
+                l_gen = l_ce + self.hint_config.kl_lambda * l_kl
+
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
                 total_valid_tokens = h_count + a_count
@@ -340,7 +365,12 @@ class SequentialTrainer(Trainer):
                 target_threshold = instance_beta * self.hint_config.anchor_loss_tolerance
                 ratio = raw_curr.detach() / target_threshold
                 instance_suppress = torch.sigmoid((ratio - 1.0) * self.hint_config.anchor_sigmoid_slope) * self.hint_config.suppress_max_scale
-                suppressed_anchor_losses.append(instance_suppress * raw_curr)
+
+                # KL(ref||student) on answer only
+                kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
+                anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
+
+                suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": instance_suppress.item()}
 
         alpha_balance, batch_beta_val = 0.0, 0.0
