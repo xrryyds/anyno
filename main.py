@@ -756,35 +756,38 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     total_count = len(questions)
     logger.info(f"Loaded {total_count} samples. Preparing to run exam...")
 
-    # 4. 执行考试 (Inference)
-    logger.info("Step 2: Running exam_with_hints (Re-evaluating)...")
+    # 4. 执行考试 (Roll-8 Inference)
+    logger.info("Step 2: Running exam_roll_k_with_hints (k=8)...")
     
-    # 初始化考试类
     student_exam = TakeExam(model_path=model_path)
-    
-    # 设置输出路径，避免覆盖原始的 exam_result.json (可选，取决于你的 TakeExam 实现)
-    # 如果 TakeExam 内部硬编码了输出路径，这里不需要改，直接跑即可
-    
-    student_exam.exam_with_hints(
+    student_exam.exam_roll_k_with_hints(
         question=questions,
         solution=solutions,
-        answer=answers,      # 传入正确答案用于后续批改或记录
+        answer=answers,
         question_idx=ids,
-        hints=hints_list
+        hints=hints_list,
+        k=8
     )
 
-    # 5. 老师批改 (Grading)
-    logger.info("Step 3: Teacher Grading...")
-    teacher = TeacherCorrecter()
-    
-    # teacher_mark_paper 通常会读取 TakeExam 生成的 result.json
-    incorrect_data, correct_data = teacher.teacher_mark_paper()
+    # 5. 从 exam_roll.json 读取结果，按 question_idx 分组，任意一次正确即算通过
+    logger.info("Step 3: Grading (pass if any of 8 rolls correct)...")
+    roll_path = student_exam.OUTPUT_JSON_PATH_ROLL
+    with open(roll_path, "r", encoding="utf-8") as f:
+        roll_results = json.load(f)
 
-    # incorrect_data/correct_data 结构通常是 tuple: (ids, questions, ...)
-    # 我们只需要列表长度
-    num_correct = len(correct_data[0]) if correct_data else 0
-    num_incorrect = len(incorrect_data[0]) if incorrect_data else 0
-    
+    from utils.data_utils import extract_boxed_content, normalize_answer
+    # 按 question_idx 分组
+    from collections import defaultdict
+    groups = defaultdict(list)
+    for item in roll_results:
+        groups[item["question_idx"]].append(item)
+
+    num_correct = sum(
+        1 for items in groups.values()
+        if any(normalize_answer(extract_boxed_content(it["answer"])) == normalize_answer(it["ref_answer"]) for it in items)
+    )
+    num_incorrect = total_count - num_correct
+
     # 6. 计算统计指标
     accuracy = 0.0
     if total_count > 0:
@@ -1046,16 +1049,16 @@ if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
     # #1. student first take exam
-    student_take_exam_Math500()
+    # student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
     # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake() 
+    # exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1075,12 +1078,12 @@ if __name__ == "__main__":
     # run_sira_training_v2(model_path=model_path,real_data_epochs=50)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0305_1944")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_1231/checkpoint-target-reached-epoch-17")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0305_1944")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_1231/checkpoint-target-reached-epoch-17")
     # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-10")
     
@@ -1090,9 +1093,9 @@ if __name__ == "__main__":
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra") 
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0305_1944")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0303_1537")
+    # exam_roll_recheck_mistake(False)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
