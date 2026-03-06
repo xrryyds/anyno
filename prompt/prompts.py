@@ -124,15 +124,14 @@ Provide the student with the necessary "Knowledge Hints" so that, based on their
 **Condition B:** If a knowledge gap is identified, respond in the following XML format:
 <hints>
 [Provide the general formula, theorem, or principle. Use LaTeX for math expressions.]
-1. ...
-2. ...
+...
 </hints>
 
 **Example:**
 *   **Student's Error:** Calculated probability as $P(A)+P(B)$ but events were not mutually exclusive.
 *   **Your Output:**
 <hints>
-1. **Inclusion-Exclusion Principle**: For any two events $A$ and $B$, the probability of their union is $P(A \cup B) = P(A) + P(B) - P(A \cap B)$.
+For any two events $A$ and $B$, the probability of their union is $P(A \cup B) = P(A) + P(B) - P(A \cap B)$.
 </hints>
 """
 

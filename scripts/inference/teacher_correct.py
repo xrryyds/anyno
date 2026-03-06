@@ -44,7 +44,7 @@ class TeacherCorrecter:
             while True:
                 try:
                     completion = client.chat.completions.create(
-                        model="app-7c54im-1766977238437488331",
+                        model="app-xkp5mg-1764855493646070178",
                         messages=[
                             {"role": "system", "content": "You are a helpful assistant who good at math"},
                             {"role": "user", "content": prompt},
