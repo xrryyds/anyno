@@ -85,3 +85,8 @@ OREAL (sft)
 
 DS 7B            
 DS (EHC)                                    
+
+
+
+❯ 我代码流程如下：先让math500通过take_exam进行测试，收集做错的题目和做对的题目，做对的题目用gen_vocab生成vocab。做错的题目通过外部模型提示hints，收集在hints下能做对的推理路径，通过gen 
+  _IRDCL_dataset_v2(8, 0, 50)生成数据集，然后run_sira_training_v3(model_path=model_path,real_data_epochs=50)让他学习hints，并最小程度减少知识遗忘                                        
