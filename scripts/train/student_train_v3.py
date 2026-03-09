@@ -1,6 +1,7 @@
 import os
 # 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 import sys
 import json
@@ -372,15 +373,16 @@ class SequentialTrainerV3(Trainer):
         labels = inputs.get("labels")
 
         # v3：只返回 mode b 的平均 loss 和 debug 信息
+        device = logits.device
+        dtype = logits.dtype
         mode_b_mean_loss, debug_info_list = self.adaptive_gating_loss(
             logits, ref_logits, labels, hint_masks, answer_masks, ref_betas
         )
+        del ref_logits, logits, outputs
 
         # =========================
         # vocab 级矢量和 + 归一化
         # =========================
-        device = logits.device
-        dtype = logits.dtype
         anchor_vec = self.anchor_vocab_loss.to(device=device, dtype=dtype)
 
         vocab_size = anchor_vec.size(0)
@@ -421,6 +423,7 @@ class SequentialTrainerV3(Trainer):
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
+        device = shift_logits.device
         del logits, ref_logits, labels, hint_masks, answer_masks
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
@@ -463,7 +466,7 @@ class SequentialTrainerV3(Trainer):
                 avg_a_loss = (
                     (token_losses[i] * a_m).sum() / a_count
                     if a_count > 0
-                    else torch.tensor(0.0, device=logits.device)
+                    else torch.tensor(0.0, device=device)
                 )
                 l_ce = (
                     self.hint_config.hint_fixed_weight * avg_h_loss
@@ -482,7 +485,7 @@ class SequentialTrainerV3(Trainer):
                     ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum())
                     / total_valid_tokens
                     if total_valid_tokens > 0
-                    else torch.tensor(0.0, device=logits.device)
+                    else torch.tensor(0.0, device=device)
                 )
                 debug_map[i] = {
                     "gate": gate.item(),
@@ -500,9 +503,7 @@ class SequentialTrainerV3(Trainer):
             )
         else:
             # 若本 batch 没有 mode B 样本，则退化为使用 running_gen_loss
-            mode_b_mean_loss = torch.tensor(
-                self.running_gen_loss, device=logits.device
-            )
+            mode_b_mean_loss = torch.tensor(self.running_gen_loss, device=device)
 
         debug_info_list = [debug_map.get(i) for i in range(token_losses.size(0))]
         return mode_b_mean_loss, debug_info_list
@@ -726,7 +727,7 @@ def run_sira_training_v3(
         output_dir=output_dir,
         num_train_epochs=1,
         per_device_train_batch_size=batch_size // device_num,
-        gradient_accumulation_steps=1,
+        gradient_accumulation_steps=2,
         learning_rate=5e-5,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
@@ -790,7 +791,7 @@ if __name__ == "__main__":
     run_sira_training_v3(
         model_path=default_model_url,
         anchor_vocab_loss_path=default_anchor_vocab_path,
-        batch_size=2,
+        batch_size=1,
         real_data_epochs=50,
         target_mode_b=1.2,
     )
