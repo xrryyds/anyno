@@ -51,7 +51,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
-    gate_threshold: float = 0.7
+    gate_threshold: float = 0.1
     gate_slope: float = 3.0
     split_r: float = 0.5
     
@@ -527,12 +527,12 @@ def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 8,
+    batch_size: int = 4,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
     # 默认值可以设为您期望的停止阈值
-    target_mode_b: float = 0.3
+    target_mode_b: float = 0.07
 ):
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
@@ -553,9 +553,9 @@ def run_sira_training_v2(
         output_base_dir=output_base_dir,
         split_r=spilt,
         anchor_loss_weight_k=1, 
-        suppress_max_scale=1.2,
+        suppress_max_scale=1.0,
         anchor_sigmoid_slope=50.0, 
-        anchor_loss_tolerance=1.001,
+        anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
         target_mode_b=target_mode_b 

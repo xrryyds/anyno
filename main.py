@@ -1128,7 +1128,7 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
-    # gen_IRDCL_dataset_v2(8, 0.875, 50)
+    # gen_IRDCL_dataset_v2(4, 0.75, 50)
     # run_sira_training(model_path=model_path)
     run_sira_training_v2(model_path=model_path,real_data_epochs=50)
     # 4. check 
@@ -1148,7 +1148,7 @@ if __name__ == "__main__":
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra") 
 
     #####################################################################################################
-    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_v3_50ep_0309_1511")
+    # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2026")
     # teacher.teacher_mark_paper_with_save()
     # exam_roll_recheck_mistake(False)
 
