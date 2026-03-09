@@ -286,11 +286,39 @@ class SequentialTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
-    def _per_token_kl(logits_s, logits_t):
-        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V]."""
-        log_p_s = torch.nn.functional.log_softmax(logits_s, dim=-1)
-        log_p_t = torch.nn.functional.log_softmax(logits_t, dim=-1)
-        return (log_p_t.exp() * (log_p_t - log_p_s)).sum(-1)
+    def _per_token_kl(logits_s, logits_t, chunk_size: int = 8192):
+        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V].
+        通过按 vocab 维度分块计算降低峰值显存占用。
+        """
+        # logits_s 需要梯度，logits_t 通常来自 no_grad 的 teacher
+        T, V = logits_s.shape
+
+        # 对 student / teacher 分别做 logsumexp，保留 token 维度上的归一化常数
+        logsumexp_s = torch.logsumexp(logits_s, dim=-1, keepdim=True)  # [T, 1]
+        logsumexp_t = torch.logsumexp(logits_t, dim=-1, keepdim=True)  # [T, 1]
+
+        # 存每个 token 的 KL(p_t || p_s)，与原实现保持形状一致 [T]
+        kl = torch.zeros(T, device=logits_s.device, dtype=logits_s.dtype)
+
+        # 沿着 vocab 维度分块，避免一次性构造 [T, V] 级别的大中间张量
+        for start in range(0, V, chunk_size):
+            end = min(start + chunk_size, V)
+
+            s_chunk = logits_s[:, start:end]  # [T, C]
+            t_chunk = logits_t[:, start:end]  # [T, C]
+
+            # 分块计算 log p_s, log p_t
+            log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
+            log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
+            p_t_chunk     = log_p_t_chunk.exp()        # [T, C]
+
+            # 累加该 chunk 对 KL 的贡献
+            kl = kl + (p_t_chunk * (log_p_t_chunk - log_p_s_chunk)).sum(dim=-1)
+
+            # 显式删除引用，帮助 PyTorch 更早释放显存
+            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_t_chunk
+
+        return kl
 
     def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas):
         shift_logits = logits[..., :-1, :].contiguous()
