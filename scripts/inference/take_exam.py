@@ -4,7 +4,7 @@ import logging
 import random
 import numpy as np
 import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed
+from transformers import AutoTokenizer, set_seed
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
@@ -75,9 +75,6 @@ class TakeExam:
         self.use_lora = use_lora
         self.adapter_path = adapter_path
 
-        # 用于 teacher-forcing 计算 vocab 维度 loss
-        self.ce_model = None
-
         # ================== Load tokenizer ==================
         logger.info(f"Loading tokenizer from {self.LOCAL_MODEL_PATH}")
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -143,7 +140,7 @@ class TakeExam:
     # 计算 answer 的 vocab 级 loss 向量
     # =====================================================
     def compute_answer_vocab_loss_vector(self, question, answer):
-        """Compute per-vocab average loss over provided (question, answer) pairs.
+        """Compute per-vocab average loss using vLLM prompt_logprobs (no second model needed).
 
         Args:
             question: List[str] of questions.
@@ -155,130 +152,76 @@ class TakeExam:
         if len(question) != len(answer):
             raise ValueError(f"question and answer must have same length, got {len(question)} and {len(answer)}")
 
-        # 确保每次计算都是确定性的
-        set_all_seeds(self.seed)
+        vocab_size = self.tokenizer.vocab_size
 
-        # 懒加载用于 teacher-forcing 的 CE 模型
-        if self.ce_model is None:
-            logger.info(f"Loading CE model from {self.LOCAL_MODEL_PATH} for vocab loss computation")
-            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.ce_model = AutoModelForCausalLM.from_pretrained(
-                self.LOCAL_MODEL_PATH,
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16 if device.type == "cuda" else torch.float32,
-            ).to(device)
-            self.ce_model.eval()
-        else:
-            device = next(self.ce_model.parameters()).device
-
-        # 构造完整序列并记录 answer 在序列中的起始位置
-        full_ids_list = []
+        # Build full prompts (prefix + answer) and record prefix lengths
+        prompts = []
         answer_starts = []
-        seq_lens = []
-
         for q, a in zip(question, answer):
             messages_prefix = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": str(q)},
             ]
             prefix_text = self.tokenizer.apply_chat_template(
-                messages_prefix,
-                tokenize=False,
-                add_generation_prompt=True,
+                messages_prefix, tokenize=False, add_generation_prompt=True,
             )
-
-            # 完整文本 = 前缀（包含 assistant 起始标签）+ 标准答案文本
             full_text = prefix_text + str(a)
 
-            prefix_ids = self.tokenizer(
-                prefix_text,
-                return_tensors="pt",
-                add_special_tokens=False,
-                truncation=True,
+            prefix_len = len(self.tokenizer(
+                prefix_text, add_special_tokens=False, truncation=True,
                 max_length=self.MAX_MODEL_LEN,
-            )["input_ids"][0]
-
-            full_ids = self.tokenizer(
-                full_text,
-                return_tensors="pt",
-                add_special_tokens=False,
-                truncation=True,
+            )["input_ids"])
+            full_len = len(self.tokenizer(
+                full_text, add_special_tokens=False, truncation=True,
                 max_length=self.MAX_MODEL_LEN,
-            )["input_ids"][0]
+            )["input_ids"])
 
-            # 极端截断场景下，前缀可能已经占满长度
-            if full_ids.size(0) <= prefix_ids.size(0):
-                # 没有剩余的 answer token，直接跳过
+            if full_len <= prefix_len:
                 continue
 
-            answer_start = prefix_ids.size(0)
+            prompts.append(full_text)
+            answer_starts.append(prefix_len)
 
-            full_ids_list.append(full_ids)
-            answer_starts.append(answer_start)
-            seq_lens.append(full_ids.size(0))
-
-        if not full_ids_list:
-            vocab_size = self.tokenizer.vocab_size
+        if not prompts:
             return torch.zeros(vocab_size)
 
-        batch_size = len(full_ids_list)
-        max_len = max(t.size(0) for t in full_ids_list)
-        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else self.tokenizer.eos_token_id
+        # Use vLLM with prompt_logprobs=1 and max_tokens=1 to get per-token log-probs
+        sampling_params = SamplingParams(
+            max_tokens=1,
+            prompt_logprobs=1,
+            temperature=0.0,
+            seed=self.seed,
+        )
+        outputs = self.llm.generate(prompts, sampling_params=sampling_params)
 
-        input_ids = torch.full((batch_size, max_len), pad_id, dtype=torch.long)
-        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long)
+        loss_sum = torch.zeros(vocab_size, dtype=torch.float32)
+        count = torch.zeros(vocab_size, dtype=torch.float32)
 
-        for i, ids in enumerate(full_ids_list):
-            length = ids.size(0)
-            input_ids[i, :length] = ids
-            attention_mask[i, :length] = 1
-
-        input_ids = input_ids.to(device)
-        attention_mask = attention_mask.to(device)
-
-        with torch.no_grad():
-            outputs = self.ce_model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs.logits  # [B, T, V]
-
-        # 因果语言模型：位置 t 的 token 由 t-1 位置的 logits 预测
-        shift_logits = logits[:, :-1, :].contiguous()
-        shift_labels = input_ids[:, 1:].contiguous()
-        shift_attn = attention_mask[:, 1:].contiguous()
-
-        vocab_size = self.tokenizer.vocab_size
-        loss_sum_per_vocab = torch.zeros(vocab_size, device=device, dtype=shift_logits.dtype)
-        count_per_vocab = torch.zeros(vocab_size, device=device, dtype=shift_logits.dtype)
-
-        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-        B, Tm1, V = shift_logits.shape
-
-        # 先计算 token 级别 loss: [B, T-1]
-        token_losses = loss_fct(
-            shift_logits.view(-1, V),
-            shift_labels.view(-1),
-        ).view(B, Tm1)
-
-        # 只在 answer 段聚合到 vocab 维度
-        for i in range(batch_size):
-            answer_start = answer_starts[i]
-            seq_len = seq_lens[i]
-            # 序列位置：answer token 是 [answer_start, seq_len)
-            # 对应的 loss 在 shift 张量中的时间步是 [answer_start-1, seq_len-1)
-            start_step = max(answer_start - 1, 0)
-            end_step = max(seq_len - 1, 0)
-            for t in range(start_step, end_step):
-                if shift_attn[i, t] == 0:
+        for out, answer_start in zip(outputs, answer_starts):
+            prompt_logprobs = out.prompt_logprobs  # list of None | dict, length = num_prompt_tokens
+            if prompt_logprobs is None:
+                continue
+            # prompt_logprobs[0] is None (no logprob for first token)
+            # positions [answer_start .. seq_len-1] are answer tokens
+            for pos in range(answer_start, len(prompt_logprobs)):
+                lp_dict = prompt_logprobs[pos]
+                if lp_dict is None:
                     continue
-                token_id = int(shift_labels[i, t].item())
-                token_loss = token_losses[i, t]
-                loss_sum_per_vocab[token_id] += token_loss
-                count_per_vocab[token_id] += 1
+                # token id at this position
+                token_id = out.prompt_token_ids[pos]
+                if token_id >= vocab_size:
+                    continue
+                lp = lp_dict.get(token_id)
+                if lp is None:
+                    # take the first available entry (the token's own logprob)
+                    lp = next(iter(lp_dict.values()))
+                # logprob -> NLL loss
+                log_prob = lp.logprob if hasattr(lp, "logprob") else float(lp)
+                loss_sum[token_id] += -log_prob
+                count[token_id] += 1
 
-        eps = 1e-8
-        avg_loss_per_vocab = loss_sum_per_vocab / (count_per_vocab + eps)
-
-        # 返回 CPU tensor 便于后续保存/在训练中加载
-        return avg_loss_per_vocab.detach().cpu()
+        avg_loss_per_vocab = loss_sum / (count + 1e-8)
+        return avg_loss_per_vocab
 
     # =====================================================
     # 单题推理

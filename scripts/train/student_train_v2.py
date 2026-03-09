@@ -51,7 +51,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
-    gate_threshold: float = 0.3
+    gate_threshold: float = 0.7
     gate_slope: float = 3.0
     split_r: float = 0.5
     
@@ -270,7 +270,7 @@ class SequentialTrainer(Trainer):
 
         with torch.no_grad():
             with self.model.disable_adapter():
-                ref_logits = model(**inputs).get("logits")
+                ref_logits = model(**inputs).get("logits")[..., :-1, :].contiguous()
 
         outputs = model(**inputs)
         logits = outputs.get("logits")
@@ -286,30 +286,27 @@ class SequentialTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
-    def _per_token_kl(log_p_s, log_p_t):
-        """KL(p_t || p_s) per token, summed over vocab. Inputs: log-probs [T, V]."""
-        return torch.nn.functional.kl_div(log_p_s, log_p_t, log_target=True, reduction='none').sum(-1)
+    def _per_token_kl(logits_s, logits_t):
+        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V]."""
+        log_p_s = torch.nn.functional.log_softmax(logits_s, dim=-1)
+        log_p_t = torch.nn.functional.log_softmax(logits_t, dim=-1)
+        return (log_p_t.exp() * (log_p_t - log_p_s)).sum(-1)
 
     def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas):
         shift_logits = logits[..., :-1, :].contiguous()
-        shift_ref_logits = ref_logits[..., :-1, :].contiguous()
+        shift_ref_logits = ref_logits  # already sliced in compute_loss
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        # 逐样本计算 cross-entropy，避免将整个 batch 展平为 (batch*seq, vocab) 导致 OOM
         token_losses_list = []
+        kl_list = []
         for j in range(shift_logits.size(0)):
-            tl = loss_fct(shift_logits[j], shift_labels[j])  # (seq_len,)
-            token_losses_list.append(tl)
+            token_losses_list.append(loss_fct(shift_logits[j], shift_labels[j]))
+            kl_list.append(self._per_token_kl(shift_logits[j], shift_ref_logits[j]))
         token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
-
-        # Pre-compute log-probs for KL (ref detached — no grad through teacher)
-        log_p_s = torch.nn.functional.log_softmax(shift_logits, dim=-1)           # [B, T, V]
-        log_p_t = torch.nn.functional.log_softmax(shift_ref_logits, dim=-1).detach()  # [B, T, V]
-        # kl_ts[i, t] = KL(p_t || p_s) at token t
-        kl_ts = torch.stack([self._per_token_kl(log_p_s[j], log_p_t[j]) for j in range(log_p_s.size(0))])  # [B, T]
+        kl_ts = torch.stack(kl_list)  # [B, T]
 
         eps = 1e-8
         gen_losses = []
@@ -507,7 +504,7 @@ def run_sira_training_v2(
     device_num: int = 1,
     spilt: float = 0.5,
     # 默认值可以设为您期望的停止阈值
-    target_mode_b: float = 0.03
+    target_mode_b: float = 0.3
 ):
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 

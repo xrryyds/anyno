@@ -411,44 +411,38 @@ class SequentialTrainerV3(Trainer):
 
         return (loss, outputs) if return_outputs else loss
 
-    @staticmethod
-    def _per_token_kl(log_p_s, log_p_t):
-        """KL(p_t || p_s) per token, summed over vocab. Inputs: log-probs [T, V]."""
-        return torch.nn.functional.kl_div(
-            log_p_s, log_p_t, log_target=True, reduction="none"
-        ).sum(-1)
-
     def adaptive_gating_loss(
         self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas
     ):
-        """v3 版 gating loss：
-
-        - 完全沿用 v2 中 Mode B 的 token 级 CE + KL 定义；
-        - 不再构造样本级 anchor loss，也不做任务 reweighting；
-        - 返回值仅为：当前 batch 的 mode b 平均 loss（标量）和 debug 信息列表。
-        """
+        """v3 版 gating loss"""
 
         shift_logits = logits[..., :-1, :].contiguous()
         shift_ref_logits = ref_logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
+        del logits, ref_logits, labels, hint_masks, answer_masks
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-        # 逐样本计算 cross-entropy，避免将整个 batch 展平为 (batch*seq, vocab) 导致 OOM
+        B = shift_logits.size(0)
         token_losses_list = []
-        for j in range(shift_logits.size(0)):
-            tl = loss_fct(shift_logits[j], shift_labels[j])  # (seq_len,)
-            token_losses_list.append(tl)
-        token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
-
-        # Pre-compute log-probs for KL (ref detached — no grad through teacher)
-        log_p_s = torch.nn.functional.log_softmax(shift_logits, dim=-1)  # [B, T, V]
-        log_p_t = torch.nn.functional.log_softmax(shift_ref_logits, dim=-1).detach()
-        # kl_ts[i, t] = KL(p_t || p_s) at token t
-        kl_ts = torch.stack(
-            [self._per_token_kl(log_p_s[j], log_p_t[j]) for j in range(log_p_s.size(0))]
-        )  # [B, T]
+        kl_list = []
+        for j in range(B):
+            ls_j = shift_logits[j]   # [T, V]
+            lr_j = shift_ref_logits[j]  # [T, V]
+            token_losses_list.append(loss_fct(ls_j, shift_labels[j]))
+            # KL only on masked positions to avoid [T,V] intermediate
+            kl_j = torch.zeros(ls_j.size(0), device=ls_j.device, dtype=ls_j.dtype)
+            mask_j = (shift_h_masks[j] + shift_a_masks[j]).bool()
+            if mask_j.any():
+                idx = mask_j.nonzero(as_tuple=True)[0]
+                lps = torch.nn.functional.log_softmax(ls_j[idx], dim=-1)
+                lpt = torch.nn.functional.log_softmax(lr_j[idx], dim=-1).detach()
+                kl_j[idx] = (lpt.exp() * (lpt - lps)).sum(-1)
+            kl_list.append(kl_j)
+        token_losses = torch.stack(token_losses_list, dim=0)  # [B, T]
+        kl_ts = torch.stack(kl_list)                          # [B, T]
+        del shift_logits, shift_ref_logits
 
         eps = 1e-8
         gen_losses = []
@@ -796,7 +790,7 @@ if __name__ == "__main__":
     run_sira_training_v3(
         model_path=default_model_url,
         anchor_vocab_loss_path=default_anchor_vocab_path,
-        batch_size=8,
+        batch_size=2,
         real_data_epochs=50,
         target_mode_b=1.2,
     )

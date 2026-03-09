@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training_v2
+from scripts import run_sira_training_v2, run_sira_training_v3
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -1044,6 +1044,61 @@ def test_grpo_on_MATH500(grpo_lora_path: str):
         "accuracy": accuracy
     }
 
+def compute_and_save_avg_loss_per_vocab(question, answer):
+    """
+    根据给定的 (question, answer) 列表，调用 TakeExam 计算 avg_loss_per_vocab，
+    并将结果保存到:
+        <project_root>/CELPO/datasets/exam/avg_loss_per_vocab.pt
+
+    Args:
+        question (List[str]): 题目列表
+        answer   (List[str]): 对应的标准答案列表，长度必须与 question 一致
+    """
+    if len(question) != len(answer):
+        raise ValueError(f"question 和 answer 长度不一致: {len(question)} vs {len(answer)}")
+
+    logger.info(f"[avg_loss_per_vocab] Start computing on {len(question)} QA pairs...")
+
+    # 1. 用当前全局的 model_path 初始化 TakeExam
+    student_exam = TakeExam(model_path=model_path)
+
+    # 2. 计算 vocab 级别的平均 loss 向量（shape = [vocab_size]）
+    avg_loss_per_vocab = student_exam.compute_answer_vocab_loss_vector(
+        question=question,
+        answer=answer,
+    )
+
+    # 3. 计算与 student_train_v3.py 一致的保存路径
+    current_file_path = os.path.abspath(__file__)
+    # main.py 所在位置是 <project_root>/CELPO/main.py
+    # 向上两级得到 <project_root>
+    project_root = os.path.dirname(current_file_path)      # .../project/CELPO
+    project_root = os.path.dirname(project_root)           # .../project
+
+    save_path = os.path.join(
+        project_root, "CELPO", "datasets", "exam", "avg_loss_per_vocab.pt"
+    )
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    # 4. 保存到指定路径
+    torch.save(avg_loss_per_vocab, save_path)
+    logger.info(
+        f"[avg_loss_per_vocab] Saved avg_loss_per_vocab (shape={tuple(avg_loss_per_vocab.shape)}) "
+        f"to {save_path}"
+    )
+
+    return save_path
+
+def gen_vocab(data_path:str):
+    with open(data_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+        
+    # 2. 使用列表推导式提取各列数据
+    # 确保如果某个字段缺失，能有默认值（这里假设数据是完整的，或者用空字符串代替）
+    questions = [item.get('question', '') for item in data]
+    answer = [item.get('answer', '') for item in data]
+    compute_and_save_avg_loss_per_vocab(question=questions, answer=answer)
+
 
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
@@ -1072,23 +1127,23 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(8, 0.875, 50)
-    # gen_IRDCL_dataset_v2(8, 0.875, 50)
+    # gen_IRDCL_dataset(8, 0.875, 1)
+    # gen_IRDCL_dataset_v2(8, 0, 50)
     # run_sira_training(model_path=model_path)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=50)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_1231/checkpoint-target-reached-epoch-17")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_1231/checkpoint-target-reached-epoch-17")
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     # 示例：使用 SIRA 训练的结果进行 GRPO
-    # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0302_1046/checkpoint-target-reached-epoch-10")
+    # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     
     # 示例：测试 GRPO 后的模型
-    # test_grpo_on_MATH500(grpo_lora_path="/root/autodl-tmp/CELPO/output/grpo_stable")
+    # test_grpo_on_MATH500(grpo_lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra") 
 
@@ -1098,4 +1153,8 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake(False)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+
+    ####################################################################################################
+    # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
+    run_sira_training_v3(model_path=model_path,real_data_epochs=50)
