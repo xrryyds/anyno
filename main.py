@@ -41,8 +41,8 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
-# model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
+model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 
 def exam_roll_recheck_hints():
     try:
@@ -1113,7 +1113,7 @@ if __name__ == "__main__":
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake() 
+    exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1153,7 +1153,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake(False)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
 
     ####################################################################################################
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
