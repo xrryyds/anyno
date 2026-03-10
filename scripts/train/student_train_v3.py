@@ -74,6 +74,10 @@ class HintSFTConfig:
     kl_lambda: float = 0.5  # KL(teacher||student) weight for mode_b
     kl_beta: float = 0.05   # v3 中不再使用 anchor KL，但字段保留
 
+    # Anchor prior over vocab
+    lambda_anchor: float = 0.1  # weight for anchor prior KL term
+    prior_gamma: float = 1.0    # sharpness of vocab prior derived from anchor_vocab_loss
+
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -101,6 +105,8 @@ class TrainingMetricsTracker:
         self.win_gate_values, self.win_anchor_losses_weighted = [], []
         self.win_anchor_losses_raw = []
         self.win_mode_b_losses, self.win_mode_b_raw = [], []
+        # Anchor prior loss on Mode-B samples
+        self.win_anchor_prior = []
         self.win_counts = {"anchor": 0, "mode_b": 0}
         self.win_beta_values = []
         self.win_alpha_values = []
@@ -110,6 +116,8 @@ class TrainingMetricsTracker:
         self.ep_gate_values, self.ep_anchor_losses_weighted = [], []
         self.ep_anchor_losses_raw = []
         self.ep_mode_b_losses, self.ep_mode_b_raw = [], []
+        # Anchor prior loss on Mode-B samples
+        self.ep_anchor_prior = []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
         self.ep_beta_values = []
         self.ep_alpha_values = []
@@ -135,6 +143,7 @@ class TrainingMetricsTracker:
             gate_val = info.get("gate", 0.0)
             loss_contrib = info["loss_contrib"]
             raw_loss = info.get("raw_loss", 0.0)
+            anchor_prior = info.get("anchor_prior")
 
             if mode == "mode_b_generation":
                 self.win_counts["mode_b"] += 1
@@ -145,6 +154,9 @@ class TrainingMetricsTracker:
                 self.ep_gate_values.append(gate_val)
                 self.win_mode_b_raw.append(raw_loss)
                 self.ep_mode_b_raw.append(raw_loss)
+                if anchor_prior is not None:
+                    self.win_anchor_prior.append(anchor_prior)
+                    self.ep_anchor_prior.append(anchor_prior)
 
             elif mode == "pure_sft_anchor":
                 # v3 中 loss 不再显式使用 anchor，但数据与日志结构保持兼容
@@ -164,6 +176,7 @@ class TrainingMetricsTracker:
         anchor_raw,
         mode_b,
         mode_b_raw,
+        anchor_prior,
         counts,
         alpha_vals,
         beta_vals,
@@ -177,6 +190,7 @@ class TrainingMetricsTracker:
             "avg_final_alpha": avg(alpha_vals),
             "avg_mode_b_loss_raw": avg(mode_b_raw),
             "avg_anchor_loss_raw": avg(anchor_raw),
+            "avg_anchor_prior_loss": avg(anchor_prior),
             "avg_dynamic_beta": avg(beta_vals),
             "sample_counts": counts,
         }
@@ -190,6 +204,7 @@ class TrainingMetricsTracker:
             self.win_anchor_losses_raw,
             self.win_mode_b_losses,
             self.win_mode_b_raw,
+            self.win_anchor_prior,
             self.win_counts,
             self.win_alpha_values,
             self.win_beta_values,
@@ -204,6 +219,7 @@ class TrainingMetricsTracker:
             self.ep_anchor_losses_raw,
             self.ep_mode_b_losses,
             self.ep_mode_b_raw,
+            self.ep_anchor_prior,
             self.ep_counts,
             self.ep_alpha_values,
             self.ep_beta_values,
@@ -342,7 +358,11 @@ class SequentialTrainerV3(Trainer):
         # 在 compute_loss 中会搬到当前设备/精度
         if not isinstance(anchor_vocab_loss, torch.Tensor):
             anchor_vocab_loss = torch.tensor(anchor_vocab_loss, dtype=torch.float32)
+        # Keep raw anchor loss vector on CPU
         self.anchor_vocab_loss = anchor_vocab_loss.detach().clone()
+        # Precompute a logit-level prior q(v) from anchor_vocab_loss; moved to device/dtype in compute_loss
+        self._anchor_prior_q = None
+        self._anchor_prior_log_q = None
 
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
@@ -372,40 +392,16 @@ class SequentialTrainerV3(Trainer):
         logits = outputs.get("logits")
         labels = inputs.get("labels")
 
-        # v3：只返回 mode b 的平均 loss 和 debug 信息
+        # v3：返回 mode b 的平均 data loss、anchor prior loss 以及 debug 信息
         device = logits.device
         dtype = logits.dtype
-        mode_b_mean_loss, debug_info_list = self.adaptive_gating_loss(
+        mode_b_mean_loss, anchor_prior_loss, debug_info_list = self.adaptive_gating_loss(
             logits, ref_logits, labels, hint_masks, answer_masks, ref_betas
         )
         del ref_logits, logits, outputs
 
-        # =========================
-        # vocab 级矢量和 + 归一化
-        # =========================
-        anchor_vec = self.anchor_vocab_loss.to(device=device, dtype=dtype)
-
-        vocab_size = anchor_vec.size(0)
-        # 将标量的 mode_b_mean_loss 升维为 vocab 向量
-        mode_b_vec = mode_b_mean_loss * torch.ones(
-            vocab_size, device=device, dtype=dtype
-        )
-
-        combined_vec = mode_b_vec + anchor_vec
-
-        mode_b_norm = torch.norm(mode_b_vec, p=2)
-        combined_norm = torch.norm(combined_vec, p=2)
-        eps = 1e-8
-
-        if combined_norm.item() < eps or mode_b_norm.item() < eps:
-            # 极端情况下，保持原始 mode_b 向量
-            final_vec = mode_b_vec
-        else:
-            # 归一化，使模长保持为 ||mode_b_vec||
-            final_vec = combined_vec / combined_norm * mode_b_norm
-
-        # 将最终矢量 reduce 成标量 loss
-        loss = final_vec.mean()
+        # 将 anchor prior KL 标量与原有 mode-b data loss 相加
+        loss = mode_b_mean_loss + self.hint_config.lambda_anchor * anchor_prior_loss
 
         if self.model.training:
             # v3 中不再显式使用 alpha/beta，这里传 None
@@ -416,7 +412,7 @@ class SequentialTrainerV3(Trainer):
     def adaptive_gating_loss(
         self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas
     ):
-        """v3 版 gating loss"""
+        """v3 版 gating loss，增加 vocab 级 anchor prior KL 项"""
 
         shift_logits = logits[..., :-1, :].contiguous()
         shift_ref_logits = ref_logits[..., :-1, :].contiguous()
@@ -424,10 +420,25 @@ class SequentialTrainerV3(Trainer):
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
         device = shift_logits.device
+        vocab_size = shift_logits.size(-1)
         del logits, ref_logits, labels, hint_masks, answer_masks
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
         B = shift_logits.size(0)
+
+        # === 1) 预计算 anchor vocab prior q(v)（在当前 device/dtype 上） ===
+        if self._anchor_prior_q is None or self._anchor_prior_q.device != device or self._anchor_prior_q.dtype != shift_logits.dtype:
+            anchor_vec = self.anchor_vocab_loss.to(device=device, dtype=shift_logits.dtype)
+            gamma = getattr(self.hint_config, "prior_gamma", 1.0)
+            # 较小的数值平移，避免数值溢出
+            q_logits = -gamma * anchor_vec
+            q = torch.softmax(q_logits, dim=-1).detach()
+            self._anchor_prior_q = q
+            self._anchor_prior_log_q = q.log()
+        else:
+            q = self._anchor_prior_q
+
+        # === 2) 标准 CE + teacher KL（与原 v3 保持一致） ===
         token_losses_list = []
         kl_list = []
         for j in range(B):
@@ -445,12 +456,14 @@ class SequentialTrainerV3(Trainer):
             kl_list.append(kl_j)
         token_losses = torch.stack(token_losses_list, dim=0)  # [B, T]
         kl_ts = torch.stack(kl_list)                          # [B, T]
-        del shift_logits, shift_ref_logits
+        del shift_ref_logits
 
         eps = 1e-8
         gen_losses = []
+        anchor_prior_losses = []
         debug_map = {}
 
+        # === 3) 对每个样本计算 Mode-B data loss 与 anchor prior KL ===
         for i in range(token_losses.size(0)):
             h_m = shift_h_masks[i]
             h_count = h_m.sum()
@@ -466,7 +479,7 @@ class SequentialTrainerV3(Trainer):
                 avg_a_loss = (
                     (token_losses[i] * a_m).sum() / a_count
                     if a_count > 0
-                    else torch.tensor(0.0, device=device)
+                    else torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
                 )
                 l_ce = (
                     self.hint_config.hint_fixed_weight * avg_h_loss
@@ -480,17 +493,33 @@ class SequentialTrainerV3(Trainer):
 
                 gen_losses.append(l_gen)
 
+                # === Anchor prior KL: KL(q || p_student) on Mode-B tokens ===
+                mode_b_mask = (h_m + a_m).bool()
+                if mode_b_mask.any():
+                    idx_mb = mode_b_mask.nonzero(as_tuple=True)[0]
+                    ls_i = shift_logits[i][idx_mb]  # [N_mb, V]
+                    log_p_s = torch.nn.functional.log_softmax(ls_i, dim=-1)
+                    # KL(q || p_s) = sum_v q(v) * (log q(v) - log p_s(v))
+                    # q / log_q 仅依赖 vocab 轴，可 broadcasting
+                    kl_prior_tokens = (q * (self._anchor_prior_log_q - log_p_s)).sum(dim=-1)
+                    l_anchor_prior_i = kl_prior_tokens.mean()
+                else:
+                    l_anchor_prior_i = torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
+
+                anchor_prior_losses.append(l_anchor_prior_i)
+
                 total_valid_tokens = h_count + a_count
                 raw_b_loss = (
                     ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum())
                     / total_valid_tokens
                     if total_valid_tokens > 0
-                    else torch.tensor(0.0, device=device)
+                    else torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
                 )
                 debug_map[i] = {
                     "gate": gate.item(),
                     "loss_contrib": l_gen.item(),
                     "raw_loss": raw_b_loss.item(),
+                    "anchor_prior": l_anchor_prior_i.item(),
                 }
             else:
                 # v3 中：无 hint 样本不参与此 loss，debug 中标记为 None
@@ -498,15 +527,17 @@ class SequentialTrainerV3(Trainer):
 
         if len(gen_losses) > 0:
             mode_b_mean_loss = torch.stack(gen_losses).mean()
+            anchor_prior_loss = torch.stack(anchor_prior_losses).mean() if anchor_prior_losses else torch.tensor(0.0, device=device, dtype=mode_b_mean_loss.dtype)
             self.running_gen_loss = (
                 0.9 * self.running_gen_loss + 0.1 * mode_b_mean_loss.item()
             )
         else:
             # 若本 batch 没有 mode B 样本，则退化为使用 running_gen_loss
-            mode_b_mean_loss = torch.tensor(self.running_gen_loss, device=device)
+            mode_b_mean_loss = torch.tensor(self.running_gen_loss, device=device, dtype=shift_logits.dtype)
+            anchor_prior_loss = torch.tensor(0.0, device=device, dtype=shift_logits.dtype)
 
         debug_info_list = [debug_map.get(i) for i in range(token_losses.size(0))]
-        return mode_b_mean_loss, debug_info_list
+        return mode_b_mean_loss, anchor_prior_loss, debug_info_list
 
 
 # ==========================================
