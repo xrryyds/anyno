@@ -1133,13 +1133,13 @@ if __name__ == "__main__":
     # run_sira_training_v2(model_path=model_path,real_data_epochs=50)
     # 4. check 
     # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sft_baseline_3ep_0303_1142")
-    student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0310_1138")
     # student_take_exam_Gsm8k(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0215_2009/checkpoint-early-stop-step-832")
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2121")
-    # 示例：使用 SIRA 训练的结果进行 GRPO
+    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0310_1138")
+    # # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     
     # 示例：测试 GRPO 后的模型
@@ -1153,7 +1153,7 @@ if __name__ == "__main__":
     # exam_roll_recheck_mistake(False)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
+    analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH500.json")
 
     ####################################################################################################
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
