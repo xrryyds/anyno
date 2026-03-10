@@ -63,8 +63,8 @@ train                       MATH500
                             -pass@1     -pass@8          -pass@1     -pass@8         -pass@1     -pass@8 
 OREAL 7B                    110/500.    53(39)/500
 adv(14)                             
-OREAL (EHC_all_10/0.23)     145/500     57/500
-                            (9/70)       (4/70)
+OREAL (EHC_Anchor/0.07)     105/500     54/500
+                            (5/7)       (4/70)
 OREAL (EHC_all_10/0.23)     
 
 
