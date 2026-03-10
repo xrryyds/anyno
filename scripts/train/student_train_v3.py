@@ -342,12 +342,11 @@ class FixedModeCollator:
 class SequentialTrainerV3(Trainer):
     """v3 版本：
 
-    - Mode B 的 token 级 loss + KL 计算方式与 v2 完全一致；
+    - Mode B 的 token 级 CE + KL(teacher‖student) 与 v2 完全一致；
     - 不再显式使用样本级 anchor loss；
-    - 在每个梯度更新中，将 "mode b 的平均 loss" 升维为 vocab 向量，
-      与预先计算好的 avg_loss_per_vocab 做矢量和；
-    - 对合成向量做 L2 归一化，使其模长与原始 mode b 向量的模长一致，
-      从而保持整体梯度尺度不变，仅改变“方向”（由 anchor 引导）。
+    - 使用预先计算好的 avg_loss_per_vocab 构造一个 vocab 级先验分布 q(v)，
+      在 Mode B token 的 logits 上增加 KL(q‖p_student) 作为 anchor prior 项，
+      使得梯度方向在 token/logit 级别真正受到 anchor 向量的影响。
     """
 
     def __init__(self, hint_config: HintSFTConfig, anchor_vocab_loss: torch.Tensor, *args, **kwargs):
@@ -466,9 +465,10 @@ class SequentialTrainerV3(Trainer):
         else:
             q = self._anchor_prior_q
 
-        # === 2) 标准 CE + teacher KL（与原 v3 保持一致） ===
+        # === 2) 标准 CE + teacher KL（与原 v3 保持一致），并在同一 pass 中计算每个样本的 anchor prior KL ===
         token_losses_list = []
         kl_list = []
+        per_sample_anchor_prior = torch.zeros(B, device=device, dtype=shift_logits.dtype)
         for j in range(B):
             ls_j = shift_logits[j]   # [T, V]
             lr_j = shift_ref_logits[j]  # [T, V]
@@ -481,6 +481,9 @@ class SequentialTrainerV3(Trainer):
                 lps = torch.nn.functional.log_softmax(ls_j[idx], dim=-1)
                 lpt = torch.nn.functional.log_softmax(lr_j[idx], dim=-1).detach()
                 kl_j[idx] = (lpt.exp() * (lpt - lps)).sum(-1)
+                # Anchor prior KL on the same Mode-B positions: KL(q || p_student)
+                kl_prior_tokens_j = (q * (self._anchor_prior_log_q - lps)).sum(dim=-1)
+                per_sample_anchor_prior[j] = kl_prior_tokens_j.mean()
             kl_list.append(kl_j)
         token_losses = torch.stack(token_losses_list, dim=0)  # [B, T]
         kl_ts = torch.stack(kl_list)                          # [B, T]
@@ -521,19 +524,8 @@ class SequentialTrainerV3(Trainer):
 
                 gen_losses.append(l_gen)
 
-                # === Anchor prior KL: KL(q || p_student) on Mode-B tokens ===
-                mode_b_mask = (h_m + a_m).bool()
-                if mode_b_mask.any():
-                    idx_mb = mode_b_mask.nonzero(as_tuple=True)[0]
-                    ls_i = shift_logits[i][idx_mb]  # [N_mb, V]
-                    log_p_s = torch.nn.functional.log_softmax(ls_i, dim=-1)
-                    # KL(q || p_s) = sum_v q(v) * (log q(v) - log p_s(v))
-                    # q / log_q 仅依赖 vocab 轴，可 broadcasting
-                    kl_prior_tokens = (q * (self._anchor_prior_log_q - log_p_s)).sum(dim=-1)
-                    l_anchor_prior_i = kl_prior_tokens.mean()
-                else:
-                    l_anchor_prior_i = torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
-
+                # === Anchor prior KL: 已在 KL pass 中按样本计算，这里直接读取 ===
+                l_anchor_prior_i = per_sample_anchor_prior[i]
                 anchor_prior_losses.append(l_anchor_prior_i)
 
                 total_valid_tokens = h_count + a_count
