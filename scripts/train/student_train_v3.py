@@ -427,8 +427,36 @@ class SequentialTrainerV3(Trainer):
         B = shift_logits.size(0)
 
         # === 1) 预计算 anchor vocab prior q(v)（在当前 device/dtype 上） ===
-        if self._anchor_prior_q is None or self._anchor_prior_q.device != device or self._anchor_prior_q.dtype != shift_logits.dtype:
+        if (
+            self._anchor_prior_q is None
+            or self._anchor_prior_q.device != device
+            or self._anchor_prior_q.dtype != shift_logits.dtype
+        ):
+            # 将 anchor_vocab_loss 对齐到当前模型 vocab 大小
             anchor_vec = self.anchor_vocab_loss.to(device=device, dtype=shift_logits.dtype)
+            v_anchor = anchor_vec.size(0)
+            if v_anchor != vocab_size:
+                if v_anchor < vocab_size:
+                    pad_val = anchor_vec.mean()
+                    pad_size = vocab_size - v_anchor
+                    pad = pad_val.expand(pad_size)
+                    logger.warning(
+                        "Anchor vocab loss length (%d) < model vocab size (%d); "
+                        "padding with mean value %.6f for new tokens.",
+                        v_anchor,
+                        vocab_size,
+                        pad_val.item(),
+                    )
+                    anchor_vec = torch.cat([anchor_vec, pad], dim=0)
+                else:
+                    logger.warning(
+                        "Anchor vocab loss length (%d) > model vocab size (%d); "
+                        "truncating extra entries.",
+                        v_anchor,
+                        vocab_size,
+                    )
+                    anchor_vec = anchor_vec[:vocab_size]
+
             gamma = getattr(self.hint_config, "prior_gamma", 1.0)
             # 较小的数值平移，避免数值溢出
             q_logits = -gamma * anchor_vec
