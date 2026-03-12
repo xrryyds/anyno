@@ -23,7 +23,7 @@ from transformers import (
     TrainerCallback,
     set_seed
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
 # Logger 配置
@@ -532,7 +532,8 @@ def run_sira_training_v2(
     device_num: int = 1,
     spilt: float = 0.5,
     # 默认值可以设为您期望的停止阈值
-    target_mode_b: float = 0.07
+    target_mode_b: float = 0.07,
+    lora_path: Optional[str] = None,
 ):
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
@@ -588,19 +589,47 @@ def run_sira_training_v2(
         logger.warning(f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1.")
 
     model = AutoModelForCausalLM.from_pretrained(
-        hint_config.model_path, 
-        torch_dtype=torch.bfloat16, 
-        device_map="auto", 
+        hint_config.model_path,
+        torch_dtype=torch.bfloat16,
+        device_map="auto",
         trust_remote_code=True
     )
-    model.config.use_cache = False  
+    model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
-    
-    peft_config = LoraConfig(
-        r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        task_type="CAUSAL_LM", bias="none"
-    )
-    model = get_peft_model(model, peft_config)
+
+    # ================================
+    # LoRA resume support
+    # ================================
+    use_existing_lora = False
+    if lora_path is not None and str(lora_path).strip():
+        lora_path = str(lora_path).strip()
+        if os.path.exists(lora_path) and os.path.isdir(lora_path):
+            use_existing_lora = True
+            logger.info(f"Using existing LoRA from: {lora_path}")
+        else:
+            logger.warning(
+                f"Provided lora_path '{lora_path}' does not exist or is not a directory. "
+                "Falling back to fresh LoRA initialization."
+            )
+
+    if use_existing_lora:
+        try:
+            model = PeftModel.from_pretrained(model, lora_path)
+            logger.info(f"Successfully loaded existing LoRA weights from '{lora_path}'.")
+        except (OSError, ValueError) as e:
+            logger.error(
+                f"Failed to load LoRA weights from '{lora_path}': {e}. "
+                "Falling back to fresh LoRA initialization."
+            )
+            use_existing_lora = False
+
+    if not use_existing_lora:
+        peft_config = LoraConfig(
+            r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            task_type="CAUSAL_LM", bias="none"
+        )
+        model = get_peft_model(model, peft_config)
+
     model.enable_input_require_grads()
 
     training_args = TrainingArguments(
