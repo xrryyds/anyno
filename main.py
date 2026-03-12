@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training_v2, run_sira_training_v3
+# from scripts import run_sira_training_v2, run_sira_training_v3
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -13,7 +13,7 @@ from transformers import (
 from peft import PeftModel
 
 
-from scripts import TakeExam, TeacherCorrecter
+from scripts import TeacherCorrecter
 from utils import (
     FileIOUtils, 
     remove_null_hints, 
@@ -44,7 +44,7 @@ exam_paper = FileIOUtils()
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 
-def exam_roll_recheck_hints():
+def exam_roll_recheck_hints(lora_path: str = None):
     try:
         logger.info("Step 1: Loading Dataset...")
         # 虽然这里读取了data_a，但在后续逻辑中主要使用 exam_paper.parse_hints_exam 解析出的数据
@@ -61,9 +61,12 @@ def exam_roll_recheck_hints():
             meta_map[q_id] = {'hints': h, 'orig_ent': ent}
 
         logger.info("Step 2: Student Rolling Exam...")
-        student_exam = TakeExam(model_path=model_path)
+        if lora_path:
+            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
+        else:
+            student_exam = TakeExam(model_path=model_path)
         student_exam.exam_roll_k_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
-        
+
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
         # 获取批改结果
@@ -210,7 +213,7 @@ def process_exam_file_batch(file_path, lora_path:str = None):
 
 
 
-def student_correct():
+def student_correct(lora_path: str = None):
     logger.info("Step 1: Loading Dataset...")
     # 1. 加载原始带有提示的数据
     exam_paper.load_question_with_hints()
@@ -219,7 +222,10 @@ def student_correct():
    
     # 2. 学生考试 (使用带提示的题目进行推理)
     logger.info("Step 2: Student Taking Exam...")
-    student_exam = TakeExam(model_path=model_path)
+    if lora_path:
+        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
+    else:
+        student_exam = TakeExam(model_path=model_path)
     # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
     student_exam.exam_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
@@ -1114,10 +1120,10 @@ if __name__ == "__main__":
 
     # 3. student roll on mistake
     # exam_roll_recheck_mistake() 
-    # teacher.check_answers_equivalence()
+    teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints() 
+    teacher.teacher_hints() 
 
     # 5. student correct
     # student_correct()
