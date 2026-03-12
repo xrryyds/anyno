@@ -4,6 +4,8 @@ import logging
 import random
 import numpy as np
 import torch
+import multiprocessing as mp
+from typing import List, Dict, Any, Sequence, Optional
 from transformers import AutoTokenizer, set_seed
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
@@ -322,12 +324,15 @@ class TakeExam:
     # =====================================================
     # 标准 Exam (Pass@1)
     # =====================================================
-    def exam(self, question, solution, answer, question_idx):
-        logger.info(f"Starting vLLM Standard Exam (Greedy): total_questions={len(question)}")
-        
-        # 推理前重置种子
-        set_all_seeds(self.seed)
-        
+    def _exam_core(self, question, solution, answer, question_idx):
+        """Core implementation of exam() that returns in-memory results.
+
+        This helper performs pure compute using vLLM and does not touch
+        the filesystem. Public APIs like exam() and exam_multi_gpu are
+        responsible for any file I/O.
+        """
+        logger.info(f"Running exam core on {len(question)} questions.")
+
         prompts = self._build_prompts(question)
 
         # ✅ 强制 greedy search，确保确定性输出
@@ -337,10 +342,14 @@ class TakeExam:
             top_p=1.0,        # ✅ 必须为 1.0
             max_tokens=self.MAX_NEW_TOKENS,
             stop_token_ids=self.stop_token_ids,
-            seed=self.seed
+            seed=self.seed,
         )
 
-        outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
+        outputs = self.llm.generate(
+            prompts,
+            sampling_params,
+            lora_request=self.lora_request,
+        )
 
         results = []
         for i, output in enumerate(outputs):
@@ -352,11 +361,166 @@ class TakeExam:
                 "question_idx": question_idx[i],
             })
 
+        return results
+
+    def exam(self, question, solution, answer, question_idx):
+        logger.info(f"Starting vLLM Standard Exam (Greedy): total_questions={len(question)}")
+
+        # 推理前重置种子
+        set_all_seeds(self.seed)
+
+        results = self._exam_core(question, solution, answer, question_idx)
+
         os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
         with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
 
         logger.info(f"Standard Exam done! Saved to {self.OUTPUT_JSON_PATH}")
+
+    def exam_multi_gpu(
+        self,
+        question,
+        solution,
+        answer,
+        question_idx,
+        device_ids=None,
+        num_workers=None,
+        write_output=True,
+    ):
+        """Data-parallel multi-GPU variant of exam().
+
+        This method does not change the existing single-GPU behavior; it is an
+        opt-in helper that shards the input questions across multiple GPUs,
+        runs _exam_core on each shard in a separate process, and then merges
+        the results.
+
+        Args:
+            question, solution, answer, question_idx: Lists aligned by index.
+            device_ids: Optional sequence of CUDA device indices to use.
+                If None, uses all available GPUs.
+            num_workers: Optional number of worker processes to spawn.
+                Defaults to min(len(device_ids), len(question)).
+            write_output: If True, write merged results to OUTPUT_JSON_PATH.
+
+        Returns:
+            List[dict]: merged results in the same order as the input lists.
+        """
+        total = len(question)
+        if total == 0:
+            logger.warning("exam_multi_gpu called with empty question list.")
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
+            return []
+
+        if device_ids is None:
+            if not torch.cuda.is_available():
+                logger.warning(
+                    "No CUDA devices available; falling back to single-GPU behavior."
+                )
+                # Single-GPU fallback: behave like exam()
+                set_all_seeds(self.seed)
+                results = self._exam_core(question, solution, answer, question_idx)
+                if write_output:
+                    os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+                    with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                        json.dump(results, f, ensure_ascii=False, indent=2)
+                return results
+            n_gpus = torch.cuda.device_count()
+            device_ids = list(range(n_gpus))
+
+        if isinstance(device_ids, int):
+            device_ids = [device_ids]
+
+        if not device_ids:
+            logger.warning(
+                "Empty device_ids passed to exam_multi_gpu; falling back to single-GPU behavior."
+            )
+            set_all_seeds(self.seed)
+            results = self._exam_core(question, solution, answer, question_idx)
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+            return results
+
+        if num_workers is None:
+            num_workers = min(len(device_ids), total)
+        else:
+            num_workers = min(num_workers, len(device_ids), total)
+
+        if num_workers <= 1:
+            logger.info(
+                "exam_multi_gpu called with a single worker; using single-GPU behavior."
+            )
+            set_all_seeds(self.seed)
+            results = self._exam_core(question, solution, answer, question_idx)
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+            return results
+
+        logger.info(
+            f"Running exam_multi_gpu with {num_workers} workers on devices {device_ids[:num_workers]}"
+        )
+
+        # Build contiguous index shards to preserve original ordering
+        indices = list(range(total))
+        shard_size = (total + num_workers - 1) // num_workers
+        index_shards = [
+            indices[i * shard_size : min((i + 1) * shard_size, total)]
+            for i in range(num_workers)
+            if i * shard_size < total
+        ]
+
+        args_list = []
+        for local_rank, (device_id, idx_shard) in enumerate(
+            zip(device_ids, index_shards)
+        ):
+            if not idx_shard:
+                continue
+            q_shard = [question[i] for i in idx_shard]
+            s_shard = [solution[i] for i in idx_shard]
+            a_shard = [answer[i] for i in idx_shard]
+            qi_shard = [question_idx[i] for i in idx_shard]
+            args_list.append(
+                (
+                    local_rank,
+                    device_id,
+                    self.LOCAL_MODEL_PATH,
+                    self.use_lora,
+                    self.adapter_path,
+                    self.seed,
+                    q_shard,
+                    s_shard,
+                    a_shard,
+                    qi_shard,
+                )
+            )
+
+        ctx = mp.get_context("spawn")
+        with ctx.Pool(processes=len(args_list)) as pool:
+            shard_results = pool.map(_run_exam_shard_worker, args_list)
+
+        merged_results = []
+        for part in shard_results:
+            merged_results.extend(part)
+
+        # Because we use contiguous shards and _exam_core preserves input
+        # ordering within each shard, merged_results is already aligned with
+        # the original question order. No extra sorting is required.
+
+        if write_output:
+            os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+            with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                json.dump(merged_results, f, ensure_ascii=False, indent=2)
+            logger.info(
+                "Multi-GPU Standard Exam done! Saved to %s", self.OUTPUT_JSON_PATH
+            )
+
+        return merged_results
 
     # =====================================================
     # 新增：带 Hint 的 Prefix-Forcing 考试 (Q + H -> A)
@@ -557,6 +721,51 @@ class TakeExam:
         logger.info(f"Roll-K Exam with Hints done! {len(results)} entries saved to {self.OUTPUT_JSON_PATH_ROLL}")
 
 
+def _run_exam_shard_worker(args):
+    """Worker function for exam_multi_gpu.
+
+    Defined at module scope so it can be pickled by multiprocessing.
+    It reconstructs a TakeExam instance on a specific GPU and runs
+    _exam_core() on the provided shard.
+    """
+    (
+        local_rank,
+        device_id,
+        model_path,
+        use_lora,
+        adapter_path,
+        seed,
+        question_shard,
+        solution_shard,
+        answer_shard,
+        question_idx_shard,
+    ) = args
+
+    # Pin this worker process to a single CUDA device.
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    logger.info(
+        "[exam worker %d] Using CUDA device %s for %d questions.",
+        local_rank,
+        device_id,
+        len(question_shard),
+    )
+
+    worker = TakeExam(
+        model_path=model_path,
+        use_lora=use_lora,
+        adapter_path=adapter_path,
+    )
+    worker.seed = seed
+    set_all_seeds(worker.seed)
+
+    return worker._exam_core(
+        question_shard,
+        solution_shard,
+        answer_shard,
+        question_idx_shard,
+    )
+
+
 # =====================================================
 # 一致性测试函数
 # =====================================================
@@ -564,15 +773,15 @@ def test_consistency(take_exam, question, n_runs=3):
     """测试多次运行结果是否完全一致"""
     logger.info(f"Testing consistency with {n_runs} runs...")
     results = []
-    
+
     for i in range(n_runs):
         # 每次运行前重置种子
         set_all_seeds(42)
-        
+
         output = take_exam.answer_single_question(question)
         results.append(output)
         logger.info(f"Run {i+1} output (first 100 chars): {output[:100]}...")
-    
+
     # 检查一致性
     unique_results = set(results)
     if len(unique_results) == 1:
