@@ -2,6 +2,8 @@ from utils import FileIOUtils, extract_hints ,extract_boxed_content, normalize_a
 from openai import OpenAI, RateLimitError, APIError
 from prompt.prompts import TEACHER_CORRECT_PROMPT, OREAL_CORRECT_PROMPT
 import time
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 base_url = "https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
 api_key = "k1y21hll8l0eurf7t3dg4enb56g0hhjjszf4"
@@ -95,6 +97,127 @@ class TeacherCorrecter:
         
 
 
+
+    def teacher_hints_self(self, model_path: str) -> bool:
+        """Generate teacher hints using a local chat model.
+
+        This mirrors `teacher_hints` but loads a local model from `model_path`
+        and uses `transformers` generation instead of an HTTP/OpenAI API.
+
+        Args:
+            model_path: Local path or model ID for the chat model.
+
+        Returns:
+            True if the full pipeline runs to completion.
+        """
+        print("Starting teacher hinting (local model)...")
+        print("load mistakes...")
+        self.file.load_mistakes()
+        m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = self.file.parse_data(self.file.mistakes)
+        print("mistakes size:", len(m_question))
+
+        h_question = []
+        h_hints = []
+        h_ref_solution = []
+        h_ref_answer = []
+        h_question_idx = []
+
+        print(f"generating hints({len(m_question)})...")
+
+        # Load tokenizer and model once
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            use_fast=False,
+        )
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True,
+        )
+        model.eval()
+
+        for idx in range(len(m_question)):
+            prompt = TEACHER_CORRECT_PROMPT.format(
+                problem=m_question[idx],
+                student_answer=m_answer[idx],
+                ref_solution=m_ref_solution[idx],
+            )
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant who good at math"},
+                {"role": "user", "content": prompt},
+            ]
+
+            try:
+                input_text = tokenizer.apply_chat_template(
+                    messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                inputs = tokenizer(
+                    input_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=2048,
+                ).to(model.device)
+
+                with torch.no_grad():
+                    outputs = model.generate(
+                        **inputs,
+                        max_new_tokens=512,
+                        do_sample=True,
+                        temperature=0.7,
+                        top_p=0.9,
+                        pad_token_id=tokenizer.pad_token_id,
+                        use_cache=True,
+                    )
+
+                generated_ids = outputs[0]
+                prompt_len = inputs["input_ids"].shape[1]
+                gen_only_ids = generated_ids[prompt_len:]
+                response = tokenizer.decode(
+                    gen_only_ids,
+                    skip_special_tokens=True,
+                ).strip()
+
+                hints = extract_hints(response)
+            except Exception as e:
+                print(f"[teacher_hints_self] Error at idx {idx}: {e}")
+                hints = ""
+
+            h_question_idx.append(m_question_idx[idx])
+            h_question.append(m_question[idx])
+            h_hints.append(hints)
+            h_ref_solution.append(m_ref_solution[idx])
+            h_ref_answer.append(m_ref_answer[idx])
+
+            if (idx + 1) % 10 == 0:
+                print(f"Auto-saving checkpoint at count {idx + 1}...")
+                self.file.save_hints(
+                    h_question,
+                    h_hints,
+                    h_ref_solution,
+                    h_ref_answer,
+                    h_question_idx,
+                    m_answer[: idx + 1],
+                    m_entropy[: idx + 1],
+                )
+
+        print("saving final hints...")
+        self.file.save_hints(
+            h_question,
+            h_hints,
+            h_ref_solution,
+            h_ref_answer,
+            h_question_idx,
+            m_answer,
+            m_entropy,
+        )
+        return True
 
     def teacher_hints_gtp(self) -> bool:
         print("Starting teacher hinting (GPT-4o)...")
