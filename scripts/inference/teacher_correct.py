@@ -7,7 +7,45 @@ import torch
 import multiprocessing as mp
 from typing import List, Sequence, Tuple, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from vllm import LLM, SamplingParams
+
+# Optional vLLM import; may be unavailable in some environments.
+try:
+    from vllm import LLM, SamplingParams
+    _VLLM_IMPORT_ERROR: Optional[Exception] = None
+except Exception as e:  # pragma: no cover - import-time environment specific
+    LLM = None  # type: ignore[assignment]
+    SamplingParams = None  # type: ignore[assignment]
+    _VLLM_IMPORT_ERROR = e
+
+# Backend selection for teacher_hints_self.
+# Allowed values:
+#   "auto" (default): use vLLM when available, otherwise fall back to transformers.
+#   "vllm": require vLLM; raise if unavailable.
+#   "transformers": force transformers backend.
+TEACHER_HINTS_BACKEND: str = os.environ.get("TEACHER_HINTS_BACKEND", "auto").lower()
+
+# How often to checkpoint partial hints to disk.
+# Can be overridden via the TEACHER_HINTS_CHECKPOINT_INTERVAL environment variable.
+try:
+    TEACHER_HINTS_CHECKPOINT_INTERVAL: int = int(
+        os.environ.get("TEACHER_HINTS_CHECKPOINT_INTERVAL", "10")
+    )
+except ValueError:
+    TEACHER_HINTS_CHECKPOINT_INTERVAL = 10
+
+
+def _is_vllm_available() -> bool:
+    """Return True if vLLM is importable and CUDA is available.
+
+    This helper is conservative: it only checks for a successful import and
+    presence of a CUDA device. More detailed configuration errors will be
+    surfaced when initializing the vLLM engine.
+    """
+    if LLM is None or SamplingParams is None:
+        return False
+    if not torch.cuda.is_available():
+        return False
+    return True
 
 base_url = "https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
 api_key = "k1y21hll8l0eurf7t3dg4enb56g0hhjjszf4"
@@ -220,10 +258,18 @@ class TeacherCorrecter:
         )
 
     def teacher_hints_self(self, model_path: str) -> bool:
-        """Generate teacher hints using a local chat model.
+        """Generate teacher hints using a local backend.
 
-        This mirrors `teacher_hints` but loads a local model from `model_path`
-        and uses `transformers` generation instead of an HTTP/OpenAI API.
+        By default this prefers a vLLM backend for batched generation when
+        available, falling back to a standard transformers-based implementation.
+
+        Backend selection is controlled via the module-level
+        TEACHER_HINTS_BACKEND flag (or the TEACHER_HINTS_BACKEND environment
+        variable), with allowed values:
+
+        - "auto" (default): use vLLM when available, otherwise transformers.
+        - "vllm": require vLLM; raise a clear error if unavailable.
+        - "transformers": always use the transformers backend.
 
         Args:
             model_path: Local path or model ID for the chat model.
@@ -242,15 +288,110 @@ class TeacherCorrecter:
             m_ref_solution,
             m_entropy,
         ) = self.file.parse_data(self.file.mistakes)
-        print("mistakes size:", len(m_question))
+        total = len(m_question)
+        print("mistakes size:", total)
+
+        if total == 0:
+            print("[teacher_hints_self] No mistakes to process.")
+            # Preserve previous behavior by writing an empty hints file so
+            # downstream consumers can still load it without errors.
+            self.file.save_hints([], [], [], [], [], [], [])
+            return True
+
+        backend = TEACHER_HINTS_BACKEND
+        if backend not in {"auto", "vllm", "transformers"}:
+            print(
+                f"[teacher_hints_self] Unknown TEACHER_HINTS_BACKEND='{backend}', "
+                "falling back to 'auto'."
+            )
+            backend = "auto"
+
+        # Explicit vLLM-only mode.
+        if backend == "vllm":
+            if not _is_vllm_available():
+                raise RuntimeError(
+                    "TEACHER_HINTS_BACKEND is set to 'vllm', but vLLM is not "
+                    "available or CUDA is not enabled. Please install vLLM and "
+                    "ensure a CUDA device is visible, or set "
+                    "TEACHER_HINTS_BACKEND='transformers' to force the "
+                    "transformers backend."
+                )
+            print("[teacher_hints_self] Using vLLM backend.")
+            return self._teacher_hints_vllm_orchestrate(
+                model_path,
+                m_question_idx,
+                m_question,
+                m_answer,
+                m_ref_solution,
+                m_ref_answer,
+                m_entropy,
+            )
+
+        # Explicit transformers-only mode.
+        if backend == "transformers":
+            print("[teacher_hints_self] Using transformers backend.")
+            return self._teacher_hints_transformers(
+                model_path,
+                m_question_idx,
+                m_question,
+                m_answer,
+                m_ref_solution,
+                m_ref_answer,
+                m_entropy,
+            )
+
+        # Auto mode: prefer vLLM when available, otherwise fall back.
+        if _is_vllm_available():
+            print("[teacher_hints_self] vLLM available; using vLLM backend.")
+            return self._teacher_hints_vllm_orchestrate(
+                model_path,
+                m_question_idx,
+                m_question,
+                m_answer,
+                m_ref_solution,
+                m_ref_answer,
+                m_entropy,
+            )
+
+        print(
+            "[teacher_hints_self] vLLM not available; falling back to "
+            "transformers backend."
+        )
+        return self._teacher_hints_transformers(
+            model_path,
+            m_question_idx,
+            m_question,
+            m_answer,
+            m_ref_solution,
+            m_ref_answer,
+            m_entropy,
+        )
+
+    def _teacher_hints_transformers(
+        self,
+        model_path: str,
+        m_question_idx: Sequence[int],
+        m_question: Sequence[str],
+        m_answer: Sequence[str],
+        m_ref_solution: Sequence[str],
+        m_ref_answer: Sequence[str],
+        m_entropy: Sequence[float],
+        checkpoint_interval: int = TEACHER_HINTS_CHECKPOINT_INTERVAL,
+    ) -> bool:
+        """Transformers-based implementation of `teacher_hints_self`.
+
+        This preserves the original behavior of loading a local
+        AutoModelForCausalLM and generating hints sequentially, including
+        periodic checkpointing.
+        """
+        total = len(m_question)
+        print(f"[teacher_hints_self] (transformers) generating hints({total})...")
 
         h_question: List[str] = []
         h_hints: List[str] = []
         h_ref_solution: List[str] = []
         h_ref_answer: List[str] = []
         h_question_idx: List[int] = []
-
-        print(f"generating hints({len(m_question)})...")
 
         # Load tokenizer and model once
         tokenizer = AutoTokenizer.from_pretrained(
@@ -269,8 +410,7 @@ class TeacherCorrecter:
         )
         model.eval()
 
-        # Use the core helper over the full index range to preserve behavior.
-        all_indices = list(range(len(m_question)))
+        all_indices = list(range(total))
         (
             local_q_idx,
             local_q,
@@ -290,8 +430,7 @@ class TeacherCorrecter:
             log_every=5,
         )
 
-        # Accumulate for compatibility with existing checkpoint-saving logic.
-        # local_q_idx already contains the original question_idx values.
+        # Accumulate and periodically checkpoint to disk.
         for i, q_idx in enumerate(local_q_idx):
             h_question_idx.append(q_idx)
             h_question.append(local_q[i])
@@ -299,8 +438,10 @@ class TeacherCorrecter:
             h_ref_solution.append(local_ref_sol[i])
             h_ref_answer.append(local_ref_ans[i])
 
-            if (i + 1) % 10 == 0:
-                print(f"Auto-saving checkpoint at count {i + 1}...")
+            if checkpoint_interval > 0 and (i + 1) % checkpoint_interval == 0:
+                print(
+                    f"[teacher_hints_self] Auto-saving checkpoint at count {i + 1}..."
+                )
                 self.file.save_hints(
                     h_question,
                     h_hints,
@@ -311,13 +452,100 @@ class TeacherCorrecter:
                     m_entropy[: i + 1],
                 )
 
-        print("saving final hints...")
+        print("[teacher_hints_self] saving final hints (transformers)...")
         self.file.save_hints(
             h_question,
             h_hints,
             h_ref_solution,
             h_ref_answer,
             h_question_idx,
+            m_answer,
+            m_entropy,
+        )
+        return True
+
+    def _teacher_hints_vllm_orchestrate(
+        self,
+        model_path: str,
+        m_question_idx: Sequence[int],
+        m_question: Sequence[str],
+        m_answer: Sequence[str],
+        m_ref_solution: Sequence[str],
+        m_ref_answer: Sequence[str],
+        m_entropy: Sequence[float],
+        batch_size: int = 32,
+        checkpoint_interval: int = TEACHER_HINTS_CHECKPOINT_INTERVAL,
+        device_id: Optional[int] = None,
+    ) -> bool:
+        """vLLM-based implementation of `teacher_hints_self`.
+
+        This helper runs batched generation via `_teacher_hints_vllm_single_gpu`
+        and mirrors the checkpointing semantics of the transformers backend.
+        """
+        total = len(m_question)
+        print(
+            f"[teacher_hints_self] (vLLM) generating hints for {total} items "
+            f"with batch_size={batch_size}..."
+        )
+
+        (
+            h_question_idx,
+            h_question,
+            h_hints,
+            h_ref_solution,
+            h_ref_answer,
+        ) = self._teacher_hints_vllm_single_gpu(
+            model_path,
+            m_question_idx,
+            m_question,
+            m_answer,
+            m_ref_solution,
+            m_ref_answer,
+            device_id=device_id,
+            batch_size=batch_size,
+        )
+
+        if len(h_question) != total:
+            raise RuntimeError(
+                "[teacher_hints_self] (vLLM) Mismatch between number of "
+                f"inputs ({total}) and outputs ({len(h_question)})."
+            )
+
+        acc_q_idx: List[int] = []
+        acc_q: List[str] = []
+        acc_hints: List[str] = []
+        acc_ref_sol: List[str] = []
+        acc_ref_ans: List[str] = []
+
+        for i in range(total):
+            acc_q_idx.append(h_question_idx[i])
+            acc_q.append(h_question[i])
+            acc_hints.append(h_hints[i])
+            acc_ref_sol.append(h_ref_solution[i])
+            acc_ref_ans.append(h_ref_answer[i])
+
+            if checkpoint_interval > 0 and (i + 1) % checkpoint_interval == 0:
+                print(
+                    "[teacher_hints_self] (vLLM) Auto-saving checkpoint at "
+                    f"count {i + 1}..."
+                )
+                self.file.save_hints(
+                    acc_q,
+                    acc_hints,
+                    acc_ref_sol,
+                    acc_ref_ans,
+                    acc_q_idx,
+                    m_answer[: i + 1],
+                    m_entropy[: i + 1],
+                )
+
+        print("[teacher_hints_self] saving final hints (vLLM)...")
+        self.file.save_hints(
+            acc_q,
+            acc_hints,
+            acc_ref_sol,
+            acc_ref_ans,
+            acc_q_idx,
             m_answer,
             m_entropy,
         )
@@ -361,15 +589,21 @@ class TeacherCorrecter:
             stop_token_ids.append(tokenizer.eos_token_id)
 
         # Initialize vLLM engine on a single GPU.
-        llm = LLM(
-            model=model_path,
-            trust_remote_code=True,
-            tensor_parallel_size=1,
-            gpu_memory_utilization=0.9,
-            max_model_len=2048,
-            enforce_eager=True,
-            dtype="bfloat16",
-        )
+        try:
+            llm = LLM(
+                model=model_path,
+                trust_remote_code=True,
+                tensor_parallel_size=1,
+                gpu_memory_utilization=0.9,
+                max_model_len=2048,
+                enforce_eager=True,
+                dtype="bfloat16",
+            )
+        except Exception as e:
+            raise RuntimeError(
+                "[teacher_hints_vllm_single_gpu] Failed to initialize vLLM "
+                f"engine: {e}"
+            ) from e
 
         total = len(m_question)
         prompts: List[str] = []
@@ -511,51 +745,35 @@ class TeacherCorrecter:
 
         if num_workers <= 1:
             print(
-                "[teacher_hints_self_parallel] num_workers <= 1; using single-GPU vLLM path."
+                "[teacher_hints_self_parallel] num_workers <= 1; preferring single-GPU vLLM path."
             )
 
-            # Use vLLM single-GPU helper to generate all hints in batched mode.
+            # If vLLM is not available, gracefully fall back to the
+            # sequential teacher_hints_self implementation.
+            if not _is_vllm_available():
+                print(
+                    "[teacher_hints_self_parallel] vLLM not available; "
+                    "falling back to teacher_hints_self()."
+                )
+                return self.teacher_hints_self(model_path)
+
+            # Use the shared vLLM orchestration helper so that checkpointing
+            # behavior matches teacher_hints_self.
             single_device_id: Optional[int] = None
             if isinstance(device_ids, (list, tuple)) and len(device_ids) == 1:
                 single_device_id = device_ids[0]
 
-            (
-                h_question_idx,
-                h_question,
-                h_hints,
-                h_ref_solution,
-                h_ref_answer,
-            ) = self._teacher_hints_vllm_single_gpu(
+            return self._teacher_hints_vllm_orchestrate(
                 model_path,
                 m_question_idx,
                 m_question,
                 m_answer,
                 m_ref_solution,
                 m_ref_answer,
-                device_id=single_device_id,
-                batch_size=32,
-            )
-
-            # Sort by original question index to restore deterministic order.
-            order = sorted(range(len(h_question_idx)), key=lambda i: h_question_idx[i])
-            h_question_idx_sorted: List[int] = [h_question_idx[i] for i in order]
-            h_question_sorted: List[str] = [h_question[i] for i in order]
-            h_hints_sorted: List[str] = [h_hints[i] for i in order]
-            h_ref_solution_sorted: List[str] = [h_ref_solution[i] for i in order]
-            h_ref_answer_sorted: List[str] = [h_ref_answer[i] for i in order]
-
-            # Final single save, mirroring the parallel multi-GPU behavior.
-            print("saving final hints (parallel vLLM)...")
-            self.file.save_hints(
-                h_question_sorted,
-                h_hints_sorted,
-                h_ref_solution_sorted,
-                h_ref_answer_sorted,
-                h_question_idx_sorted,
-                m_answer,
                 m_entropy,
+                batch_size=32,
+                device_id=single_device_id,
             )
-            return True
 
         indices = list(range(total))
         shard_size = (total + num_workers - 1) // num_workers
