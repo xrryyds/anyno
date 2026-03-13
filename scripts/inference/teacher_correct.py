@@ -7,6 +7,7 @@ import torch
 import multiprocessing as mp
 from typing import List, Sequence, Tuple, Optional
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from vllm import LLM, SamplingParams
 
 base_url = "https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
 api_key = "k1y21hll8l0eurf7t3dg4enb56g0hhjjszf4"
@@ -322,6 +323,136 @@ class TeacherCorrecter:
         )
         return True
 
+    def _teacher_hints_vllm_single_gpu(
+        self,
+        model_path: str,
+        m_question_idx: Sequence[int],
+        m_question: Sequence[str],
+        m_answer: Sequence[str],
+        m_ref_solution: Sequence[str],
+        m_ref_answer: Sequence[str],
+        device_id: Optional[int] = None,
+        batch_size: int = 32,
+    ) -> Tuple[List[int], List[str], List[str], List[str], List[str]]:
+        """Single-GPU vLLM path for teacher hints.
+
+        This helper performs batched generation on a single GPU using vLLM and
+        returns in-memory results without touching the filesystem.
+        """
+        # Optionally pin to a specific CUDA device.
+        if device_id is not None:
+            os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+            print(
+                f"[teacher_hints_vllm_single_gpu] Using CUDA device {device_id} for vLLM."
+            )
+
+        # Initialize tokenizer.
+        tokenizer = AutoTokenizer.from_pretrained(
+            model_path,
+            trust_remote_code=True,
+            use_fast=False,
+        )
+        if tokenizer.pad_token_id is None:
+            tokenizer.pad_token_id = tokenizer.eos_token_id
+
+        # Prepare stop token ids (model-agnostic: only EOS).
+        stop_token_ids = []
+        if tokenizer.eos_token_id is not None:
+            stop_token_ids.append(tokenizer.eos_token_id)
+
+        # Initialize vLLM engine on a single GPU.
+        llm = LLM(
+            model=model_path,
+            trust_remote_code=True,
+            tensor_parallel_size=1,
+            gpu_memory_utilization=0.9,
+            max_model_len=2048,
+            enforce_eager=True,
+            dtype="bfloat16",
+        )
+
+        total = len(m_question)
+        prompts: List[str] = []
+
+        for idx in range(total):
+            prompt = TEACHER_CORRECT_PROMPT.format(
+                problem=m_question[idx],
+                student_answer=m_answer[idx],
+                ref_solution=m_ref_solution[idx],
+            )
+            messages = [
+                {
+                    "role": "system",
+                    "content": "You are a helpful assistant who good at math",
+                },
+                {"role": "user", "content": prompt},
+            ]
+            prompt_text = tokenizer.apply_chat_template(
+                messages,
+                tokenize=False,
+                add_generation_prompt=True,
+            )
+            prompts.append(prompt_text)
+
+        sampling_params = SamplingParams(
+            n=1,
+            temperature=0.7,
+            top_p=0.9,
+            max_tokens=512,
+            stop_token_ids=stop_token_ids or None,
+        )
+
+        h_question_idx: List[int] = []
+        h_question: List[str] = []
+        h_hints: List[str] = []
+        h_ref_solution: List[str] = []
+        h_ref_answer: List[str] = []
+
+        for start in range(0, total, batch_size):
+            end = min(start + batch_size, total)
+            batch_prompts = prompts[start:end]
+            try:
+                outputs = llm.generate(batch_prompts, sampling_params)
+            except Exception as e:
+                print(
+                    f"[teacher_hints_vllm_single_gpu] Error generating batch "
+                    f"{start}-{end}: {e}"
+                )
+                # On failure, append empty hints for this batch to keep alignment.
+                for idx in range(start, end):
+                    h_question_idx.append(m_question_idx[idx])
+                    h_question.append(m_question[idx])
+                    h_hints.append("")
+                    h_ref_solution.append(m_ref_solution[idx])
+                    h_ref_answer.append(m_ref_answer[idx])
+                continue
+
+            for local_i, out in enumerate(outputs):
+                idx = start + local_i
+                response_text = out.outputs[0].text.strip()
+                try:
+                    hints = extract_hints(response_text)
+                except Exception as e:
+                    print(
+                        f"[teacher_hints_vllm_single_gpu] Error parsing hints at "
+                        f"idx {idx}: {e}"
+                    )
+                    hints = ""
+
+                h_question_idx.append(m_question_idx[idx])
+                h_question.append(m_question[idx])
+                h_hints.append(hints)
+                h_ref_solution.append(m_ref_solution[idx])
+                h_ref_answer.append(m_ref_answer[idx])
+
+        return (
+            h_question_idx,
+            h_question,
+            h_hints,
+            h_ref_solution,
+            h_ref_answer,
+        )
+
     def teacher_hints_self_parallel(
         self,
         model_path: str,
@@ -380,9 +511,51 @@ class TeacherCorrecter:
 
         if num_workers <= 1:
             print(
-                "[teacher_hints_self_parallel] num_workers <= 1; using single-GPU teacher_hints_self."
+                "[teacher_hints_self_parallel] num_workers <= 1; using single-GPU vLLM path."
             )
-            return self.teacher_hints_self(model_path)
+
+            # Use vLLM single-GPU helper to generate all hints in batched mode.
+            single_device_id: Optional[int] = None
+            if isinstance(device_ids, (list, tuple)) and len(device_ids) == 1:
+                single_device_id = device_ids[0]
+
+            (
+                h_question_idx,
+                h_question,
+                h_hints,
+                h_ref_solution,
+                h_ref_answer,
+            ) = self._teacher_hints_vllm_single_gpu(
+                model_path,
+                m_question_idx,
+                m_question,
+                m_answer,
+                m_ref_solution,
+                m_ref_answer,
+                device_id=single_device_id,
+                batch_size=32,
+            )
+
+            # Sort by original question index to restore deterministic order.
+            order = sorted(range(len(h_question_idx)), key=lambda i: h_question_idx[i])
+            h_question_idx_sorted: List[int] = [h_question_idx[i] for i in order]
+            h_question_sorted: List[str] = [h_question[i] for i in order]
+            h_hints_sorted: List[str] = [h_hints[i] for i in order]
+            h_ref_solution_sorted: List[str] = [h_ref_solution[i] for i in order]
+            h_ref_answer_sorted: List[str] = [h_ref_answer[i] for i in order]
+
+            # Final single save, mirroring the parallel multi-GPU behavior.
+            print("saving final hints (parallel vLLM)...")
+            self.file.save_hints(
+                h_question_sorted,
+                h_hints_sorted,
+                h_ref_solution_sorted,
+                h_ref_answer_sorted,
+                h_question_idx_sorted,
+                m_answer,
+                m_entropy,
+            )
+            return True
 
         indices = list(range(total))
         shard_size = (total + num_workers - 1) // num_workers
