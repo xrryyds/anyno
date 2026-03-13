@@ -127,6 +127,8 @@ class TeacherCorrecter:
         m_answer: Sequence[str],
         m_ref_solution: Sequence[str],
         m_ref_answer: Sequence[str],
+        worker_tag: Optional[str] = None,
+        log_every: int = 5,
     ) -> Tuple[List[int], List[str], List[str], List[str], List[str]]:
         """Core local-model hint generation over a subset of indices.
 
@@ -140,7 +142,12 @@ class TeacherCorrecter:
         h_ref_solution: List[str] = []
         h_ref_answer: List[str] = []
 
-        for idx in indices:
+        if worker_tag is None:
+            worker_tag = "[teacher_hints_self]"
+
+        total = len(indices)
+
+        for local_idx, idx in enumerate(indices):
             prompt = TEACHER_CORRECT_PROMPT.format(
                 problem=m_question[idx],
                 student_answer=m_answer[idx],
@@ -189,7 +196,7 @@ class TeacherCorrecter:
 
                 hints = extract_hints(response)
             except Exception as e:
-                print(f"[teacher_hints_self] Error at idx {idx}: {e}")
+                print(f"{worker_tag} Error at idx {idx}: {e}")
                 hints = ""
 
             h_question_idx.append(q_idx)
@@ -197,6 +204,11 @@ class TeacherCorrecter:
             h_hints.append(hints)
             h_ref_solution.append(m_ref_solution[idx])
             h_ref_answer.append(m_ref_answer[idx])
+
+            if (local_idx + 1) % max(log_every, 1) == 0:
+                print(
+                    f"{worker_tag} processed {local_idx + 1}/{total} items..."
+                )
 
         return (
             h_question_idx,
@@ -273,6 +285,8 @@ class TeacherCorrecter:
             m_answer,
             m_ref_solution,
             m_ref_answer,
+            worker_tag="[teacher_hints_self]",
+            log_every=5,
         )
 
         # Accumulate for compatibility with existing checkpoint-saving logic.
@@ -432,6 +446,9 @@ class TeacherCorrecter:
 
         # Final single save (no per-10-item checkpointing in parallel mode)
         print("saving final hints (parallel)...")
+        print(
+            f"[teacher_hints_self_parallel] Completed generating hints for {total} items across {len(args_list)} workers."
+        )
         self.file.save_hints(
             h_question_sorted,
             h_hints_sorted,
@@ -854,7 +871,8 @@ def _teacher_hints_shard_worker(args):
 
     # Use a temporary TeacherCorrecter instance only for access to the helper.
     tmp = TeacherCorrecter()
-    return tmp._generate_hints_for_indices(
+    worker_tag = f"[teacher_hints worker {local_rank}]"
+    result = tmp._generate_hints_for_indices(
         model,
         tokenizer,
         indices,
@@ -863,7 +881,15 @@ def _teacher_hints_shard_worker(args):
         m_answer,
         m_ref_solution,
         m_ref_answer,
+        worker_tag=worker_tag,
+        log_every=5,
     )
+
+    print(
+        f"[teacher_hints worker {local_rank}] completed {len(indices)} items."
+    )
+
+    return result
 
 
 if __name__ == "__main__":
