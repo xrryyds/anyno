@@ -6,7 +6,7 @@ sft                 699/7474
 
 
                     ******
-ds                 1704(706)/7473  572(239)/7473
+ds                 1517/7473      412/7473
 ds(EHC_3)(300)     1610/7473      537/7473
 ds(EHC_5)(300)     1631/7473      556/7473
 ##############################################
@@ -86,5 +86,5 @@ DS (EHC)
 
 
 
-❯ 我代码流程如下：先让math500通过take_exam进行测试，收集做错的题目和做对的题目，做对的题目用gen_vocab生成vocab。做错的题目通过外部模型提示hints，收集在hints下能做对的推理路径，通过gen 
-  _IRDCL_dataset_v2(8, 0, 50)生成数据集，然后run_sira_training_v3(model_path=model_path,real_data_epochs=50)让他学习hints，并最小程度减少知识遗忘                                        
+MATH + GSM8K train 上分别做训练和测试
+（MATH + GSM8K）训练，（MATH + GSM8K + MATH500 + AIME +  LiveMath + Olympiad）                                   
