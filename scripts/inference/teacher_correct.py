@@ -211,7 +211,7 @@ class TeacherCorrecter:
                     input_text,
                     return_tensors="pt",
                     truncation=True,
-                    max_length=2048,
+                    max_length=4096,
                 ).to(model.device)
 
                 with torch.no_grad():
@@ -595,7 +595,7 @@ class TeacherCorrecter:
                 trust_remote_code=True,
                 tensor_parallel_size=1,
                 gpu_memory_utilization=0.9,
-                max_model_len=2048,
+                max_model_len=4096,
                 enforce_eager=True,
                 dtype="bfloat16",
             )
