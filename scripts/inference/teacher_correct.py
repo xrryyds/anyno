@@ -607,6 +607,7 @@ class TeacherCorrecter:
 
         total = len(m_question)
         prompts: List[str] = []
+        processed = 0
 
         for idx in range(total):
             prompt = TEACHER_CORRECT_PROMPT.format(
@@ -645,6 +646,7 @@ class TeacherCorrecter:
         for start in range(0, total, batch_size):
             end = min(start + batch_size, total)
             batch_prompts = prompts[start:end]
+            batch_count = end - start
             try:
                 outputs = llm.generate(batch_prompts, sampling_params)
             except Exception as e:
@@ -659,25 +661,30 @@ class TeacherCorrecter:
                     h_hints.append("")
                     h_ref_solution.append(m_ref_solution[idx])
                     h_ref_answer.append(m_ref_answer[idx])
-                continue
+            else:
+                for local_i, out in enumerate(outputs):
+                    idx = start + local_i
+                    response_text = out.outputs[0].text.strip()
+                    try:
+                        hints = extract_hints(response_text)
+                    except Exception as e:
+                        print(
+                            f"[teacher_hints_vllm_single_gpu] Error parsing hints at "
+                            f"idx {idx}: {e}"
+                        )
+                        hints = ""
 
-            for local_i, out in enumerate(outputs):
-                idx = start + local_i
-                response_text = out.outputs[0].text.strip()
-                try:
-                    hints = extract_hints(response_text)
-                except Exception as e:
-                    print(
-                        f"[teacher_hints_vllm_single_gpu] Error parsing hints at "
-                        f"idx {idx}: {e}"
-                    )
-                    hints = ""
+                    h_question_idx.append(m_question_idx[idx])
+                    h_question.append(m_question[idx])
+                    h_hints.append(hints)
+                    h_ref_solution.append(m_ref_solution[idx])
+                    h_ref_answer.append(m_ref_answer[idx])
 
-                h_question_idx.append(m_question_idx[idx])
-                h_question.append(m_question[idx])
-                h_hints.append(hints)
-                h_ref_solution.append(m_ref_solution[idx])
-                h_ref_answer.append(m_ref_answer[idx])
+            processed += batch_count
+            print(
+                f"[teacher_hints_self] (vLLM) processed {processed}/{total} items "
+                f"({processed / total:.2%})"
+            )
 
         return (
             h_question_idx,
