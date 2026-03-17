@@ -6,8 +6,8 @@ import logging
 from tqdm import tqdm
 from scripts import run_sira_training_v2, run_sira_training_v3
 from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM, 
+    AutoTokenizer,
+    AutoModelForCausalLM,
     set_seed
 )
 from peft import PeftModel
@@ -15,14 +15,14 @@ from peft import PeftModel
 
 from scripts import TakeExam, TeacherCorrecter
 from utils import (
-    FileIOUtils, 
-    remove_null_hints, 
-    filter_json_by_question_idx, 
+    FileIOUtils,
+    remove_null_hints,
+    filter_json_by_question_idx,
     generate_irdcl_dataset,
     generate_irdcl_datase_v2,
     remove_null_hints,
 )
-from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset
+from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset, LiveMathBench
 
 
 # =====================================================
@@ -390,9 +390,9 @@ def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:st
     question = data.problems
     solution = data.solutions
     answer = data.answers
-    
+
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
-    
+
     take_exam = None
     if lora_path:
         take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
@@ -402,6 +402,29 @@ def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:st
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
+def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
+    """Run an exam on the LiveMathBench-en dataset.
+
+    Args:
+        lora_path: Optional LoRA adapter path; if provided, exam runs with LoRA.
+        max_size: Optionally limit the number of questions for quick debugging.
+    """
+    data = LiveMathBench(split="test", max_size=max_size)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+
+    logger.info(f"LiveMathBench dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path=lora_path)
+    else:
+        take_exam = TakeExam(model_path)
+
+    question_idx = list(range(len(question)))
     take_exam.exam(question, solution, answer, question_idx)
 
 
