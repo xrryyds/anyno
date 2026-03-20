@@ -532,7 +532,7 @@ def run_sira_training_v2(
     device_num: int = 1,
     spilt: float = 0.5,
     # 默认值可以设为您期望的停止阈值
-    target_mode_b: float = 0.07,
+    target_mode_b: float = 0.1,
     lora_path: Optional[str] = None,
 ):
     current_file_path = os.path.abspath(__file__)
