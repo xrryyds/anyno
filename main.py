@@ -1151,8 +1151,8 @@ if __name__ == "__main__":
     # teacher.teacher_hints_self(model_path=model_path)
 
     # 5. student correct
-    student_correct()
-    exam_roll_recheck_hints()
+    # student_correct()
+    # exam_roll_recheck_hints()
 
     # ** sft
     # sft_on_adv_Data()
@@ -1161,13 +1161,13 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 1)
     # gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training(model_path=model_path)
-    # run_sira_training_v2(model_path=model_path,real_data_epochs=60)
+    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
-    # student_take_exam_Math_sub(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0313_1717/checkpoint-896")
+    # student_take_exam_Math_sub(train=True, lora_path="output/sira_sft_10ep_0322_2010")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=True, lora_path="output/sira_sft_60ep_0319_1911")
     # teacher.teacher_mark_paper_with_save()
-    # # count_common_questions()
+    # count_common_questions()
     # teacher.check_answers_equivalence()
     # # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
@@ -1180,10 +1180,10 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/root/autodl-tmp/CELPO/output/sira_sft_10ep_0319_1708")
+    # exam_roll_recheck_mistake(True, "output/sira_sft_10ep_0322_2010")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
-    # analyze_knowledge_change("datasets/exam/corr_DS_gsm8k.json")
+    # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
 
     ####################################################################################################
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
