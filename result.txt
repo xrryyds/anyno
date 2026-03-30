@@ -87,4 +87,8 @@ DS (EHC)
 
 
 MATH + GSM8K train 上分别做训练和测试
-（MATH + GSM8K）训练，（MATH + GSM8K + MATH500 + AIME +  LiveMath + Olympiad）                                   
+（MATH + GSM8K）训练，（MATH + GSM8K + MATH500 + AIME +  LiveMath + Olympiad）       
+
+
+
+conda env create -f environment.yml
