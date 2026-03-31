@@ -25,6 +25,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 全局序列长度超参数（训练/推理可统一调节）
+MAX_SEQ_LENGTH = 2048
+
 # Qwen-Math 的标准 System Prompt，这对激发数学能力至关重要
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
@@ -70,8 +73,9 @@ class TakeExam:
         self.seed = 42
         set_all_seeds(self.seed)  # 再次确保种子设置
 
-        self.MAX_NEW_TOKENS = 2048
-        self.MAX_MODEL_LEN = 2048
+        # 全局推理长度超参数（可以按需调整）
+        self.MAX_NEW_TOKENS = MAX_SEQ_LENGTH
+        self.MAX_MODEL_LEN = MAX_SEQ_LENGTH
 
         self.LOCAL_MODEL_PATH = model_path
         self.use_lora = use_lora

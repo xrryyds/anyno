@@ -35,6 +35,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 全局训练序列长度超参数（collator 截断用）
+MAX_SEQ_LENGTH = 2048
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
 
@@ -235,7 +238,7 @@ tracker = TrainingMetricsTracker()
 
 
 class FixedModeCollator:
-    def __init__(self, tokenizer, max_length: int = 2048):
+    def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
         self.tokenizer = tokenizer
         self.max_length = max_length
         if self.tokenizer.pad_token_id is None:

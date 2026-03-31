@@ -15,6 +15,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# 全局推理序列长度超参数（评测用）
+MAX_SEQ_LENGTH = 2048
+
 def extract_answer(text):
     if not text: return ""
     
@@ -74,9 +77,10 @@ class StudentEvaluator:
             disable_log_stats=True
         )
         
+        # 使用全局推理长度超参数
         self.sampling_params = SamplingParams(
             temperature=0.0, # 评测通常用 Greedy Search (temp=0)
-            max_tokens=2048, # 数学题通常需要长推理
+            max_tokens=MAX_SEQ_LENGTH,
         )
         
         self.adapter_name = "grpo_adapter"

@@ -20,6 +20,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore", category=FutureWarning)
 
+# 全局训练序列长度超参数（SFT collator 截断用）
+MAX_SEQ_LENGTH = 2048
+
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 
@@ -32,7 +35,7 @@ def setup_logging(output_dir):
 
 
 class SFTCollator:
-    def __init__(self, tokenizer, max_length: int = 2048):
+    def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
         self.tokenizer = tokenizer
         self.max_length = max_length
         if self.tokenizer.pad_token_id is None:

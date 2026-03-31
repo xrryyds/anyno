@@ -16,6 +16,9 @@ os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+# 全局序列长度超参数（GRPO 推理/训练用）
+MAX_SEQ_LENGTH = 1024
+
 # =====================================================
 # 1. 工具函数
 # =====================================================
@@ -130,7 +133,7 @@ def run_grpo_training(
         bf16=True,                  
         dataloader_num_workers=4,
         use_vllm=False,
-        max_completion_length=1024,
+        max_completion_length=MAX_SEQ_LENGTH,
         num_train_epochs=1,
         logging_steps=1,  # 每步打印，方便观察
         save_steps=100,
