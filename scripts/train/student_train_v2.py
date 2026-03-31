@@ -398,6 +398,12 @@ class SequentialTrainer(Trainer):
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
                 anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
 
+                # symmetric regularization around beta (raw_ref)
+                ref_detached = raw_ref.detach()
+                rel_diff = (raw_curr - ref_detached) / (ref_detached + eps)
+                sym_reg = rel_diff * rel_diff
+                anchor_loss_with_kl = anchor_loss_with_kl + self.hint_config.beta_reg_lambda * sym_reg
+
                 suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": instance_suppress.item()}
 
