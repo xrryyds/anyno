@@ -57,6 +57,7 @@ class HintSFTConfig:
     gate_threshold: float = 0.1
     gate_slope: float = 3.0
     split_r: float = 0.5
+    beta_reg_lambda = 0.1
     
     # 核心超参
     anchor_loss_weight_k: float = 1
