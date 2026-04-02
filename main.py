@@ -42,7 +42,8 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
-model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+# model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 
 def exam_roll_recheck_hints(lora_path: str = None):
     try:
