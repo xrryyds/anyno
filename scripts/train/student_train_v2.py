@@ -49,6 +49,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 
 # ==========================================
 # 1. 配置与工具类 (已精简)
+# save_total_limit=2
 # ==========================================
 
 @dataclass
