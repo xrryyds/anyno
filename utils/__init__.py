@@ -1,5 +1,6 @@
 from .data_utils import *
 from .IO_utils import FileIOUtils
+from .model_utils import *
 
 __all__= [
     "extract_boxed_content",
@@ -17,5 +18,6 @@ __all__= [
     "generate_irdcl_dataset",
     "remove_null_hints",
     "generate_irdcl_dataset_syn",
-    "generate_irdcl_dataset_v2"
+    "generate_irdcl_dataset_v2",
+    "merge_lora_to_base_model"
 ]

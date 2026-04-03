@@ -21,6 +21,7 @@ from utils import (
     generate_irdcl_dataset,
     generate_irdcl_datase_v2,
     remove_null_hints,
+    merge_lora_to_base_model
 )
 from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset, LiveMathBench
 
@@ -43,7 +44,8 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
-model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1"
 
 def exam_roll_recheck_hints(lora_path: str = None):
     try:
@@ -1143,7 +1145,7 @@ if __name__ == "__main__":
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake() 
+    exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1162,9 +1164,9 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 1)
     # gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training(model_path=model_path)
-    run_sira_training_v2(model_path=model_path,real_data_epochs=10)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # 4. check 
-    # student_take_exam_Math_sub(train=True, lora_path="output/sira_sft_10ep_0322_2010")
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=True, lora_path="output/sira_sft_60ep_0319_1911")
     # teacher.teacher_mark_paper_with_save()
@@ -1181,7 +1183,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "output/sira_sft_10ep_0322_2010")
+    # exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1189,4 +1191,5 @@ if __name__ == "__main__":
     ####################################################################################################
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
+    # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
 # 
