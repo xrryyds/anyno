@@ -1,7 +1,7 @@
 import os
 # 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+from transformers import BitsAndBytesConfig
 
 import sys
 import json
@@ -17,14 +17,14 @@ from typing import Dict, List, Optional
 from datasets import Dataset
 from torch.utils.data import DataLoader, SequentialSampler
 from transformers import (
-    AutoTokenizer,
-    AutoModelForCausalLM,
-    Trainer,
+    AutoTokenizer, 
+    AutoModelForCausalLM, 
+    Trainer, 
     TrainingArguments,
     TrainerCallback,
-    set_seed,
+    set_seed
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
 # Logger 配置
@@ -49,55 +49,42 @@ except ImportError:
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # ==========================================
-# 1. 配置与工具类（沿用 v2）
+# 1. 配置与工具类
 # ==========================================
-
 
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
-    gate_threshold: float = 0.3
+    gate_threshold: float = 0.1
     gate_slope: float = 3.0
     split_r: float = 0.5
-
-    # 核心超参（v3 中 anchor 相关的不会参与 loss，仅保留字段以兼容日志与配置）
+    
+    # 核心超参
     anchor_loss_weight_k: float = 1
     suppress_max_scale: float = 1.0
     anchor_sigmoid_slope: float = 1000.0
     anchor_loss_tolerance: float = 1.00
-
-    # 仅保留 target_mode_b 作为早停标准
+    
     target_mode_b: Optional[float] = None
-
+    
     metrics_log_interval: int = 8
     model_path: str = ""
     data_path: str = ""
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
-    kl_lambda: float = 0.5  # KL(teacher||student) weight for mode_b
-    kl_beta: float = 0.05   # v3 中不再使用 anchor KL，但字段保留
-
-    # Anchor prior over vocab
-    lambda_anchor: float = 0.1  # weight for anchor prior KL term
-    prior_gamma: float = 1.0    # sharpness of vocab prior derived from anchor_vocab_loss
-
+    kl_lambda: float = 0.5   # KL(teacher||student) weight for mode_b
+    kl_beta: float = 0.05    # KL(ref||student) weight for anchor
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding="utf-8")
+    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(file_handler)
-    return (
-        os.path.join(output_dir, "step_metrics.jsonl"),
-        os.path.join(output_dir, "epoch_metrics.jsonl"),
-    )
-
+    return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
 
 # ==========================================
-# 2. Metrics Tracker（沿用 v2，anchor 统计在 v3 中会为 0）
+# 2. Metrics Tracker
 # ==========================================
-
-
 class TrainingMetricsTracker:
     def __init__(self):
         self.reset_window()
@@ -107,11 +94,9 @@ class TrainingMetricsTracker:
         self.win_loss, self.win_steps = 0.0, 0
         self.win_gate_values, self.win_anchor_losses_weighted = [], []
         self.win_anchor_losses_raw = []
-        self.win_mode_b_losses, self.win_mode_b_raw = [], []
-        # Anchor prior loss on Mode-B samples
-        self.win_anchor_prior = []
+        self.win_mode_b_losses, self.win_mode_b_raw = [], [] 
         self.win_counts = {"anchor": 0, "mode_b": 0}
-        self.win_beta_values = []
+        self.win_beta_values = [] 
         self.win_alpha_values = []
 
     def reset_epoch(self):
@@ -119,8 +104,6 @@ class TrainingMetricsTracker:
         self.ep_gate_values, self.ep_anchor_losses_weighted = [], []
         self.ep_anchor_losses_raw = []
         self.ep_mode_b_losses, self.ep_mode_b_raw = [], []
-        # Anchor prior loss on Mode-B samples
-        self.ep_anchor_prior = []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
         self.ep_beta_values = []
         self.ep_alpha_values = []
@@ -130,23 +113,21 @@ class TrainingMetricsTracker:
         self.win_steps += 1
         self.ep_loss += loss
         self.ep_steps += 1
-
+        
         if current_beta is not None:
-            self.win_beta_values.append(current_beta)
-            self.ep_beta_values.append(current_beta)
-
+             self.win_beta_values.append(current_beta)
+             self.ep_beta_values.append(current_beta)
+        
         if current_alpha is not None:
-            self.win_alpha_values.append(current_alpha)
-            self.ep_alpha_values.append(current_alpha)
-
+             self.win_alpha_values.append(current_alpha)
+             self.ep_alpha_values.append(current_alpha)
+        
         for meta, info in zip(metadata, debug_info):
-            if info is None:
-                continue
+            if info is None: continue 
             mode = meta.get("mode")
             gate_val = info.get("gate", 0.0)
             loss_contrib = info["loss_contrib"]
             raw_loss = info.get("raw_loss", 0.0)
-            anchor_prior = info.get("anchor_prior")
 
             if mode == "mode_b_generation":
                 self.win_counts["mode_b"] += 1
@@ -157,92 +138,46 @@ class TrainingMetricsTracker:
                 self.ep_gate_values.append(gate_val)
                 self.win_mode_b_raw.append(raw_loss)
                 self.ep_mode_b_raw.append(raw_loss)
-                if anchor_prior is not None:
-                    self.win_anchor_prior.append(anchor_prior)
-                    self.ep_anchor_prior.append(anchor_prior)
-
+            
             elif mode == "pure_sft_anchor":
-                # v3 中 loss 不再显式使用 anchor，但数据与日志结构保持兼容
                 self.win_counts["anchor"] += 1
                 self.ep_counts["anchor"] += 1
                 self.win_anchor_losses_weighted.append(loss_contrib)
                 self.ep_anchor_losses_weighted.append(loss_contrib)
                 self.win_anchor_losses_raw.append(raw_loss)
-                self.ep_anchor_losses_raw.append(raw_loss)
+                self.ep_anchor_losses_raw.append(raw_loss) 
 
-    def _calculate_stats(
-        self,
-        loss_sum,
-        steps,
-        gate_vals,
-        anchor_w,
-        anchor_raw,
-        mode_b,
-        mode_b_raw,
-        anchor_prior,
-        counts,
-        alpha_vals,
-        beta_vals,
-    ):
-        avg = lambda l: sum(l) / len(l) if l else 0.0
+    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w, anchor_raw, mode_b, mode_b_raw, counts, alpha_vals, beta_vals):
+        avg = lambda l: sum(l)/len(l) if l else 0.0
         return {
-            "avg_train_loss": loss_sum / max(steps, 1),
+            "avg_train_loss": loss_sum / max(steps, 1), 
             "avg_gate_value": avg(gate_vals),
-            "avg_anchor_loss_weighted": avg(anchor_w),
-            "avg_mode_b_loss": avg(mode_b),
-            "avg_final_alpha": avg(alpha_vals),
+            "avg_anchor_loss_weighted": avg(anchor_w), 
+            "avg_mode_b_loss": avg(mode_b), 
+            "avg_final_alpha": avg(alpha_vals),   
             "avg_mode_b_loss_raw": avg(mode_b_raw),
-            "avg_anchor_loss_raw": avg(anchor_raw),
-            "avg_anchor_prior_loss": avg(anchor_prior),
+            "avg_anchor_loss_raw": avg(anchor_raw),   
             "avg_dynamic_beta": avg(beta_vals),
-            "sample_counts": counts,
+            "sample_counts": counts
         }
 
     def get_window_stats(self):
-        return self._calculate_stats(
-            self.win_loss,
-            self.win_steps,
-            self.win_gate_values,
-            self.win_anchor_losses_weighted,
-            self.win_anchor_losses_raw,
-            self.win_mode_b_losses,
-            self.win_mode_b_raw,
-            self.win_anchor_prior,
-            self.win_counts,
-            self.win_alpha_values,
-            self.win_beta_values,
-        )
+        return self._calculate_stats(self.win_loss, self.win_steps, self.win_gate_values, self.win_anchor_losses_weighted, self.win_anchor_losses_raw, self.win_mode_b_losses, self.win_mode_b_raw, self.win_counts, self.win_alpha_values, self.win_beta_values)
 
     def get_epoch_stats(self):
-        return self._calculate_stats(
-            self.ep_loss,
-            self.ep_steps,
-            self.ep_gate_values,
-            self.ep_anchor_losses_weighted,
-            self.ep_anchor_losses_raw,
-            self.ep_mode_b_losses,
-            self.ep_mode_b_raw,
-            self.ep_anchor_prior,
-            self.ep_counts,
-            self.ep_alpha_values,
-            self.ep_beta_values,
-        )
-
+        return self._calculate_stats(self.ep_loss, self.ep_steps, self.ep_gate_values, self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, self.ep_mode_b_losses, self.ep_mode_b_raw, self.ep_counts, self.ep_alpha_values, self.ep_beta_values)
 
 tracker = TrainingMetricsTracker()
 
-
 # ==========================================
-# 3. Data Collator（沿用 v2）
+# 3. Data Collator
 # ==========================================
-
-
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
         self.tokenizer = tokenizer
         self.max_length = max_length
         if self.tokenizer.pad_token_id is None:
-            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
     def __call__(self, batch):
         input_ids_batch, labels_batch = [], []
@@ -251,28 +186,20 @@ class FixedModeCollator:
         ref_betas_batch = []
 
         for item in batch:
-            q = item["question"]
-            b = item.get("hints", "")
-            c = item.get("answer")
-            data_type = item.get("type", "anchor_data")
-            ref_betas_batch.append(item.get("ref_beta"))
+            q = item['question']
+            b = item.get('hints', "")
+            c = item.get('answer')
+            data_type = item.get('type', 'anchor_data')
+            ref_betas_batch.append(item.get('ref_beta'))
 
-            messages = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": str(q)},
-            ]
-            prompt_str = self.tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
+            messages = [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": str(q)}]
+            prompt_str = self.tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             prompt_ids = self.tokenizer(prompt_str, add_special_tokens=False).input_ids
             len_prompt = len(prompt_ids)
 
-            if data_type == "anchor_data":
+            if data_type == 'anchor_data':
                 mode_str = "pure_sft_anchor"
-                answer_ids = (
-                    self.tokenizer(str(c), add_special_tokens=False).input_ids
-                    + [self.tokenizer.eos_token_id]
-                )
+                answer_ids = self.tokenizer(str(c), add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + answer_ids
                 h_mask = [0] * len(full_ids)
                 a_mask = [0] * len(full_ids)
@@ -281,32 +208,22 @@ class FixedModeCollator:
             else:
                 mode_str = "mode_b_generation"
                 target_text = GEN_HINTS_WIH_ANSWER.format(hints=b, answer=c)
-                target_ids = (
-                    self.tokenizer(target_text, add_special_tokens=False).input_ids
-                    + [self.tokenizer.eos_token_id]
-                )
+                target_ids = self.tokenizer(target_text, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
                 full_ids = prompt_ids + target_ids
-                hint_only_text = f"{b}"
-                hint_ids_only = self.tokenizer(
-                    hint_only_text, add_special_tokens=False
-                ).input_ids
+                hint_only_text = f"{b}" 
+                hint_ids_only = self.tokenizer(hint_only_text, add_special_tokens=False).input_ids
                 len_hint_part = len(hint_ids_only)
                 h_mask, a_mask = [0] * len(full_ids), [0] * len(full_ids)
                 hint_end_idx = min(len_prompt + len_hint_part, len(full_ids))
-                for i in range(len_prompt, hint_end_idx):
-                    h_mask[i] = 1
-                for i in range(hint_end_idx, len(full_ids)):
-                    a_mask[i] = 1
+                for i in range(len_prompt, hint_end_idx): h_mask[i] = 1
+                for i in range(hint_end_idx, len(full_ids)): a_mask[i] = 1
 
             if len(full_ids) > self.max_length:
-                full_ids = full_ids[: self.max_length]
-                h_mask = h_mask[: self.max_length]
-                a_mask = a_mask[: self.max_length]
+                full_ids = full_ids[:self.max_length]
+                h_mask = h_mask[:self.max_length]
+                a_mask = a_mask[:self.max_length]
 
-            labels = [
-                full_ids[i] if (h_mask[i] or a_mask[i]) else -100
-                for i in range(len(full_ids))
-            ]
+            labels = [full_ids[i] if (h_mask[i] or a_mask[i]) else -100 for i in range(len(full_ids))]
             input_ids_batch.append(torch.tensor(full_ids, dtype=torch.long))
             labels_batch.append(torch.tensor(labels, dtype=torch.long))
             hint_masks_batch.append(torch.tensor(h_mask, dtype=torch.float32))
@@ -315,56 +232,23 @@ class FixedModeCollator:
             metadata_batch.append({"mode": mode_str})
 
         return {
-            "input_ids": torch.nn.utils.rnn.pad_sequence(
-                input_ids_batch,
-                batch_first=True,
-                padding_value=self.tokenizer.pad_token_id,
-            ),
-            "labels": torch.nn.utils.rnn.pad_sequence(
-                labels_batch, batch_first=True, padding_value=-100
-            ),
-            "attention_mask": torch.nn.utils.rnn.pad_sequence(
-                attention_mask_batch, batch_first=True, padding_value=0
-            ),
-            "hint_masks": torch.nn.utils.rnn.pad_sequence(
-                hint_masks_batch, batch_first=True, padding_value=0.0
-            ),
-            "answer_masks": torch.nn.utils.rnn.pad_sequence(
-                answer_masks_batch, batch_first=True, padding_value=0.0
-            ),
+            "input_ids": torch.nn.utils.rnn.pad_sequence(input_ids_batch, batch_first=True, padding_value=self.tokenizer.pad_token_id),
+            "labels": torch.nn.utils.rnn.pad_sequence(labels_batch, batch_first=True, padding_value=-100),
+            "attention_mask": torch.nn.utils.rnn.pad_sequence(attention_mask_batch, batch_first=True, padding_value=0),
+            "hint_masks": torch.nn.utils.rnn.pad_sequence(hint_masks_batch, batch_first=True, padding_value=0.0),
+            "answer_masks": torch.nn.utils.rnn.pad_sequence(answer_masks_batch, batch_first=True, padding_value=0.0),
             "metadata": metadata_batch,
             "ref_betas": ref_betas_batch,
         }
 
-
 # ==========================================
-# 4. SIRA Trainer v3（无 anchor，加入 vocab 级 anchor 向量）
+# 4. SIRA Trainer
 # ==========================================
-
-
-class SequentialTrainerV3(Trainer):
-    """v3 版本：
-
-    - Mode B 的 token 级 CE + KL(teacher‖student) 与 v2 完全一致；
-    - 不再显式使用样本级 anchor loss；
-    - 使用预先计算好的 avg_loss_per_vocab 构造一个 vocab 级先验分布 q(v)，
-      在 Mode B token 的 logits 上增加 KL(q‖p_student) 作为 anchor prior 项，
-      使得梯度方向在 token/logit 级别真正受到 anchor 向量的影响。
-    """
-
-    def __init__(self, hint_config: HintSFTConfig, anchor_vocab_loss: torch.Tensor, *args, **kwargs):
+class SequentialTrainer(Trainer):
+    def __init__(self, hint_config: HintSFTConfig, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
         self.running_gen_loss = 1.0
-        # anchor_vocab_loss: 预先计算好的 avg_loss_per_vocab, shape [V]
-        # 在 compute_loss 中会搬到当前设备/精度
-        if not isinstance(anchor_vocab_loss, torch.Tensor):
-            anchor_vocab_loss = torch.tensor(anchor_vocab_loss, dtype=torch.float32)
-        # Keep raw anchor loss vector on CPU
-        self.anchor_vocab_loss = anchor_vocab_loss.detach().clone()
-        # Precompute a logit-level prior q(v) from anchor_vocab_loss; moved to device/dtype in compute_loss
-        self._anchor_prior_q = None
-        self._anchor_prior_log_q = None
 
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
@@ -385,140 +269,97 @@ class SequentialTrainerV3(Trainer):
         metadata = inputs.pop("metadata")
         ref_betas = inputs.pop("ref_betas")
 
-        # Teacher logits（同 v2）
         with torch.no_grad():
             with self.model.disable_adapter():
-                ref_logits = model(**inputs).get("logits")
+                ref_logits = model(**inputs).get("logits")[..., :-1, :].contiguous()
 
         outputs = model(**inputs)
         logits = outputs.get("logits")
         labels = inputs.get("labels")
 
-        # v3：返回 mode b 的平均 data loss、anchor prior loss 以及 debug 信息
-        device = logits.device
-        dtype = logits.dtype
-        mode_b_mean_loss, anchor_prior_loss, debug_info_list = self.adaptive_gating_loss(
+        loss, debug_info_list, current_alpha, dynamic_beta = self.adaptive_gating_loss(
             logits, ref_logits, labels, hint_masks, answer_masks, ref_betas
         )
-        del ref_logits, logits, outputs
-
-        # 将 anchor prior KL 标量与原有 mode-b data loss 相加
-        loss = mode_b_mean_loss + self.hint_config.lambda_anchor * anchor_prior_loss
 
         if self.model.training:
-            # v3 中不再显式使用 alpha/beta，这里传 None
-            tracker.update(loss.item(), metadata, debug_info_list, None, None)
+            tracker.update(loss.item(), metadata, debug_info_list, current_alpha, dynamic_beta)
+
+        # ======【防OOM核心】：及时清理庞大的中间 Logits 张量 ======
+        del ref_logits
+        del logits
+        if not return_outputs:
+            del outputs
+        # ==========================================================
 
         return (loss, outputs) if return_outputs else loss
 
-    def adaptive_gating_loss(
-        self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas
-    ):
-        """v3 版 gating loss，增加 vocab 级 anchor prior KL 项"""
+    @staticmethod
+    def _per_token_kl(logits_s, logits_t, chunk_size: int = 8192):
+        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V].
+        通过按 vocab 维度分块计算降低峰值显存占用。
+        """
+        # logits_s 需要梯度，logits_t 通常来自 no_grad 的 teacher
+        T, V = logits_s.shape
 
+        # 对 student / teacher 分别做 logsumexp，保留 token 维度上的归一化常数
+        logsumexp_s = torch.logsumexp(logits_s, dim=-1, keepdim=True)  # [T, 1]
+        logsumexp_t = torch.logsumexp(logits_t, dim=-1, keepdim=True)  # [T, 1]
+
+        # 存每个 token 的 KL(p_t || p_s)，与原实现保持形状一致 [T]
+        kl = torch.zeros(T, device=logits_s.device, dtype=logits_s.dtype)
+
+        # 沿着 vocab 维度分块，避免一次性构造 [T, V] 级别的大中间张量
+        for start in range(0, V, chunk_size):
+            end = min(start + chunk_size, V)
+
+            s_chunk = logits_s[:, start:end]  # [T, C]
+            t_chunk = logits_t[:, start:end]  # [T, C]
+
+            # 分块计算 log p_s, log p_t
+            log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
+            log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
+            p_t_chunk     = log_p_t_chunk.exp()        # [T, C]
+
+            # 累加该 chunk 对 KL 的贡献
+            kl = kl + (p_t_chunk * (log_p_t_chunk - log_p_s_chunk)).sum(dim=-1)
+
+            # 显式删除引用，帮助 PyTorch 更早释放显存
+            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_t_chunk
+
+        return kl
+
+    def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks, cached_betas):
         shift_logits = logits[..., :-1, :].contiguous()
-        shift_ref_logits = ref_logits[..., :-1, :].contiguous()
+        shift_ref_logits = ref_logits  # already sliced in compute_loss
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
-        device = shift_logits.device
-        vocab_size = shift_logits.size(-1)
-        del logits, ref_logits, labels, hint_masks, answer_masks
 
-        loss_fct = torch.nn.CrossEntropyLoss(reduction="none")
-        B = shift_logits.size(0)
-
-        # === 1) 预计算 anchor vocab prior q(v)（在当前 device/dtype 上） ===
-        if (
-            self._anchor_prior_q is None
-            or self._anchor_prior_q.device != device
-            or self._anchor_prior_q.dtype != shift_logits.dtype
-        ):
-            # 将 anchor_vocab_loss 对齐到当前模型 vocab 大小
-            anchor_vec = self.anchor_vocab_loss.to(device=device, dtype=shift_logits.dtype)
-            v_anchor = anchor_vec.size(0)
-            if v_anchor != vocab_size:
-                if v_anchor < vocab_size:
-                    pad_val = anchor_vec.mean()
-                    pad_size = vocab_size - v_anchor
-                    pad = pad_val.expand(pad_size)
-                    logger.warning(
-                        "Anchor vocab loss length (%d) < model vocab size (%d); "
-                        "padding with mean value %.6f for new tokens.",
-                        v_anchor,
-                        vocab_size,
-                        pad_val.item(),
-                    )
-                    anchor_vec = torch.cat([anchor_vec, pad], dim=0)
-                else:
-                    logger.warning(
-                        "Anchor vocab loss length (%d) > model vocab size (%d); "
-                        "truncating extra entries.",
-                        v_anchor,
-                        vocab_size,
-                    )
-                    anchor_vec = anchor_vec[:vocab_size]
-
-            gamma = getattr(self.hint_config, "prior_gamma", 1.0)
-            # 较小的数值平移，避免数值溢出
-            q_logits = -gamma * anchor_vec
-            q = torch.softmax(q_logits, dim=-1).detach()
-            self._anchor_prior_q = q
-            self._anchor_prior_log_q = q.log()
-        else:
-            q = self._anchor_prior_q
-
-        # === 2) 标准 CE + teacher KL（与原 v3 保持一致），并在同一 pass 中计算每个样本的 anchor prior KL ===
+        loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
         token_losses_list = []
         kl_list = []
-        per_sample_anchor_prior = torch.zeros(B, device=device, dtype=shift_logits.dtype)
-        for j in range(B):
-            ls_j = shift_logits[j]   # [T, V]
-            lr_j = shift_ref_logits[j]  # [T, V]
-            token_losses_list.append(loss_fct(ls_j, shift_labels[j]))
-            # KL only on masked positions to avoid [T,V] intermediate
-            kl_j = torch.zeros(ls_j.size(0), device=ls_j.device, dtype=ls_j.dtype)
-            mask_j = (shift_h_masks[j] + shift_a_masks[j]).bool()
-            if mask_j.any():
-                idx = mask_j.nonzero(as_tuple=True)[0]
-                lps = torch.nn.functional.log_softmax(ls_j[idx], dim=-1)
-                lpt = torch.nn.functional.log_softmax(lr_j[idx], dim=-1).detach()
-                kl_j[idx] = (lpt.exp() * (lpt - lps)).sum(-1)
-                # Anchor prior KL on the same Mode-B positions: KL(q || p_student)
-                kl_prior_tokens_j = (q * (self._anchor_prior_log_q - lps)).sum(dim=-1)
-                per_sample_anchor_prior[j] = kl_prior_tokens_j.mean()
-            kl_list.append(kl_j)
-        token_losses = torch.stack(token_losses_list, dim=0)  # [B, T]
-        kl_ts = torch.stack(kl_list)                          # [B, T]
-        del shift_ref_logits
+        for j in range(shift_logits.size(0)):
+            token_losses_list.append(loss_fct(shift_logits[j], shift_labels[j]))
+            kl_list.append(self._per_token_kl(shift_logits[j], shift_ref_logits[j]))
+        token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
+        kl_ts = torch.stack(kl_list)  # [B, T]
 
         eps = 1e-8
         gen_losses = []
-        anchor_prior_losses = []
-        debug_map = {}
+        anchor_indices, gen_indices = [], []
+        debug_map, final_losses_map = {}, {}
 
-        # === 3) 对每个样本计算 Mode-B data loss 与 anchor prior KL ===
         for i in range(token_losses.size(0)):
             h_m = shift_h_masks[i]
             h_count = h_m.sum()
             if h_count > 0:
-                # Mode B 样本（与 v2 完全一致的定义）
+                gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
-                gate = torch.sigmoid(
-                    self.hint_config.gate_slope
-                    * (self.hint_config.gate_threshold - avg_h_loss.detach())
-                )
+                gate = torch.sigmoid(self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach()))
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
-                avg_a_loss = (
-                    (token_losses[i] * a_m).sum() / a_count
-                    if a_count > 0
-                    else torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
-                )
-                l_ce = (
-                    self.hint_config.hint_fixed_weight * avg_h_loss
-                    + gate * avg_a_loss
-                )
+                avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
+                l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
 
                 # KL(teacher||student): hint always, answer weighted by gate
                 kl_w = h_m + gate.detach() * a_m
@@ -526,47 +367,93 @@ class SequentialTrainerV3(Trainer):
                 l_gen = l_ce + self.hint_config.kl_lambda * l_kl
 
                 gen_losses.append(l_gen)
-
-                # === Anchor prior KL: 已在 KL pass 中按样本计算，这里直接读取 ===
-                l_anchor_prior_i = per_sample_anchor_prior[i]
-                anchor_prior_losses.append(l_anchor_prior_i)
-
+                final_losses_map[i] = l_gen
                 total_valid_tokens = h_count + a_count
-                raw_b_loss = (
-                    ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum())
-                    / total_valid_tokens
-                    if total_valid_tokens > 0
-                    else torch.tensor(0.0, device=device, dtype=token_losses[i].dtype)
-                )
-                debug_map[i] = {
-                    "gate": gate.item(),
-                    "loss_contrib": l_gen.item(),
-                    "raw_loss": raw_b_loss.item(),
-                    "anchor_prior": l_anchor_prior_i.item(),
-                }
+                raw_b_loss = ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum()) / total_valid_tokens if total_valid_tokens > 0 else torch.tensor(0.0)
+                debug_map[i] = {"gate": gate.item(), "loss_contrib": l_gen.item(), "raw_loss": raw_b_loss.item()}
             else:
-                # v3 中：无 hint 样本不参与此 loss，debug 中标记为 None
-                debug_map[i] = None
+                anchor_indices.append(i)
 
         if len(gen_losses) > 0:
-            mode_b_mean_loss = torch.stack(gen_losses).mean()
-            anchor_prior_loss = torch.stack(anchor_prior_losses).mean() if anchor_prior_losses else torch.tensor(0.0, device=device, dtype=mode_b_mean_loss.dtype)
-            self.running_gen_loss = (
-                0.9 * self.running_gen_loss + 0.1 * mode_b_mean_loss.item()
-            )
+            current_gen_loss_mean = torch.stack(gen_losses).mean()
+            self.running_gen_loss = 0.9 * self.running_gen_loss + 0.1 * current_gen_loss_mean.item()
+            scaling_gen_loss = current_gen_loss_mean.detach()
         else:
-            # 若本 batch 没有 mode B 样本，则退化为使用 running_gen_loss
-            mode_b_mean_loss = torch.tensor(self.running_gen_loss, device=device, dtype=shift_logits.dtype)
-            anchor_prior_loss = torch.tensor(0.0, device=device, dtype=shift_logits.dtype)
+            scaling_gen_loss = torch.tensor(self.running_gen_loss, device=logits.device)
+
+        batch_ref_anchor_loss_sum = torch.tensor(0.0, device=logits.device)
+        suppressed_anchor_losses = [] 
+        valid_anchor_count = 0
+
+        for idx in anchor_indices:
+            a_m = shift_a_masks[idx]
+            a_count = a_m.sum()
+            if a_count > 0:
+                raw_curr = (token_losses[idx] * a_m).sum() / a_count
+                cached = cached_betas[idx]
+                raw_ref = torch.tensor(cached, device=logits.device, dtype=logits.dtype) if cached is not None else raw_curr.detach()
+                batch_ref_anchor_loss_sum += raw_ref
+                valid_anchor_count += 1
+                instance_beta = raw_ref.detach() + 1e-6
+                target_threshold = instance_beta * self.hint_config.anchor_loss_tolerance
+                ratio = raw_curr.detach() / target_threshold
+                instance_suppress = torch.sigmoid((ratio - 1.0) * self.hint_config.anchor_sigmoid_slope) * self.hint_config.suppress_max_scale
+
+                # KL(ref||student) on answer only
+                kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
+                anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
+
+                suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
+                debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": instance_suppress.item()}
+
+        alpha_balance, batch_beta_val = 0.0, 0.0
+        if valid_anchor_count > 0:
+            batch_ref_mean = batch_ref_anchor_loss_sum / valid_anchor_count
+            batch_beta_val = batch_ref_mean.item()
+            safe_batch_beta = batch_ref_mean.detach() + 1e-6
+            # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
+            total_valid = valid_anchor_count + len(gen_indices)
+            r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
+            # vol_balance = (1 - r) / r
+            vol_balance = 1
+            raw_loss_ratio = scaling_gen_loss / safe_batch_beta
+            smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
+            alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
+
+        anchor_idx_ptr = 0
+        for idx in anchor_indices:
+            if idx in debug_map: 
+                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr] * alpha_balance
+                final_losses_map[idx] = final_anchor_loss
+                debug_map[idx]["loss_contrib"] = final_anchor_loss.item()
+                debug_map[idx]["final_balance_alpha"] = alpha_balance
+                anchor_idx_ptr += 1
 
         debug_info_list = [debug_map.get(i) for i in range(token_losses.size(0))]
-        return mode_b_mean_loss, anchor_prior_loss, debug_info_list
+        batch_size = token_losses.size(0)
+        raw_loss_vector = torch.stack([final_losses_map.get(i, torch.tensor(0.0, device=logits.device)) for i in range(batch_size)])
+        task_weights = torch.zeros(batch_size, device=raw_loss_vector.device)
+        if len(gen_indices) > 0: 
+            task_weights[gen_indices] = 0.5 / len(gen_indices)
+        if len(anchor_indices) > 0:
+            task_weights[anchor_indices] = 0.5 / len(anchor_indices)
 
+        weighted_loss_vec = raw_loss_vector * task_weights * 2.0 
+        if len(gen_indices) > 0:
+            is_mode_b = torch.zeros(batch_size, device=logits.device)
+            is_mode_b[gen_indices] = 1.0
+            loss_b_vec = weighted_loss_vec * is_mode_b
+            norm_b = torch.norm(loss_b_vec, p=2) 
+            norm_total = torch.norm(weighted_loss_vec, p=2)
+            final_loss = (weighted_loss_vec * (norm_b / norm_total).detach()).sum() if norm_total > 1e-6 else weighted_loss_vec.sum()
+        else:
+            final_loss = weighted_loss_vec.sum()
+
+        return final_loss, debug_info_list, alpha_balance, batch_beta_val
 
 # ==========================================
-# 5. Callbacks（沿用 v2，统计逻辑保持兼容）
+# 5. Callbacks
 # ==========================================
-
 
 class StepLogCallback(TrainerCallback):
     def __init__(self, log_file, log_interval, config: HintSFTConfig, output_dir: str):
@@ -577,31 +464,24 @@ class StepLogCallback(TrainerCallback):
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
         if state.global_step > 0 and state.global_step % self.log_interval == 0:
-            stats = tracker.get_window_stats()
+            stats = tracker.get_window_stats() 
             json_stats = stats.copy()
-            json_stats.update(
-                {
-                    "epoch": state.epoch,
-                    "global_step": state.global_step,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(json_stats) + "\n")
-
+            json_stats.update({"epoch": state.epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
+            with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(json_stats) + "\n")
+            
             log_parts = [f"[Step {state.global_step}]"]
             for k, v in stats.items():
                 val_str = f"{v:.6f}" if isinstance(v, float) else str(v)
                 log_parts.append(f"{k}: {val_str}")
             logger.info(" | ".join(log_parts))
-
+            
             tracker.reset_window()
 
-
 class LogicalEpochLogCallback(TrainerCallback):
-    """逻辑 Epoch 的日志打印 + 绝对值早停检查 (target_mode_b)"""
-
-    def __init__(self, log_file, steps_per_logical_epoch, config: HintSFTConfig, output_dir: str):
+    """
+    逻辑 Epoch 的日志打印 + 绝对值早停检查 (target_mode_b)
+    """
+    def __init__(self, log_file, steps_per_logical_epoch, config: HintSFTConfig, output_dir: str): 
         self.log_file = log_file
         self.steps_per_epoch = steps_per_logical_epoch
         self.config = config
@@ -612,132 +492,87 @@ class LogicalEpochLogCallback(TrainerCallback):
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
         if state.global_step > 0 and state.global_step % self.steps_per_epoch == 0:
             self.current_logical_epoch += 1
-
+            
             stats = tracker.get_epoch_stats()
-            stats.update(
-                {
-                    "logical_epoch": self.current_logical_epoch,
-                    "global_step": state.global_step,
-                    "timestamp": datetime.now().isoformat(),
-                }
-            )
-            with open(self.log_file, "a", encoding="utf-8") as f:
-                f.write(json.dumps(stats) + "\n")
-
-            logger.info("=" * 60)
-            logger.info(
-                f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***"
-            )
-            logger.info(
-                f"  Avg ModeB (Raw):{stats['avg_mode_b_loss_raw']:.4f}"
-            )
-
-            # === 仅检查 Epoch 级别的 Mode B Loss 是否达标 (target_mode_b) ===
-            epoch_mode_b_raw = stats.get("avg_mode_b_loss_raw", 999.0)
+            stats.update({"logical_epoch": self.current_logical_epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
+            with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(stats) + "\n")
+                
+            logger.info(f"="*60)
+            logger.info(f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***")
+            logger.info(f"  Avg ModeB (Raw):{stats['avg_mode_b_loss_raw']:.4f}")
+            
+            epoch_mode_b_raw = stats.get('avg_mode_b_loss_raw', 999.0)
             target = self.config.target_mode_b
-
+            
             if target is not None and epoch_mode_b_raw <= target:
-                logger.info(
-                    f"!!! TARGET REACHED: Epoch Mode B Loss ({epoch_mode_b_raw:.4f}) <= Target ({target}) !!!"
-                )
-
-                early_stop_dir = os.path.join(
-                    self.output_dir,
-                    f"checkpoint-target-reached-epoch-{self.current_logical_epoch}",
-                )
+                logger.info(f"!!! TARGET REACHED: Epoch Mode B Loss ({epoch_mode_b_raw:.4f}) <= Target ({target}) !!!")
+                
+                early_stop_dir = os.path.join(self.output_dir, f"checkpoint-target-reached-epoch-{self.current_logical_epoch}")
                 logger.info(f"Saving model to {early_stop_dir}...")
-
+                
                 try:
                     if model is not None:
                         model.save_pretrained(early_stop_dir)
-                        if tokenizer is not None:
-                            tokenizer.save_pretrained(early_stop_dir)
+                        if tokenizer is not None: tokenizer.save_pretrained(early_stop_dir)
                 except Exception as e:
                     logger.error(f"Failed to save model: {e}")
-
+                
                 self.early_stopped = True
                 control.should_training_stop = True
-
-            logger.info("=" * 60)
+            
+            logger.info(f"="*60)
             tracker.reset_epoch()
 
-
 # ==========================================
-# 6. Main Execution Function (v3)
+# 6. Main Execution Function
 # ==========================================
-
 
 def run_sira_training_v3(
     model_path: str,
-    anchor_vocab_loss_path: Optional[str] = None,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 8,
+    batch_size: int = 4,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
-    target_mode_b: float = 0.03,
+    target_mode_b: float = 0.1,
+    lora_path: Optional[str] = None,
 ):
-    """运行 v3 版 SIRA 训练：
-
-    - mode b 的损失形态与 v2 一致；
-    - 通过预计算的 avg_loss_per_vocab 作为 anchor 向量来引导梯度方向。
-    """
-
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path))
-    project_root = os.path.dirname(os.path.dirname(project_root))
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
+    project_root = os.path.dirname(os.path.dirname(project_root)) 
 
     if data_path is None:
-        data_path = os.path.join(
-            project_root, "CELPO", "datasets", "exam", "irdcl_data.json"
-        )
+        data_path = os.path.join(project_root, "CELPO", "datasets", "exam", "irdcl_data.json")
     if output_base_dir is None:
         output_base_dir = os.path.join(project_root, "CELPO", "output")
-
-    # 默认的 avg_loss_per_vocab 存放路径
-    if anchor_vocab_loss_path is None:
-        anchor_vocab_loss_path = os.path.join(
-            project_root, "CELPO", "datasets", "exam", "avg_loss_per_vocab.pt"
-        )
-
-    if not os.path.exists(anchor_vocab_loss_path):
-        raise FileNotFoundError(
-            f"Anchor vocab loss file not found at {anchor_vocab_loss_path}"
-        )
-
-    anchor_vocab_loss = torch.load(anchor_vocab_loss_path, map_location="cpu")
-
+        
     set_seed(42)
     tracker.reset_window()
     tracker.reset_epoch()
 
     hint_config = HintSFTConfig(
-        model_path=model_path,
-        data_path=data_path,
+        model_path=model_path, 
+        data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=spilt,
-        anchor_loss_weight_k=1,
-        suppress_max_scale=1.2,
-        anchor_sigmoid_slope=50.0,
-        anchor_loss_tolerance=1.001,
+        anchor_loss_weight_k=1, 
+        suppress_max_scale=1.0,
+        anchor_sigmoid_slope=50.0, 
+        anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
-        target_mode_b=target_mode_b,
+        target_mode_b=target_mode_b 
     )
-
-    output_dir = f"{hint_config.output_base_dir}/sira_sft_v3_{real_data_epochs}ep_{datetime.now().strftime('%m%d_%H%M')}"
+    
+    output_dir = f"{hint_config.output_base_dir}/sira_sft_{real_data_epochs}ep_{datetime.now().strftime('%m%d_%H%M')}"
     step_log_file, epoch_log_file = setup_logging(output_dir)
-
+    
     logger.info(f"Model Path: {hint_config.model_path}")
-    logger.info(f"Data Path: {hint_config.data_path}")
-    logger.info(f"Anchor Vocab Loss Path: {anchor_vocab_loss_path}")
     logger.info(f"Target Mode B Loss (Stop Condition): {target_mode_b}")
 
     try:
-        tokenizer = AutoTokenizer.from_pretrained(
-            hint_config.model_path, trust_remote_code=True, use_fast=False
-        )
+        tokenizer = AutoTokenizer.from_pretrained(hint_config.model_path, trust_remote_code=True, use_fast=False)
     except Exception as e:
         logger.error(f"Failed to load tokenizer: {e}")
         raise e
@@ -751,101 +586,114 @@ def run_sira_training_v3(
     total_samples = len(dataset)
     total_steps = total_samples // batch_size
     steps_per_logical_epoch = total_steps // real_data_epochs
-
+    
     if steps_per_logical_epoch < 1:
         steps_per_logical_epoch = 1
-        logger.warning(
-            f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1."
-        )
+        logger.warning(f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1.")
 
+    bnb_config = BitsAndBytesConfig(load_in_8bit= True)
+    # ======【免编译，防OOM核心】：8-bit 显存减半 + PyTorch原生加速 ======
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path,
-        torch_dtype=torch.bfloat16,
+        quantization_config = bnb_config,
         device_map="auto",
         trust_remote_code=True,
+        attn_implementation="sdpa"           # 采用 PyTorch 2+ 内置的高效缩放点积注意力，免装 flash-attn
     )
+    # ======================================================================
+
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
-    peft_config = LoraConfig(
-        r=16,
-        lora_alpha=32,
-        target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
-        task_type="CAUSAL_LM",
-        bias="none",
-    )
-    model = get_peft_model(model, peft_config)
+    # ================================
+    # LoRA resume support
+    # ================================
+    use_existing_lora = False
+    if lora_path is not None and str(lora_path).strip():
+        lora_path = str(lora_path).strip()
+        if os.path.exists(lora_path) and os.path.isdir(lora_path):
+            use_existing_lora = True
+            logger.info(f"Using existing LoRA from: {lora_path}")
+        else:
+            logger.warning(
+                f"Provided lora_path '{lora_path}' does not exist or is not a directory. "
+                "Falling back to fresh LoRA initialization."
+            )
+
+    if use_existing_lora:
+        try:
+            model = PeftModel.from_pretrained(model, lora_path)
+            logger.info(f"Successfully loaded existing LoRA weights from '{lora_path}'.")
+        except (OSError, ValueError) as e:
+            logger.error(
+                f"Failed to load LoRA weights from '{lora_path}': {e}. "
+                "Falling back to fresh LoRA initialization."
+            )
+            use_existing_lora = False
+
+    if not use_existing_lora:
+        peft_config = LoraConfig(
+            r=16, lora_alpha=32, target_modules=["q_proj", "k_proj", "v_proj", "o_proj"],
+            task_type="CAUSAL_LM", bias="none"
+        )
+        model = get_peft_model(model, peft_config)
+
     model.enable_input_require_grads()
 
+    # ======【防OOM核心】：8-bit 优化器进一步压缩显存 ======
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=1,
-        per_device_train_batch_size=batch_size // device_num,
-        gradient_accumulation_steps=2,
-        learning_rate=5e-5,
+        per_device_train_batch_size=batch_size // device_num, # 这里确保维持在你的 4，不破坏损失计算逻辑
+        gradient_accumulation_steps=1,                         
+        optim="paged_adamw_8bit",                              # 优化器状态显存占用极大缩小
+        learning_rate=5e-5, 
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
-        logging_steps=hint_config.metrics_log_interval,
-        save_strategy="steps",
+        logging_steps=hint_config.metrics_log_interval, 
+        save_strategy="steps",           
         save_steps=steps_per_logical_epoch,
         save_total_limit=2,
-        fp16=False,
-        bf16=True,
+        fp16=False, bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
-        dataloader_drop_last=True,
-        group_by_length=False,
-        report_to="none",
+        dataloader_drop_last=True, report_to="none"                 
     )
+    # ========================================================
 
-    step_callback = StepLogCallback(
-        step_log_file, hint_config.metrics_log_interval, hint_config, output_dir
-    )
-    epoch_callback = LogicalEpochLogCallback(
-        epoch_log_file, steps_per_logical_epoch, hint_config, output_dir
-    )
+    step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)
+    epoch_callback = LogicalEpochLogCallback(epoch_log_file, steps_per_logical_epoch, hint_config, output_dir)
 
-    trainer = SequentialTrainerV3(
+    trainer = SequentialTrainer(
         hint_config=hint_config,
-        anchor_vocab_loss=anchor_vocab_loss,
         model=model,
         args=training_args,
         train_dataset=dataset,
         data_collator=collator,
-        callbacks=[step_callback, epoch_callback],
+        callbacks=[step_callback, epoch_callback]
     )
 
-    logger.info("Starting SIRA v3 training...")
+    logger.info(f"Starting SIRA training...")
     trainer.train()
-
+    
     if not epoch_callback.early_stopped:
         trainer.save_model(output_dir)
         tokenizer.save_pretrained(output_dir)
-        logger.info(
-            f"Training finished normally (max epochs reached). Model saved to {output_dir}"
-        )
+        logger.info(f"Training finished normally (max epochs reached). Model saved to {output_dir}")
     else:
-        logger.info(
-            "Training finished with early stopping (Target Mode B Loss reached)."
-        )
-
+        logger.info(f"Training finished with early stopping (Target Loss reached).")
 
 if __name__ == "__main__":
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path))
+    project_root = os.path.dirname(os.path.dirname(current_file_path)) 
     project_root = os.path.dirname(os.path.dirname(project_root))
     default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
 
-    default_anchor_vocab_path = os.path.join(
-        project_root, "CELPO", "datasets", "exam", "avg_loss_per_vocab.pt"
-    )
-
     run_sira_training_v3(
         model_path=default_model_url,
-        anchor_vocab_loss_path=default_anchor_vocab_path,
-        batch_size=1,
+        batch_size=4,       # 注意：已为你保住了目标 batch=4，算法逻辑不会被破坏
         real_data_epochs=50,
-        target_mode_b=1.2,
+        target_mode_b=1.2   
     )

@@ -652,7 +652,7 @@ def run_sira_training_v2(
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
-        dataloader_drop_last=True, group_by_length=False, report_to="none"                 
+        dataloader_drop_last=True, report_to="none"                 
     )
 
     step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)
