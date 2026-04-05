@@ -38,11 +38,11 @@ from modelscope.hub.snapshot_download import snapshot_download
 current_file_path = os.path.abspath(__file__)
 project_root = os.path.dirname(os.path.dirname(current_file_path)) 
 # ModelScope 下载不需要 token (通常)
-save_dir = os.path.join(project_root, "CELPO", "model", "DS", "DeepSeek-R1-Distill-Qwen-14B")
+save_dir = os.path.join(project_root, "CELPO", "model", "DS", "DeepSeek-R1-Distill-Qwen-1.5B")
 
 print("正在从魔搭社区下载...")
 snapshot_download(
-    "deepseek-ai/DeepSeek-R1-Distill-Qwen-14B", # ModelScope 上的对应 ID
+    "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B", # ModelScope 上的对应 ID
     cache_dir=None,       # 设为 None 以便直接下载到 local_dir
     local_dir=save_dir,
     revision='master'

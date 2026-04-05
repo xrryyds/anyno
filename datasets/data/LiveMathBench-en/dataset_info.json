@@ -1,0 +1,61 @@
+{
+  "builder_name": "parquet",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "live_math_bench-en",
+  "dataset_size": 124332,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/llm-2025-sahara/LiveMathBench-en@352a3890e663d34c82b53e4855b981b134d6ad00/data/test-00000-of-00001.parquet": {
+      "num_bytes": 40369,
+      "checksum": null
+    }
+  },
+  "download_size": 40369,
+  "features": {
+    "question": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "answer": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "question_type": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "options": {
+      "feature": {
+        "dtype": "null",
+        "_type": "Value"
+      },
+      "_type": "List"
+    },
+    "original_subset": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "type": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 164701,
+  "splits": {
+    "test": {
+      "name": "test",
+      "num_bytes": 124332,
+      "num_examples": 340,
+      "dataset_name": "live_math_bench-en"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
