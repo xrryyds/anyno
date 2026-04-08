@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 # 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
-SAVE_TOTAL = 10
+SAVE_TOTAL = 2
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
@@ -532,7 +532,7 @@ def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 12,
+    batch_size: int = 4,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
@@ -558,9 +558,9 @@ def run_sira_training_v2(
         data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=spilt,
-        anchor_loss_weight_k=1, 
+        anchor_loss_weight_k=0.2, 
         suppress_max_scale=1.0,
-        anchor_sigmoid_slope=50, 
+        anchor_sigmoid_slope=5, 
         anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
@@ -642,7 +642,7 @@ def run_sira_training_v2(
         num_train_epochs=1,
         per_device_train_batch_size=batch_size // device_num,
         gradient_accumulation_steps=1,
-        learning_rate=5e-5, 
+        learning_rate=5e-6, 
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=hint_config.metrics_log_interval, 
