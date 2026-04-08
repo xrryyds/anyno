@@ -532,7 +532,7 @@ def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 4,
+    batch_size: int = 12,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
