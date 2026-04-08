@@ -36,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
+SAVE_TOTAL = 10
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
@@ -60,9 +61,9 @@ class HintSFTConfig:
     split_r: float = 0.5
     
     # 核心超参
-    anchor_loss_weight_k: float = 1
+    anchor_loss_weight_k: float = 0.2
     suppress_max_scale: float = 1.0
-    anchor_sigmoid_slope: float = 1000.0
+    anchor_sigmoid_slope: float = 100.0
     anchor_loss_tolerance: float = 1.00
     
     # === [关键修改] ===
@@ -531,7 +532,7 @@ def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 4,
+    batch_size: int = 12,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
@@ -559,7 +560,7 @@ def run_sira_training_v2(
         split_r=spilt,
         anchor_loss_weight_k=1, 
         suppress_max_scale=1.0,
-        anchor_sigmoid_slope=20, 
+        anchor_sigmoid_slope=50, 
         anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
@@ -646,8 +647,8 @@ def run_sira_training_v2(
         lr_scheduler_type="cosine",
         logging_steps=hint_config.metrics_log_interval, 
         save_strategy="steps",           
-        save_steps=steps_per_logical_epoch,
-        save_total_limit=2,
+        save_steps=steps_per_logical_epoch * (real_data_epochs/SAVE_TOTAL),
+        save_total_limit=SAVE_TOTAL,
         fp16=False, bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},

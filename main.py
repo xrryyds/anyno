@@ -44,10 +44,10 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
-# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1"
 # model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
-model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
+# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
 
 def exam_roll_recheck_hints(lora_path: str = None):
     try:
@@ -1145,14 +1145,14 @@ if __name__ == "__main__":
     # student_take_exam_Math500()
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
-    student_take_exam_Math_sub(train=True)
+    # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake() 
+    # exam_roll_recheck_mistake() 
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1170,14 +1170,14 @@ if __name__ == "__main__":
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
     # gen_IRDCL_dataset_v2(4, 0.75, 10)
-    # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0404_1126")
+    student_take_exam_Math_sub(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0408_0906")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=True, lora_path="output/sira_sft_60ep_0319_1911")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # # 示例：使用 SIRA 训练的结果进行 GRPO
@@ -1191,7 +1191,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(False)
+    exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0408_0906")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
