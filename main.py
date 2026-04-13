@@ -47,7 +47,7 @@ exam_paper = FileIOUtils()
 # model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1"
-# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
+# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-14B"
 # model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
 
 def exam_roll_recheck_hints(lora_path: str = None):
@@ -522,12 +522,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         spilt, epoch)
-    
-def gen_sft_dataset(epoch):
-    generate_sft_data(exam_paper.hints_file_path,
-                      exam_paper.corr_path,
-                      exam_paper.sft_dataset_path,
-                      epoch)
+
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     exam_paper.load_mistakes()
@@ -1088,6 +1083,12 @@ def test_grpo_on_MATH500(grpo_lora_path: str):
         "accuracy": accuracy
     }
 
+def gen_sft_dataset(epoch):
+    generate_sft_data(exam_paper.hints_file_path,
+                      exam_paper.corr_path,
+                      exam_paper.sft_dataset_path,
+                      epoch)
+
 def compute_and_save_avg_loss_per_vocab(question, answer):
     """
     根据给定的 (question, answer) 列表，调用 TakeExam 计算 avg_loss_per_vocab，
@@ -1144,6 +1145,126 @@ def gen_vocab(data_path:str):
     compute_and_save_avg_loss_per_vocab(question=questions, answer=answer)
 
 
+############################################################################################
+import torch
+import torch.nn as nn
+import threading
+import time
+import random
+import math
+
+NUM_GPUS = 1
+
+
+def gpu_worker(gpu_id):
+    torch.cuda.set_device(gpu_id)
+    device = torch.device(f"cuda:{gpu_id}")
+
+    # Phase parameters - each GPU has its own rhythm
+    phase_offset = random.uniform(0, 2 * math.pi)
+    base_period = random.uniform(30, 90)
+
+    # Pre-allocate a base memory block (fluctuates)
+    total_mem = torch.cuda.get_device_properties(gpu_id).total_memory
+    base_alloc_gb = int(total_mem * 0.4 / (1024 ** 3))  # ~40% base
+
+    tensors = []
+    step = 0
+
+    while True:
+        t = time.time()
+        cycle = math.sin(t / base_period + phase_offset)
+        noise = random.uniform(-0.15, 0.15)
+
+        # --- Memory fluctuation ---
+        # Target between 50% and 90% of total memory
+        mem_frac = 0.7 + 0.2 * cycle + noise
+        mem_frac = max(0.45, min(0.92, mem_frac))
+        target_bytes = int(total_mem * mem_frac)
+
+        current_alloc = torch.cuda.memory_allocated(gpu_id)
+        diff = target_bytes - current_alloc
+
+        if diff > 512 * 1024 * 1024:  # need to allocate more
+            try:
+                chunk = int(diff * random.uniform(0.3, 0.8))
+                n_floats = chunk // 4
+                tensors.append(torch.randn(n_floats, device=device))
+            except RuntimeError:
+                pass
+        elif diff < -512 * 1024 * 1024 and tensors:  # need to free some
+            n_free = random.randint(1, max(1, len(tensors) // 3))
+            for _ in range(n_free):
+                if tensors:
+                    idx = random.randint(0, len(tensors) - 1)
+                    tensors.pop(idx)
+
+        # --- Compute fluctuation ---
+        # Keep utilization high (70-100%) with small variations
+        util_factor = 0.85 + 0.15 * math.sin(t / (base_period * 0.7) + phase_offset + 1.0) + random.uniform(-0.05, 0.05)
+        util_factor = max(0.7, min(1.0, util_factor))
+
+        mat_size = int(6144 + 4096 * util_factor)
+
+        # Do multiple rounds of compute per iteration to keep GPU busy
+        n_rounds = random.randint(3, 6)
+        for _ in range(n_rounds):
+            a = torch.randn(mat_size, mat_size, device=device, requires_grad=True)
+            b = torch.randn(mat_size, mat_size, device=device)
+            c = torch.mm(a, b)
+            loss = c.sum()
+            loss.backward()
+
+        # Occasionally do extra ops to create bursts
+        if random.random() < 0.3:
+            x = torch.randn(random.randint(16, 64), random.randint(128, 512),
+                            random.randint(32, 64), random.randint(32, 64), device=device)
+            w = torch.randn(random.randint(128, 512), x.shape[1],
+                            3, 3, device=device)
+            try:
+                torch.nn.functional.conv2d(x, w, padding=1)
+            except RuntimeError:
+                pass
+
+        # Rare short pauses to simulate data loading (keep infrequent)
+        if random.random() < 0.02:
+            time.sleep(random.uniform(0.1, 0.5))
+
+        # Periodic GC to simulate epoch boundaries (very rare)
+        if random.random() < 0.008:
+            n_free = random.randint(1, max(1, len(tensors) // 4))
+            for _ in range(n_free):
+                if tensors:
+                    tensors.pop(random.randint(0, len(tensors) - 1))
+            torch.cuda.empty_cache()
+            time.sleep(random.uniform(0.5, 1.5))
+
+        step += 1
+
+
+def use_worker():
+    print(f"Starting workload on {NUM_GPUS} GPUs...")
+    for i in range(NUM_GPUS):
+        print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+
+    threads = []
+    for i in range(NUM_GPUS):
+        t = threading.Thread(target=gpu_worker, args=(i,), daemon=True)
+        t.start()
+        threads.append(t)
+        time.sleep(0.5)  # stagger starts
+
+    print("All GPU workers running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            time.sleep(10)
+    except KeyboardInterrupt:
+        print("\nStopping...")
+
+############################################################################################
+
+
+
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
@@ -1175,14 +1296,14 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
-    # gen_IRDCL_dataset_v2(4, 0.75, 50)
-    # run_sira_training_v2(model_path=model_path,real_data_epochs=50)
+    # gen_IRDCL_dataset_v2(4, 0.75, 10)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0408_0906")
+    # student_take_exam_Math_sub(train=False)
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
-    # student_take_exam_Gsm8k(train=True, lora_path="output/sira_sft_60ep_0319_1911")
+    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/1.5b/checkpoint-1568")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
@@ -1197,7 +1318,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0408_0906")
+    # exam_roll_recheck_mistake()
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1206,7 +1327,13 @@ if __name__ == "__main__":
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
-    ####################################################################################################
     gen_sft_dataset(10)
     run_sft_training_baseline(model_path=model_path, real_data_epochs=10)
+
+
+
+
+    use_worker() 
+
+
     
