@@ -19,5 +19,6 @@ __all__= [
     "remove_null_hints",
     "generate_irdcl_dataset_syn",
     "generate_irdcl_dataset_v2",
+    "generate_sft_data",
     "merge_lora_to_base_model"
 ]

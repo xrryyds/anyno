@@ -399,6 +399,181 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
 def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
     """
     # Construct IRDCL training data.
+    # Logic: Repeat the generation process for 'epoch' times.
+    # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
+    """
+    # 计算标准的 batch 分配
+    std_num_anchors = int(batch_size * anchor_k)
+    std_num_hints = batch_size - std_num_anchors
+
+    if std_num_hints <= 0:
+        raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
+
+    print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
+
+    print("Loading data...")
+    with open(corr_path, 'r', encoding='utf-8') as f:
+        corr_data = json.load(f)
+
+    with open(adv_hints_path, 'r', encoding='utf-8') as f:
+        adv_data = json.load(f)
+
+    # with open(disadv_hints_path, 'r', encoding='utf-8') as f:
+    #     disadv_data = json.load(f)
+
+    # combined_hints_data = adv_data + disadv_data
+    combined_hints_data = adv_data
+    total_hints = len(combined_hints_data)
+    print(f"Data Loaded. Hints: {total_hints}, Anchors Pool: {len(corr_data)}")
+
+    final_dataset = []
+
+    # --- 开始 Epoch 循环 ---
+    for ep in range(epoch):
+        print(f"Processing Epoch {ep + 1}/{epoch}...")
+
+        # 每个 epoch 开始前打乱 hints 数据的顺序
+        # 这样每个 epoch 的 batch 组合都会不同
+        random.shuffle(combined_hints_data)
+
+        # 每个 epoch 开始前打乱 anchor 数据池，用于无放回抽样
+        shuffled_anchors = corr_data.copy()
+        random.shuffle(shuffled_anchors)
+        anchor_pool_idx = 0
+
+        # 遍历 hints 数据生成 batch
+        for i in range(0, total_hints, std_num_hints):
+            current_batch = []
+
+            # 切片获取当前的 hints 块
+            hints_chunk = combined_hints_data[i : i + std_num_hints]
+            actual_hint_count = len(hints_chunk)
+
+            # 添加 hints 数据
+            for item in hints_chunk:
+                entry = {
+                    "question_idx": item.get("question_idx"),
+                    "question": item.get("question"),
+                    "answer": item.get("student_answer"),
+                    "ref_answer": item.get("ref_answer"),
+                    "ref_solution": item.get("ref_solution"),
+                    "hints": item.get("hints"),
+                    "type": "hint_data"
+                }
+                current_batch.append(entry)
+
+            # 计算需要补充的 anchor 数量
+            # 如果是最后一个 batch，hints 数量可能少于 std_num_hints，所以按比例重新计算
+            if anchor_k >= 1.0 or anchor_k <= 0.0:
+                needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
+            else:
+                ratio_factor = anchor_k / (1.0 - anchor_k)
+                needed_anchor_count = int(round(actual_hint_count * ratio_factor))
+
+            # 无放回抽样 anchor 数据，如果不够则循环使用
+            anchors_chunk = []
+            for _ in range(needed_anchor_count):
+                anchors_chunk.append(shuffled_anchors[anchor_pool_idx % len(corr_data)])
+                anchor_pool_idx += 1
+
+            # 添加 anchor 数据
+            for item in anchors_chunk:
+                entry = {
+                    "question_idx": item.get("question_idx"),
+                    "question": item.get("question"),
+                    "answer": item.get("answer"),
+                    "ref_answer": item.get("ref_answer"),
+                    "ref_solution": item.get("ref_solution"),
+                    "hints": None,
+                    "type": "anchor_data",
+                    "ref_beta": item.get("ref_beta"),
+                }
+                current_batch.append(entry)
+
+            # 打乱当前 batch 内部顺序
+            random.shuffle(current_batch)
+
+            # 将当前 batch 加入总数据集
+            final_dataset.extend(current_batch)
+
+    # --- 保存结果 ---
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+
+    with open(output_path, 'w', encoding='utf-8') as f:
+        json.dump(final_dataset, f, ensure_ascii=False, indent=4)
+
+    print(f"Done. Generated total {len(final_dataset)} items over {epoch} epochs.")
+    print(f"Saved to {output_path}")
+
+
+
+def generate_sft_data(adv_hints_path: str, corr_path: str, output_path: str, epoch: int):
+    """Generate SFT data from adv_hints and corr_answer.
+
+    - From adv_hints: question -> question, ref_solution -> answer
+    - From corr_answer: question -> question, answer -> answer
+    - Repeat for `epoch` times; each epoch shuffles internally before appending.
+    """
+    try:
+        # 1. load adv_hints
+        with open(adv_hints_path, 'r', encoding='utf-8') as f:
+            adv_data = json.load(f)
+
+        if not isinstance(adv_data, list):
+            print(f"[generate_sft_data] adv_hints is not a list: {adv_hints_path}")
+            return
+
+        adv_samples = []
+        for item in adv_data:
+            adv_samples.append({
+                "question": item.get("question", ""),
+                "answer": item.get("ref_solution", ""),
+            })
+
+        # 2. load corr_answer
+        with open(corr_path, 'r', encoding='utf-8') as f:
+            corr_data = json.load(f)
+
+        if not isinstance(corr_data, list):
+            print(f"[generate_sft_data] corr_answer is not a list: {corr_path}")
+            return
+
+        corr_samples = []
+        for item in corr_data:
+            corr_samples.append({
+                "question": item.get("question", ""),
+                "answer": item.get("answer", ""),
+            })
+
+        base_samples = adv_samples + corr_samples
+        print(f"[generate_sft_data] base_samples: adv={len(adv_samples)}, corr={len(corr_samples)}, total={len(base_samples)}")
+
+        all_samples = []
+        for ep in range(epoch):
+            epoch_samples = base_samples.copy()
+            random.shuffle(epoch_samples)
+            all_samples.extend(epoch_samples)
+            print(f"[generate_sft_data] epoch {ep+1}/{epoch} appended {len(epoch_samples)} samples")
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        with open(output_path, 'w', encoding='utf-8') as f:
+            json.dump(all_samples, f, ensure_ascii=False, indent=2)
+
+        print(f"[generate_sft_data] Done. Generated {len(all_samples)} items, saved to {output_path}")
+
+    except FileNotFoundError as e:
+        print(f"[generate_sft_data] file not found: {e.filename}")
+    except json.JSONDecodeError as e:
+        print(f"[generate_sft_data] JSON decode error: {e}")
+    except Exception as e:
+        print(f"[generate_sft_data] unknown error: {e}")
+    """
+    # Construct IRDCL training data.
     # Logic: Repeat the generation process for 'epoch' times. 
     # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
     """
