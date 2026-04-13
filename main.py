@@ -524,7 +524,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
     
 def gen_sft_dataset(epoch):
-    generate_sft_data(exam_paper.adv_hints_dataset_path,
+    generate_sft_data(exam_paper.hints_file_path,
                       exam_paper.corr_path,
                       exam_paper.sft_dataset_path,
                       epoch)
