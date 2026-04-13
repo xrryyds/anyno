@@ -1175,8 +1175,8 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
-    gen_IRDCL_dataset_v2(4, 0.75, 50)
-    run_sira_training_v2(model_path=model_path,real_data_epochs=50)
+    # gen_IRDCL_dataset_v2(4, 0.75, 50)
+    # run_sira_training_v2(model_path=model_path,real_data_epochs=50)
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()

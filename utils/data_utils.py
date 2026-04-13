@@ -572,23 +572,6 @@ def generate_sft_data(adv_hints_path: str, corr_path: str, output_path: str, epo
         print(f"[generate_sft_data] JSON decode error: {e}")
     except Exception as e:
         print(f"[generate_sft_data] unknown error: {e}")
-    """
-    # Construct IRDCL training data.
-    # Logic: Repeat the generation process for 'epoch' times. 
-    # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
-    """
-    # 计算标准的 batch 分配
-    std_num_anchors = int(batch_size * anchor_k)
-    std_num_hints = batch_size - std_num_anchors
-    
-    if std_num_hints <= 0:
-        raise ValueError(f"Batch size {batch_size} implies 0 hints with anchor_k={anchor_k}")
-
-    print(f"Standard Batch Config: Total={batch_size} | Hints={std_num_hints} | Anchors={std_num_anchors}")
-
-    print("Loading data...")
-    with open(corr_path, 'r', encoding='utf-8') as f:
-        corr_data = json.load(f)
     
     with open(adv_hints_path, 'r', encoding='utf-8') as f:
         adv_data = json.load(f)
