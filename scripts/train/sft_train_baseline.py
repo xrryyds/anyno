@@ -1,5 +1,5 @@
 import os
-# 与 student_train_v2 一致的 vLLM 相关环境变量
+# 设置 VLLM 环境变量（保持一致）
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 import sys
@@ -21,12 +21,12 @@ from transformers import (
     Trainer,
     TrainingArguments,
     TrainerCallback,
-    set_seed
+    set_seed,
 )
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
-# Logger 配置（保持一致）
+# Logger 配置
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -34,8 +34,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局训练序列长度超参数
+# 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
+SAVE_TOTAL = 2  # 与 student_train_v2 一致的保存总数
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
@@ -56,17 +57,10 @@ class SFTConfig:
     # 日志相关
     metrics_log_interval: int = 8
 
-    # LoRA / 训练相关（占位，保持与 SIRA 配置风格相似）
-    split_r: float = 0.5
-    anchor_loss_weight_k: float = 1
-    suppress_max_scale: float = 1.0
-    anchor_sigmoid_slope: float = 20.0
-    anchor_loss_tolerance: float = 1.01
-
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
-    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding='utf-8')
+    file_handler = logging.FileHandler(os.path.join(output_dir, "train.log"), encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
     logger.addHandler(file_handler)
     return (
@@ -76,7 +70,7 @@ def setup_logging(output_dir):
 
 
 # ==========================================
-# 2. Metrics Tracker：结构对齐，但指标精简为 SFT
+# 2. Metrics Tracker：结构简化版
 # ==========================================
 class SFTTrainingMetricsTracker:
     def __init__(self):
@@ -109,11 +103,11 @@ class SFTTrainingMetricsTracker:
 
 sft_tracker = SFTTrainingMetricsTracker()
 
-
 # ==========================================
-# 3. Data Collator：与 student_train_v2 数据格式一致
-#   - 使用 system prompt + question 作为输入
+# 3. Data Collator
+#   - 沿用 SYSTEM_PROMPT + question
 #   - 仅 answer 部分参与 loss
+#   - 数据字段与原数据一致：question / answer
 # ==========================================
 class SFTCollator:
     def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
@@ -150,7 +144,6 @@ class SFTCollator:
             if len(full_ids) > self.max_length:
                 full_ids = full_ids[: self.max_length]
 
-            # 仅让 answer 部分参与 loss
             labels = [-100] * len(full_ids)
             for i in range(len_prompt, len(full_ids)):
                 labels[i] = full_ids[i]
@@ -162,9 +155,7 @@ class SFTCollator:
 
         return {
             "input_ids": torch.nn.utils.rnn.pad_sequence(
-                input_ids_batch,
-                batch_first=True,
-                padding_value=self.tokenizer.pad_token_id,
+                input_ids_batch, batch_first=True, padding_value=self.tokenizer.pad_token_id
             ),
             "labels": torch.nn.utils.rnn.pad_sequence(
                 labels_batch, batch_first=True, padding_value=-100
@@ -177,9 +168,7 @@ class SFTCollator:
 
 
 # ==========================================
-# 4. Baseline SFT Trainer
-#    - 使用标准 CE loss
-#    - 其余 Trainer 配置对齐 student_train_v2
+# 4. SFT Trainer（标准 CE loss）
 # ==========================================
 class SFTSequentialTrainer(Trainer):
     def __init__(self, sft_config: SFTConfig, *args, **kwargs):
@@ -200,12 +189,13 @@ class SFTSequentialTrainer(Trainer):
         )
 
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
-        metadata = inputs.pop("metadata", None)  # 保留接口对齐但不使用
+        # metadata 只保留接口对齐，不参与损失
+        inputs.pop("metadata", None)
+
         outputs = model(**inputs)
         logits = outputs.get("logits")
         labels = inputs.get("labels")
 
-        # 标准 CrossEntropyLoss，忽略 label=-100 的位置
         loss_fct = torch.nn.CrossEntropyLoss(ignore_index=-100)
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels[..., 1:].contiguous()
@@ -222,7 +212,7 @@ class SFTSequentialTrainer(Trainer):
 
 
 # ==========================================
-# 5. 回调：日志格式与 student_train_v2 尽量一致
+# 5. Callbacks：日志格式对齐
 # ==========================================
 class SFTStepLogCallback(TrainerCallback):
     def __init__(self, log_file, log_interval, config: SFTConfig, output_dir: str):
@@ -255,9 +245,7 @@ class SFTStepLogCallback(TrainerCallback):
 
 
 class SFTLogicalEpochLogCallback(TrainerCallback):
-    """
-    逻辑 Epoch 日志打印，不做早停，只记录 epoch 级别 loss
-    """
+    """逻辑 Epoch 日志打印（不早停，只记录 epoch 级别 loss）"""
 
     def __init__(self, log_file, steps_per_logical_epoch, config: SFTConfig, output_dir: str):
         self.log_file = log_file
@@ -290,18 +278,17 @@ class SFTLogicalEpochLogCallback(TrainerCallback):
 
 # ==========================================
 # 6. Main Execution Function
-#    - 所有路径通过参数传入（model / data / output）
-#    - 训练精度、scheduler、logging_steps 等与 student_train_v2 对齐
 # ==========================================
 def run_sft_training_baseline(
     model_path: str,
     data_path: str,
     output_base_dir: str,
-    batch_size: int = 4,
+    batch_size: int = 8,
     real_data_epochs: int = 50,
     device_num: int = 1,
     lora_path: Optional[str] = None,
 ):
+    # 这里的路径完全由参数控制，不再在函数内部改写 data_path / output_base_dir
     set_seed(42)
     sft_tracker.reset_window()
     sft_tracker.reset_epoch()
@@ -393,18 +380,18 @@ def run_sft_training_baseline(
 
     training_args = TrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=1,                         # 与 student_train_v2 一致：逻辑 epoch 自己算
+        num_train_epochs=1,  # 与 student_train_v2 一致：逻辑 epoch 自行控制
         per_device_train_batch_size=batch_size // device_num,
         gradient_accumulation_steps=1,
-        learning_rate=5e-5,                        # 训练速率对齐
+        learning_rate=5e-5,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=sft_config.metrics_log_interval,
         save_strategy="steps",
-        save_steps=steps_per_logical_epoch,
-        save_total_limit=2,
+        save_steps=steps_per_logical_epoch * (real_data_epochs / SAVE_TOTAL),
+        save_total_limit=SAVE_TOTAL,
         fp16=False,
-        bf16=True,                                 # 训练精度对齐
+        bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
@@ -437,9 +424,7 @@ def run_sft_training_baseline(
 
 
 if __name__ == "__main__":
-    """
-    示例：默认路径从项目结构推断，你可以根据自己工程改掉
-    """
+    # 示例：给一个与 student_train_v2 类似的默认路径推断
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path))
     project_root = os.path.dirname(os.path.dirname(project_root))
