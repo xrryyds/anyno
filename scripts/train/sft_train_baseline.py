@@ -281,14 +281,31 @@ class SFTLogicalEpochLogCallback(TrainerCallback):
 # ==========================================
 def run_sft_training_baseline(
     model_path: str,
-    data_path: str,
-    output_base_dir: str,
-    batch_size: int = 8,
+    data_path: Optional[str] = None,
+    output_base_dir: Optional[str] = None,
+    batch_size: int = 32,
     real_data_epochs: int = 50,
     device_num: int = 1,
     lora_path: Optional[str] = None,
 ):
-    # 这里的路径完全由参数控制，不再在函数内部改写 data_path / output_base_dir
+    """SFT baseline training.
+
+    约定：SFT 训练数据已经由外部脚本生成完毕（例如 main.py 里先调用
+    gen_sft_dataset(N)），这里只负责读取现成的 question/answer 数据并训练。
+
+    如果未显式传入 data_path / output_base_dir，则模仿 student_train_v2：
+    - 默认 data_path 使用 CELPO/datasets/exam/sft_data.json
+    - 默认 output_base_dir 使用 CELPO/output
+    """
+    current_file_path = os.path.abspath(__file__)
+    project_root = os.path.dirname(os.path.dirname(current_file_path))
+    project_root = os.path.dirname(os.path.dirname(project_root))
+
+    if output_base_dir is None:
+        output_base_dir = os.path.join(project_root, "CELPO", "output")
+    if data_path is None:
+        data_path = os.path.join(project_root, "CELPO", "datasets", "exam", "sft_data.json")
+
     set_seed(42)
     sft_tracker.reset_window()
     sft_tracker.reset_epoch()

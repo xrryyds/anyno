@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training_v2, run_sira_training_v3
+from scripts import run_sira_training_v2, run_sira_training_v3, run_sft_training_baseline
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -21,7 +21,8 @@ from utils import (
     generate_irdcl_dataset,
     generate_irdcl_datase_v2,
     remove_null_hints,
-    merge_lora_to_base_model
+    merge_lora_to_base_model,
+    generate_sft_data
 )
 from data_math import Math_500, GSM8K, AIME2024, Math_All, Math_Subset, LiveMathBench
 
@@ -521,7 +522,12 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         spilt, epoch)
-
+    
+def gen_sft_dataset(epoch):
+    generate_sft_data(exam_paper.adv_hints_dataset_path,
+                      exam_paper.corr_path,
+                      exam_paper.sft_dataset_path,
+                      epoch)
 
 def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
     exam_paper.load_mistakes()
@@ -1200,4 +1206,7 @@ if __name__ == "__main__":
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
-# 
+    ####################################################################################################
+    gen_sft_dataset(10)
+    run_sft_training_baseline(model_path=model_path, real_data_epochs=10)
+    
