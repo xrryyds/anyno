@@ -21,7 +21,7 @@ class FileIOUtils:
         self.grpo_dataset_path = os.path.join(project_root, "datasets", "exam", "grpo_data.json")
         self.corr_path = os.path.join(project_root, "datasets", "exam", "corr_answer.json")
         self.irdcl_dataset_path = os.path.join(project_root, "datasets", "exam", "irdcl_data.json")
-        self.sft_dataset_path = os.path.join(project_root, "datasets", "exam", "sft_data.json.json")
+        self.sft_dataset_path = os.path.join(project_root, "datasets", "exam", "sft_data.json")
     
 
 
