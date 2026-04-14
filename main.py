@@ -524,7 +524,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
 
 
-def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
+def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str=""):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
@@ -579,8 +579,17 @@ def exam_roll_recheck_mistake(use_lora:bool=False,lora_path:str=""):
                     roll8_solved_entropy.append(m_entropy[i])
                     break
 
-    logger.info(f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}")
+    recheck_result_log = f"Recheck Result -> Original: {len(m_question_idx)}, Solved: {len(solved_ids)}, Remaining: {len(err_question_idx)}"
+    logger.info(recheck_result_log)
     logger.info(f"mistake:{len(err_question_idx)}")
+
+    if save_log_path:
+        log_lines = [recheck_result_log]
+        if log_prompt:
+            log_lines.append(log_prompt)
+        with open(save_log_path, 'a', encoding='utf-8') as f:
+            f.write("\n".join(log_lines) + "\n")
+            f.write("#############################\n")
     
     # 保存roll 8还没做对的题目
     exam_paper.save_mistakes(
