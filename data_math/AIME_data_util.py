@@ -10,14 +10,24 @@ from .math_data_util import Math_data
 logger = logging.getLogger(__name__)
 
 
-class AIME2024():
-    def __init__(self, train:bool=True):
+class AIME():
+    def __init__(self, train: bool = True, year: int = 2024):
+        dataset_mapping = {
+            2024: 'math-ai/aime24',
+            2025: 'math-ai/aime25',
+            2026: 'math-ai/aime26',
+        }
+
+        if year not in dataset_mapping:
+            raise ValueError("year must be 2024, 2025 or 2026")
+
         dataset_loader = LoadDataset(
-            dataset_name='HuggingFaceH4/aime_2024',
+            dataset_name=dataset_mapping[year],
             split='train',
-            local_path='./datasets/data/aime_2024',
+            local_path=f'./datasets/data/aime_{year}',
         )
 
+        self.year = year
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
             dataset_loader.get_dataset())
 
@@ -38,7 +48,7 @@ class AIME2024():
         return problems, solutions, answers, len(problems)
             
 def main():
-   data = AIME2024(False)
+   data = AIME(False, year=2025)
    split ="#" * 20
    print("problems:" + data.problems[0])
    print(split)
