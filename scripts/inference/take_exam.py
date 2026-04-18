@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 全局序列长度超参数（训练/推理可统一调节）
-MAX_SEQ_LENGTH = 2048
+MAX_SEQ_LENGTH = 8192
 
 # Qwen-Math 的标准 System Prompt，这对激发数学能力至关重要
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."

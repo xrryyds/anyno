@@ -35,8 +35,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 全局训练序列长度超参数（collator 截断用）
-MAX_SEQ_LENGTH = 2048
-SAVE_TOTAL = 2  # 与 student_train_v2 一致的保存总数
+MAX_SEQ_LENGTH = 16384
+SAVE_TOTAL = 10  # 与 student_train_v2 一致的保存总数
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
@@ -283,7 +283,7 @@ def run_sft_training_baseline(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 32,
+    batch_size: int = 16,
     real_data_epochs: int = 50,
     device_num: int = 1,
     lora_path: Optional[str] = None,
