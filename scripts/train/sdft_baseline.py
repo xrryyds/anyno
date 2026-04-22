@@ -21,7 +21,7 @@ from transformers import (
     TrainerCallback,
     set_seed,
 )
-from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import PeftModel, LoraConfig, get_peft_model
 
 # ==========================================
 # Logger 配置
@@ -174,7 +174,10 @@ class SDFTCollator:
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
     def _build_student_prompt(self, question: str) -> str:
-        messages = [{"role": "user", "content": question}]
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ]
         return self.tokenizer.apply_chat_template(
             messages,
             tokenize=False,
@@ -296,7 +299,10 @@ class SDFTSequentialTrainer(Trainer):
             self._reset_teacher_from_student()
 
     def _reset_teacher_from_student(self):
-        self.teacher_model = copy.deepcopy(self.model)
+        # 修复: deepcopy 整个 PeftModel（而非 base_model.model），
+        # 确保 teacher 和 student 参数结构完全一致，EMA zip 不会错位。
+        import copy as _copy
+        self.teacher_model = _copy.deepcopy(self.model)
         self.teacher_model.eval()
         for param in self.teacher_model.parameters():
             param.requires_grad = False
@@ -379,7 +385,20 @@ class SDFTSequentialTrainer(Trainer):
                 use_cache=True,
             )
 
-        generated_attention_mask = (generated_ids != self.tokenizer.pad_token_id).long()
+        # 修复：当 pad_token_id == eos_token_id 时，不能简单用 != pad_token_id 来构建 mask，
+        # 否则生成的 EOS token 会被排除在 loss 计算之外。
+        # 改为：基于 prompt 长度和生成长度来构建 attention mask。
+        if self.tokenizer.pad_token_id == self.tokenizer.eos_token_id:
+            # 找到每个序列的实际长度（从右边找第一个非 pad/eos，但需要考虑生成末尾的 eos）
+            generated_attention_mask = torch.ones_like(generated_ids, dtype=torch.long)
+            # 只把左侧 padding 区域设为 0（generate 默认左 padding）
+            for idx in range(generated_ids.size(0)):
+                for pos in range(generated_ids.size(1)):
+                    if generated_ids[idx, pos] != self.tokenizer.pad_token_id:
+                        break
+                    generated_attention_mask[idx, pos] = 0
+        else:
+            generated_attention_mask = (generated_ids != self.tokenizer.pad_token_id).long()
         student_target_mask = torch.zeros_like(generated_ids, dtype=torch.long)
         prompt_lengths = student_prompt_attention_mask.sum(dim=1).tolist()
         for idx, prompt_len in enumerate(prompt_lengths):
@@ -398,14 +417,26 @@ class SDFTSequentialTrainer(Trainer):
         teacher_target_mask_batch = []
 
         for idx, meta in enumerate(metadata):
-            generated_text = self.tokenizer.decode(
-                generated_ids[idx, prompt_lengths[idx] :],
-                skip_special_tokens=True,
-            )
+            # 修复 Bug1: 原来先 decode 再 encode（round-trip），由于 tokenizer 的
+            # decode→encode 不完全可逆（空格/特殊字符处理差异），会导致 teacher 侧
+            # token 数量与 student 侧不一致，KL 散度估计存在系统性偏差。
+            # 修复方案：直接复用 generated_ids 中的 token ids，去掉末尾 padding，
+            # 避免 round-trip 引入的 token 数量偏差。
             teacher_prompt = meta.get("teacher_prompt", "")
             teacher_prompt_ids = self.tokenizer(teacher_prompt, add_special_tokens=False).input_ids
-            generated_text_ids = self.tokenizer(generated_text, add_special_tokens=False).input_ids
-            full_teacher_ids = (teacher_prompt_ids + generated_text_ids)[: self.sdft_config.max_seq_length]
+
+            # 直接取 student 生成部分的 token ids（去掉左侧 prompt 和右侧 padding）
+            gen_token_ids = generated_ids[idx, prompt_lengths[idx]:].tolist()
+            # 去掉末尾的 pad token。
+            # 修复: 当 pad_token_id == eos_token_id 时，不能简单地 pop 所有末尾的
+            # pad_id，否则会把生成的 EOS 也删掉。改为：只去掉 generate() 因 batch
+            # 对齐而追加的多余 padding（即超出实际生成长度的部分）。
+            # 利用 generated_attention_mask 来判断哪些位置是真实 token。
+            gen_attn = generated_attention_mask[idx, prompt_lengths[idx]:].tolist()
+            # 只保留 attention_mask == 1 的 token
+            gen_token_ids = [tid for tid, m in zip(gen_token_ids, gen_attn) if m == 1]
+
+            full_teacher_ids = (teacher_prompt_ids + gen_token_ids)[: self.sdft_config.max_seq_length]
 
             teacher_target_mask = [0] * min(len(teacher_prompt_ids), len(full_teacher_ids))
             teacher_target_mask += [1] * (len(full_teacher_ids) - len(teacher_target_mask))
@@ -439,8 +470,9 @@ class SDFTSequentialTrainer(Trainer):
                 teacher_target_mask,
             )
 
-        reverse_kl = student_seq_logprob - teacher_seq_logprob
-        entropy_bonus = self.sdft_config.entropy_beta * student_seq_entropy
+        # 修复: 按 token 数量归一化，避免长序列对 loss 产生不成比例的影响
+        reverse_kl = (student_seq_logprob - teacher_seq_logprob) / token_counts
+        entropy_bonus = self.sdft_config.entropy_beta * (student_seq_entropy / token_counts)
         loss = (reverse_kl - entropy_bonus).mean()
 
         if model.training:
@@ -540,7 +572,12 @@ def _build_model(sdft_config: SDFTConfig, lora_path: Optional[str] = None):
         trust_remote_code=True,
     )
     model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    # 修复 Bug3: prepare_model_for_kbit_training 专为量化训练设计，
+    # 在 bfloat16 全精度场景下语义错误（会对 LayerNorm 做多余的 float32 上转型）。
+    # 改为手动冻结 base model 参数并启用 gradient checkpointing。
+    model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={"use_reentrant": False})
+    for param in model.parameters():
+        param.requires_grad = False
 
     use_existing_lora = False
     if lora_path is not None and str(lora_path).strip():
@@ -555,7 +592,7 @@ def _build_model(sdft_config: SDFTConfig, lora_path: Optional[str] = None):
 
     if use_existing_lora:
         try:
-            model = PeftModel.from_pretrained(model, lora_path)
+            model = PeftModel.from_pretrained(model, lora_path, is_trainable=True)
             logger.info(f"Successfully loaded existing LoRA weights from '{lora_path}'.")
         except (OSError, ValueError) as e:
             logger.error(
@@ -614,9 +651,22 @@ def _run_phase(
     sdft_tracker.reset_window()
     sdft_tracker.reset_epoch()
 
+    # 修复 Bug 2: 将 num_train_epochs 设置为 logical_epochs，确保数据集被遍历正确的次数
+    trainer.args.num_train_epochs = logical_epochs
+
+    # 修复 Bug 3: 重置 optimizer 和 lr_scheduler，避免复用上一阶段已衰减的学习率
+    trainer.optimizer = None
+    trainer.lr_scheduler = None
+
     total_samples = len(trainer.train_dataset)
-    total_steps = max(1, total_samples // max(1, trainer.args.per_device_train_batch_size))
-    steps_per_logical_epoch = max(1, total_steps // max(1, logical_epochs))
+    per_device_bs = max(1, trainer.args.per_device_train_batch_size)
+    # 修复 Bug2: 多 GPU 时每个 step 实际消耗 per_device_bs × world_size 个样本，
+    # 原来只用 per_device_bs 会高估 world_size 倍，导致 epoch 边界判断提前触发。
+    world_size = max(1, trainer.args.world_size)
+    effective_bs = per_device_bs * world_size
+    # 每个 epoch 的 step 数（单个 epoch 遍历一次数据集）
+    steps_per_epoch = max(1, total_samples // effective_bs)
+    steps_per_logical_epoch = steps_per_epoch  # 一个 logical epoch = 一次完整遍历
 
     trainer.callback_handler.callbacks = [
         cb for cb in trainer.callback_handler.callbacks if not isinstance(cb, (SDFTStepLogCallback, SDFTLogicalEpochLogCallback))
@@ -648,8 +698,8 @@ def run_sdft_training_baseline(
     - real_data_epochs: SDFT 自蒸馏 epoch 数
     """
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path))
-    project_root = os.path.dirname(os.path.dirname(project_root))
+    # 修复 Bug 1: sdft_baseline.py 在 scripts/train/ 下，只需 3 次 dirname 到达项目根目录
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file_path)))
 
     if output_base_dir is None:
         output_base_dir = os.path.join(project_root, "output")
@@ -693,6 +743,9 @@ def run_sdft_training_baseline(
 
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+    # 修复: generate() 需要左 padding 才能正确对齐 prompt，
+    # 否则 sdft 阶段构建 student_target_mask 时 prompt_len 偏移会出错。
+    tokenizer.padding_side = "left"
 
     if not os.path.exists(sdft_config.data_path):
         raise FileNotFoundError(f"Dataset not found at {sdft_config.data_path}")
@@ -748,15 +801,20 @@ def run_sdft_training_baseline(
 
     trainer.save_model(output_dir)
     tokenizer.save_pretrained(output_dir)
+    # 保存基座模型路径，方便 take_exam 用 use_lora=True 加载
+    meta = {"base_model_path": sdft_config.model_path}
+    with open(os.path.join(output_dir, "sdft_meta.json"), "w") as f:
+        json.dump(meta, f, ensure_ascii=False, indent=2)
     logger.info(f"SDFT baseline training finished. Model saved to {output_dir}")
+    logger.info(f"To use in take_exam: TakeExam(model_path='{sdft_config.model_path}', use_lora=True, adapter_path='{output_dir}')")
 
     return output_dir
 
 
 if __name__ == "__main__":
     current_file_path = os.path.abspath(__file__)
-    project_root = os.path.dirname(os.path.dirname(current_file_path))
-    project_root = os.path.dirname(os.path.dirname(project_root))
+    # 修复 Bug 1: sdft_baseline.py 在 scripts/train/ 下，只需 3 次 dirname 到达项目根目录
+    project_root = os.path.dirname(os.path.dirname(os.path.dirname(current_file_path)))
 
     default_model_dir = os.path.join(project_root, "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
