@@ -201,6 +201,22 @@ class SDFTCollator:
             add_generation_prompt=True,
         )
 
+    @staticmethod
+    def _left_pad_sequence(tensors, padding_value):
+        """将一组 1D tensor 按左侧对齐进行 padding（左 padding）。
+        decoder-only 模型的 generate() 要求 prompt 左对齐 padding，
+        否则会触发 'right-padding was detected' 警告并导致生成结果错误。
+        """
+        max_len = max(t.size(0) for t in tensors)
+        padded = []
+        for t in tensors:
+            pad_len = max_len - t.size(0)
+            if pad_len > 0:
+                padded.append(torch.cat([torch.full((pad_len,), padding_value, dtype=t.dtype), t]))
+            else:
+                padded.append(t)
+        return torch.stack(padded, dim=0)
+
     def __call__(self, batch):
         student_prompt_ids_batch = []
         student_prompt_attention_mask_batch = []
@@ -242,16 +258,16 @@ class SDFTCollator:
             )
 
         return {
-            "student_prompt_input_ids": torch.nn.utils.rnn.pad_sequence(
+            # student prompt 用于 generate()，必须左 padding
+            "student_prompt_input_ids": self._left_pad_sequence(
                 student_prompt_ids_batch,
-                batch_first=True,
                 padding_value=self.tokenizer.pad_token_id,
             ),
-            "student_prompt_attention_mask": torch.nn.utils.rnn.pad_sequence(
+            "student_prompt_attention_mask": self._left_pad_sequence(
                 student_prompt_attention_mask_batch,
-                batch_first=True,
                 padding_value=0,
             ),
+            # pretrain 阶段的输入用于常规 forward，右 padding 即可
             "pretrain_input_ids": torch.nn.utils.rnn.pad_sequence(
                 pretrain_input_ids_batch,
                 batch_first=True,
@@ -400,10 +416,14 @@ class SDFTSequentialTrainer(Trainer):
         else:
             generated_attention_mask = (generated_ids != self.tokenizer.pad_token_id).long()
         student_target_mask = torch.zeros_like(generated_ids, dtype=torch.long)
-        prompt_lengths = student_prompt_attention_mask.sum(dim=1).tolist()
-        for idx, prompt_len in enumerate(prompt_lengths):
-            if prompt_len < generated_ids.size(1):
-                student_target_mask[idx, prompt_len:] = generated_attention_mask[idx, prompt_len:]
+        # 修复: 左 padding 场景下，generate() 返回的序列中 prompt 部分的结束位置
+        # 是 input_ids 的总长度（含 padding），而不是实际 prompt token 数量。
+        # 因为 generated_ids = [左padding + 实际prompt + 生成tokens]，
+        # 其中 [左padding + 实际prompt] 的长度 == student_prompt_input_ids.size(1)。
+        prompt_end_pos = student_prompt_input_ids.size(1)
+        for idx in range(generated_ids.size(0)):
+            if prompt_end_pos < generated_ids.size(1):
+                student_target_mask[idx, prompt_end_pos:] = generated_attention_mask[idx, prompt_end_pos:]
 
         student_seq_logprob, student_seq_entropy, token_counts, student_outputs = self._compute_masked_logprob_and_entropy(
             model,
@@ -425,14 +445,15 @@ class SDFTSequentialTrainer(Trainer):
             teacher_prompt = meta.get("teacher_prompt", "")
             teacher_prompt_ids = self.tokenizer(teacher_prompt, add_special_tokens=False).input_ids
 
-            # 直接取 student 生成部分的 token ids（去掉左侧 prompt 和右侧 padding）
-            gen_token_ids = generated_ids[idx, prompt_lengths[idx]:].tolist()
+            # 直接取 student 生成部分的 token ids（去掉左侧 padding+prompt 和右侧 padding）
+            # 修复: 左 padding 场景下，生成部分从 prompt_end_pos 开始，而非 prompt_len
+            gen_token_ids = generated_ids[idx, prompt_end_pos:].tolist()
             # 去掉末尾的 pad token。
             # 修复: 当 pad_token_id == eos_token_id 时，不能简单地 pop 所有末尾的
             # pad_id，否则会把生成的 EOS 也删掉。改为：只去掉 generate() 因 batch
             # 对齐而追加的多余 padding（即超出实际生成长度的部分）。
             # 利用 generated_attention_mask 来判断哪些位置是真实 token。
-            gen_attn = generated_attention_mask[idx, prompt_lengths[idx]:].tolist()
+            gen_attn = generated_attention_mask[idx, prompt_end_pos:].tolist()
             # 只保留 attention_mask == 1 的 token
             gen_token_ids = [tid for tid, m in zip(gen_token_ids, gen_attn) if m == 1]
 
