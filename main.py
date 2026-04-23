@@ -1310,7 +1310,7 @@ if __name__ == "__main__":
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False)
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_10ep_0422_2016")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/1.5b/checkpoint-1568")
     # teacher.teacher_mark_paper_with_save()
@@ -1327,7 +1327,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_10ep_0422_2016")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1343,9 +1343,10 @@ if __name__ == "__main__":
 
     run_sdft_training_baseline(data_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json", 
                                model_path = model_path, 
-                               batch_size = 16,
-                               real_data_epochs = 10)
+                               batch_size = 4,
+                               real_data_epochs = 1)
 
+    
 
     use_worker() 
 

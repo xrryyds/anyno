@@ -32,8 +32,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-MAX_SEQ_LENGTH = 2048
-DEFAULT_MAX_NEW_TOKENS = 512
+MAX_SEQ_LENGTH = 4096
+DEFAULT_MAX_NEW_TOKENS = 2048
 SAVE_TOTAL = 2
 EMA_ALPHA = 0.02
 ENTROPY_BETA = 0.01
@@ -51,7 +51,7 @@ class SDFTConfig:
     real_data_epochs: int = 2
     metrics_log_interval: int = 8
     max_seq_length: int = MAX_SEQ_LENGTH
-    # max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
+    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
     ema_alpha: float = EMA_ALPHA
     entropy_beta: float = ENTROPY_BETA
     temperature: float = 1.0
@@ -392,7 +392,7 @@ class SDFTSequentialTrainer(Trainer):
             generated_ids = model.generate(
                 input_ids=student_prompt_input_ids,
                 attention_mask=student_prompt_attention_mask,
-                # max_new_tokens=self.sdft_config.max_new_tokens,
+                max_new_tokens=self.sdft_config.max_new_tokens,
                 do_sample=True,
                 temperature=self.sdft_config.temperature,
                 top_p=1.0,
@@ -706,7 +706,7 @@ def run_sdft_training_baseline(
     output_base_dir: Optional[str] = None,
     device_num: int = 1,
     lora_path: Optional[str] = None,
-    # max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     max_seq_length: int = MAX_SEQ_LENGTH,
     ema_alpha: float = EMA_ALPHA,
 ):
@@ -736,7 +736,7 @@ def run_sdft_training_baseline(
         real_data_epochs=real_data_epochs,
         metrics_log_interval=batch_size,
         max_seq_length=max_seq_length,
-        # max_new_tokens=max_new_tokens,
+        max_new_tokens=max_new_tokens,
         ema_alpha=ema_alpha,
         entropy_beta=ENTROPY_BETA,
         pretrain_epochs=1,
@@ -750,7 +750,7 @@ def run_sdft_training_baseline(
     logger.info(f"SDFT Baseline - Output Dir: {output_dir}")
     logger.info(f"SDFT Baseline - EMA Alpha: {sdft_config.ema_alpha}")
     logger.info(f"SDFT Baseline - Entropy Beta: {sdft_config.entropy_beta}")
-    # logger.info(f"SDFT Baseline - Max New Tokens: {sdft_config.max_new_tokens}")
+    logger.info(f"SDFT Baseline - Max New Tokens: {sdft_config.max_new_tokens}")
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(
