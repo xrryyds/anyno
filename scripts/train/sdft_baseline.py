@@ -51,7 +51,7 @@ class SDFTConfig:
     real_data_epochs: int = 2
     metrics_log_interval: int = 8
     max_seq_length: int = MAX_SEQ_LENGTH
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
+    # max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
     ema_alpha: float = EMA_ALPHA
     entropy_beta: float = ENTROPY_BETA
     temperature: float = 1.0
@@ -159,8 +159,8 @@ class SDFTTrainingMetricsTracker:
 sdft_tracker = SDFTTrainingMetricsTracker()
 
 
-def _extract_ref_answer(item: Dict[str, Any]) -> str:
-    value = item.get("ref_answer")
+def _extract_ref_solution(item: Dict[str, Any]) -> str:
+    value = item.get("ref_solution")
     if value is not None and str(value).strip():
         return str(value)
     return ""
@@ -184,11 +184,11 @@ class SDFTCollator:
             add_generation_prompt=True,
         )
 
-    def _build_teacher_prompt(self, question: str, ref_answer: str) -> str:
+    def _build_teacher_prompt(self, question: str, ref_solution: str) -> str:
         teacher_instruction = (
             f"<Question> {question}\n\n"
             f"This is an example for a response to the question:\n\n"
-            f"<Demonstration>\n{ref_answer}\n\n"
+            f"<Demonstration>\n{ref_solution}\n\n"
             f"Now answer with a response of your own, including the thinking process:"
         )
         messages = [
@@ -227,15 +227,15 @@ class SDFTCollator:
 
         for item in batch:
             question = str(item["question"])
-            ref_answer = _extract_ref_answer(item)
+            ref_solution = _extract_ref_solution(item)
 
             student_prompt = self._build_student_prompt(question)
             student_prompt_ids = self.tokenizer(student_prompt, add_special_tokens=False).input_ids
             student_prompt_ids = student_prompt_ids[: self.max_length]
 
-            teacher_prompt = self._build_teacher_prompt(question, ref_answer)
+            teacher_prompt = self._build_teacher_prompt(question, ref_solution)
             teacher_prompt_ids = self.tokenizer(teacher_prompt, add_special_tokens=False).input_ids
-            answer_ids = self.tokenizer(ref_answer, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
+            answer_ids = self.tokenizer(ref_solution, add_special_tokens=False).input_ids + [self.tokenizer.eos_token_id]
             full_teacher_ids = (teacher_prompt_ids + answer_ids)[: self.max_length]
 
             labels = [-100] * min(len(teacher_prompt_ids), len(full_teacher_ids))
@@ -251,7 +251,7 @@ class SDFTCollator:
                 {
                     "mode": "sdft_baseline",
                     "question": question,
-                    "answer": ref_answer,
+                    "answer": ref_solution,
                     "teacher_prompt": teacher_prompt,
                     "student_prompt": student_prompt,
                 }
@@ -392,7 +392,7 @@ class SDFTSequentialTrainer(Trainer):
             generated_ids = model.generate(
                 input_ids=student_prompt_input_ids,
                 attention_mask=student_prompt_attention_mask,
-                max_new_tokens=self.sdft_config.max_new_tokens,
+                # max_new_tokens=self.sdft_config.max_new_tokens,
                 do_sample=True,
                 temperature=self.sdft_config.temperature,
                 top_p=1.0,
@@ -706,14 +706,14 @@ def run_sdft_training_baseline(
     output_base_dir: Optional[str] = None,
     device_num: int = 1,
     lora_path: Optional[str] = None,
-    max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    # max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
     max_seq_length: int = MAX_SEQ_LENGTH,
     ema_alpha: float = EMA_ALPHA,
 ):
     """SDFT baseline training API.
 
     输入：
-    - data_path: 数据集地址，数据格式与 adv_hints.json 一致，仅使用 question 和 ref_answer
+    - data_path: 数据集地址，数据格式与 adv_hints.json 一致，仅使用 question 和 ref_solution
     - model_path: 基座模型地址
     - batch_size: batch size
     - real_data_epochs: SDFT 自蒸馏 epoch 数
@@ -736,7 +736,7 @@ def run_sdft_training_baseline(
         real_data_epochs=real_data_epochs,
         metrics_log_interval=batch_size,
         max_seq_length=max_seq_length,
-        max_new_tokens=max_new_tokens,
+        # max_new_tokens=max_new_tokens,
         ema_alpha=ema_alpha,
         entropy_beta=ENTROPY_BETA,
         pretrain_epochs=1,
@@ -750,7 +750,7 @@ def run_sdft_training_baseline(
     logger.info(f"SDFT Baseline - Output Dir: {output_dir}")
     logger.info(f"SDFT Baseline - EMA Alpha: {sdft_config.ema_alpha}")
     logger.info(f"SDFT Baseline - Entropy Beta: {sdft_config.entropy_beta}")
-    logger.info(f"SDFT Baseline - Max New Tokens: {sdft_config.max_new_tokens}")
+    # logger.info(f"SDFT Baseline - Max New Tokens: {sdft_config.max_new_tokens}")
 
     try:
         tokenizer = AutoTokenizer.from_pretrained(
