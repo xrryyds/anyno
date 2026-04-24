@@ -140,6 +140,37 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
         ref_param.data.mul_(1.0 - alpha).add_(model_param.data, alpha=alpha)
 
     @staticmethod
+    def _normalize_sync_param_name(name: str) -> Optional[str]:
+        if "lora_" in name or "modules_to_save" in name:
+            return None
+        prefixes = ("base_model.model.", "base_model.", "model.")
+        for prefix in prefixes:
+            if name.startswith(prefix):
+                name = name[len(prefix):]
+        return name.replace(".base_layer", "")
+
+    @classmethod
+    def _build_sync_pairs(cls, model, target_model):
+        target_params = {}
+        for name, param in target_model.named_parameters():
+            normalized = cls._normalize_sync_param_name(name)
+            if normalized is not None:
+                target_params[normalized] = param
+
+        sync_pairs = []
+        for name, model_param in model.named_parameters():
+            normalized = cls._normalize_sync_param_name(name)
+            if normalized is None:
+                continue
+            ref_param = target_params.get(normalized)
+            if ref_param is None:
+                continue
+            if tuple(model_param.shape) != tuple(ref_param.shape):
+                continue
+            sync_pairs.append((normalized, model_param, ref_param))
+        return sync_pairs
+
+    @classmethod
     def sync_target_model_memory_efficient(model, target_model, alpha):
         """
         Sync target_model to track model, gathering one parameter at a time.
@@ -154,6 +185,10 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
             elif target_is_peft and not model_is_peft:
                 target_model = target_model.get_base_model()
 
+        sync_pairs = MemoryEfficientSyncRefModelCallback._build_sync_pairs(model, target_model)
+        if not sync_pairs:
+            raise RuntimeError("No matching parameters found when synchronizing model and reference model.")
+
         deepspeed_plugin = AcceleratorState().deepspeed_plugin
         is_zero3 = deepspeed_plugin is not None and deepspeed_plugin.zero_stage == 3
         
@@ -161,9 +196,7 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
             import deepspeed
             
             # Iterate through parameters one at a time
-            for (name, model_param), (_, ref_param) in zip(
-                model.named_parameters(), target_model.named_parameters()
-            ):
+            for _, model_param, ref_param in sync_pairs:
                 # Gather only this pair of parameters
                 with deepspeed.zero.GatheredParameters(
                     [model_param, ref_param], modifier_rank=0
@@ -174,7 +207,7 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
                         )
         else:
             # Non-ZeRO-3: just iterate normally
-            for model_param, ref_param in zip(model.parameters(), target_model.parameters()):
+            for _, model_param, ref_param in sync_pairs:
                 MemoryEfficientSyncRefModelCallback._sync_param(model_param, ref_param, alpha)
 
     def on_step_end(self, args, state, control, **kwargs):
