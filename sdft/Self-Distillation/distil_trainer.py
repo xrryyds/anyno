@@ -171,7 +171,7 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
         return sync_pairs
 
     @classmethod
-    def sync_target_model_memory_efficient(model, target_model, alpha):
+    def sync_target_model_memory_efficient(cls, model, target_model, alpha):
         """
         Sync target_model to track model, gathering one parameter at a time.
         
@@ -185,7 +185,7 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
             elif target_is_peft and not model_is_peft:
                 target_model = target_model.get_base_model()
 
-        sync_pairs = MemoryEfficientSyncRefModelCallback._build_sync_pairs(model, target_model)
+        sync_pairs = cls._build_sync_pairs(model, target_model)
         if not sync_pairs:
             raise RuntimeError("No matching parameters found when synchronizing model and reference model.")
 
