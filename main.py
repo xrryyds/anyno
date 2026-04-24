@@ -1310,8 +1310,8 @@ if __name__ == "__main__":
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_10ep_0422_2016")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
+    # student_take_exam_Math_500(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/1.5b/checkpoint-1568")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
@@ -1344,7 +1344,7 @@ if __name__ == "__main__":
     run_sdft_training_baseline(data_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json", 
                                model_path = model_path, 
                                batch_size = 4,
-                               real_data_epochs = 1)
+                               real_data_epochs = 10)
 
     
 
