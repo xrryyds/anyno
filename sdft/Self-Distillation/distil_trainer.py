@@ -48,7 +48,6 @@ from transformers.utils import is_datasets_available, is_flash_attn_2_available,
 
 from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template, prepare_multimodal_messages
 from trl.extras.profiling import profiling_context, profiling_decorator
-from trl.extras.vllm_client import VLLMClient
 from trl.import_utils import is_liger_kernel_available, is_vllm_available
 from trl.models import prepare_deepspeed, prepare_fsdp, prepare_peft_model, unwrap_model_for_generation
 from trl.models.utils import _ForwardRedirection
@@ -73,6 +72,13 @@ from trl.trainer.utils import (
     unsplit_pixel_values_by_grid,
 )
 from torch.nn.functional import log_softmax, kl_div
+
+try:
+    from trl.extras.vllm_client import VLLMClient
+    _VLLM_CLIENT_IMPORT_ERROR = None
+except Exception as exc:
+    VLLMClient = None
+    _VLLM_CLIENT_IMPORT_ERROR = exc
 
 
 if is_peft_available():
@@ -457,6 +463,11 @@ class DistilTrainer(BaseTrainer):
 
             if self.vllm_mode == "server":
                 if self.accelerator.is_main_process:
+                    if VLLMClient is None:
+                        raise ImportError(
+                            "vLLM server mode requires `trl.extras.vllm_client`, but importing it failed. "
+                            "Use `vllm_mode='colocate'` or install the missing optional dependency."
+                        ) from _VLLM_CLIENT_IMPORT_ERROR
                     if args.vllm_server_base_url is not None:
                         base_url = args.vllm_server_base_url
                     else:
