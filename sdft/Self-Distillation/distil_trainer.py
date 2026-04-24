@@ -146,6 +146,14 @@ class MemoryEfficientSyncRefModelCallback(TrainerCallback):
         
         This is O(1) in memory overhead instead of O(N) where N is model size.
         """
+        if is_peft_available():
+            model_is_peft = isinstance(model, PeftModel)
+            target_is_peft = isinstance(target_model, PeftModel)
+            if model_is_peft and not target_is_peft:
+                model = model.get_base_model()
+            elif target_is_peft and not model_is_peft:
+                target_model = target_model.get_base_model()
+
         deepspeed_plugin = AcceleratorState().deepspeed_plugin
         is_zero3 = deepspeed_plugin is not None and deepspeed_plugin.zero_stage == 3
         
