@@ -49,7 +49,7 @@ from transformers.utils import is_datasets_available, is_flash_attn_2_available,
 from trl.data_utils import apply_chat_template, is_conversational, maybe_apply_chat_template, prepare_multimodal_messages
 from trl.extras.profiling import profiling_context, profiling_decorator
 from trl.import_utils import is_liger_kernel_available, is_vllm_available
-from trl.models import prepare_deepspeed, prepare_fsdp, prepare_peft_model, unwrap_model_for_generation
+from trl.models import prepare_deepspeed, prepare_fsdp, unwrap_model_for_generation
 from trl.models.utils import _ForwardRedirection
 from trl.trainer.base_trainer import BaseTrainer
 from distil_config import DistilConfig
@@ -80,9 +80,14 @@ except Exception as exc:
     VLLMClient = None
     _VLLM_CLIENT_IMPORT_ERROR = exc
 
+try:
+    from trl.models import prepare_peft_model
+except ImportError:
+    prepare_peft_model = None
+
 
 if is_peft_available():
-    from peft import PeftConfig, PeftModel
+    from peft import PeftConfig, PeftModel, get_peft_model
 
 if is_vllm_available():
     from vllm import LLM, SamplingParams
@@ -92,6 +97,23 @@ if is_wandb_available():
 
 
 logger = logging.get_logger(__name__)
+
+
+def _prepare_peft_model_compat(model, peft_config, args):
+    if prepare_peft_model is not None:
+        return prepare_peft_model(model, peft_config, args)
+
+    if not is_peft_available():
+        raise ImportError("PEFT is required but not available.")
+
+    if isinstance(model, PeftModel):
+        return model
+
+    if peft_config is None:
+        return model
+
+    # Fallback for older/newer TRL versions where `prepare_peft_model` is unavailable.
+    return get_peft_model(model, peft_config)
 
 
 class MemoryEfficientSyncRefModelCallback(TrainerCallback):
@@ -308,7 +330,7 @@ class DistilTrainer(BaseTrainer):
         )
 
         if peft_config is not None or (is_peft_available() and isinstance(model, PeftModel)):
-            model = prepare_peft_model(model, peft_config, args)
+            model = _prepare_peft_model_compat(model, peft_config, args)
 
         # Processing class
         if processing_class is None:
