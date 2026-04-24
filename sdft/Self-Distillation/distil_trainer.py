@@ -411,7 +411,7 @@ class DistilTrainer(BaseTrainer):
         # "Could not estimate the number of tokens of the input, floating-point operations will not be computed." To
         # suppress this warning, we set the "estimate_tokens" key in the model's "warnings_issued" dictionary to True.
         # This acts as a flag to indicate that the warning has already been issued.
-        model.warnings_issued["estimate_tokens"] = True
+        # model.warnings_issued["estimate_tokens"] = True
 
         super().__init__(
             model=model,
