@@ -330,7 +330,9 @@ class RayPPOTrainer:
         # Store the tokenizer for text processing
         self.tokenizer = tokenizer
         self.tokenizer.padding_side = "left"
-        self.tokenizer.truncation_side = config.actor_rollout_ref.actor.get("self_distillation", {}).get("reprompt_truncation", "error")
+        self.tokenizer.truncation_side = config.actor_rollout_ref.actor.get("self_distillation", {}).get(
+            "reprompt_truncation", "right"
+        )
         self.processor = processor
         self.config = config
         self.reward_fn = reward_fn
@@ -680,6 +682,11 @@ class RayPPOTrainer:
         if self_distillation_cfg is None or loss_mode != "sdpo":
             return None
 
+        def _sd_cfg_get(key: str, default):
+            if isinstance(self_distillation_cfg, dict):
+                return self_distillation_cfg.get(key, default)
+            return self_distillation_cfg.get(key, default)
+
         device = batch.batch["input_ids"].device
         response_mask = batch.batch["response_mask"]
         responses = batch.batch["responses"]
@@ -689,19 +696,23 @@ class RayPPOTrainer:
 
         # Extract feedback if available and include_environment_feedback is enabled
         feedback_list = self._collect_feedback(
-            include_environment_feedback=self_distillation_cfg.include_environment_feedback,
+            include_environment_feedback=_sd_cfg_get("include_environment_feedback", False),
             reward_extra_infos_dict=reward_extra_infos_dict,
             batch_size=batch_size,
         )
 
-        success_by_uid = self._collect_solutions_by_uid(batch, reward_tensor, success_reward_threshold=self_distillation_cfg.success_reward_threshold)
+        success_by_uid = self._collect_solutions_by_uid(
+            batch,
+            reward_tensor,
+            success_reward_threshold=_sd_cfg_get("success_reward_threshold", 1.0),
+        )
         solution_strs = [
             self._get_solution(
                 i,
                 success_by_uid,
                 batch.non_tensor_batch["uid"],
                 response_texts,
-                self_distillation_cfg.dont_reprompt_on_self_success,
+                _sd_cfg_get("dont_reprompt_on_self_success", False),
                 self_distillation_cfg.get("remove_thinking_from_demonstration", False),
             )
             for i in range(batch_size)
@@ -719,20 +730,29 @@ class RayPPOTrainer:
             # build solution section
             solution_section = ""
             if has_solution:
-                solution_section = self_distillation_cfg.solution_template.format(
+                solution_section = _sd_cfg_get(
+                    "solution_template",
+                    "\nCorrect solution:\n\n{successful_previous_attempt}\n\n",
+                ).format(
                     successful_previous_attempt=solution_strs[i]
                 )
 
             # build feedback section
             feedback_section = ""
             if use_feedback:
-                feedback_section = self_distillation_cfg.feedback_template.format(
+                feedback_section = _sd_cfg_get(
+                    "feedback_template",
+                    "\nThe following is feedback from your unsuccessful earlier attempt:\n\n{feedback_raw}\n\n",
+                ).format(
                     feedback_raw=feedback_list[i]
                 )
 
             # combine solution and feedback sections
             if use_feedback or has_solution:
-                reprompt_text = self_distillation_cfg.reprompt_template.format(
+                reprompt_text = _sd_cfg_get(
+                    "reprompt_template",
+                    "{prompt}{solution}{feedback}\n\nCorrectly solve the original question.\n",
+                ).format(
                     prompt=prompt_texts[i],
                     solution=solution_section,
                     feedback=feedback_section,
@@ -755,7 +775,7 @@ class RayPPOTrainer:
             continue_final_message=False,
             add_generation_prompt=True,
             enable_thinking=enable_thinking,
-            max_length=self_distillation_cfg.max_reprompt_len,
+            max_length=_sd_cfg_get("max_reprompt_len", 10240),
             padding=True,
             truncation=True,
         )
