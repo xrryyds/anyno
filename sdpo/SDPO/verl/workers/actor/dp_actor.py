@@ -775,8 +775,10 @@ class DataParallelPPOActor(BasePPOActor):
                     if teacher_regularization == "trust-region" and self.use_fused_kernels:
                         raise ValueError("trust-region teacher requires disabling fused kernels to access logits.")
                     # all return: (bsz, response_length)
-                    return_all_logps = self_distillation_cfg.full_logit_distillation and not self_distillation_cfg.distillation_topk
-                    distill_topk = self_distillation_cfg.distillation_topk if self_distillation_cfg.full_logit_distillation else None
+                    full_logit_distillation = self_distillation_cfg.get("full_logit_distillation", True)
+                    distillation_topk = self_distillation_cfg.get("distillation_topk", None)
+                    return_all_logps = full_logit_distillation and not distillation_topk
+                    distill_topk = distillation_topk if full_logit_distillation else None
                     outputs = self._forward_micro_batch(
                         model_inputs,
                         temperature=temperature,
