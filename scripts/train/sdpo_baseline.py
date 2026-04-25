@@ -274,6 +274,7 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         f"+actor_rollout_ref.actor.self_distillation.include_environment_feedback={str(config.include_environment_feedback)}",
         "actor_rollout_ref.actor.optim.lr_warmup_steps=10",
         "actor_rollout_ref.rollout.name=vllm",
+        "actor_rollout_ref.rollout.agent.num_workers=1",
         f"actor_rollout_ref.rollout.n={config.rollout_batch_size}",
         "actor_rollout_ref.rollout.calculate_log_probs=True",
         f"actor_rollout_ref.rollout.log_prob_micro_batch_size={max(1, config.rollout_batch_size)}",
