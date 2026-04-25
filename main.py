@@ -24,7 +24,7 @@ from utils import (
     merge_lora_to_base_model,
     generate_sft_data
 )
-from data_math import Math_500, GSM8K, AIME, Math_All, Math_Subset, LiveMathBench
+from data_math import Math_500, GSM8K, AIME, Math_All, Math_Subset, LiveMathBench, AIME_1983_2024
 
 
 # =====================================================
@@ -374,8 +374,49 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, model_path: str= model_path):
+def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None):
     data = Math_All(subset_name=subset,train=train)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = None
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+    else:
+        take_exam = TakeExam(model_path)
+
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
+def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = model_path):
+    data = AIME(year=year)
+    question = data.problems
+    solution = data.solutions
+    answer = data.answers
+    
+    logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
+    
+    take_exam = None
+    if lora_path:
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+    else:
+        take_exam = TakeExam(model_path)
+
+    question_idx = []
+    for idx in range(len(question)):
+        question_idx.append(idx)
+    take_exam.exam(question, solution, answer, question_idx)
+
+
+
+def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path):
+    data = AIME_1983_2024()
     question = data.problems
     solution = data.solutions
     answer = data.answers
@@ -438,7 +479,7 @@ def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None, model_path = model_path):
+def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -524,7 +565,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
 
 
-def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path: str = model_path):
+def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
@@ -1310,9 +1351,11 @@ if __name__ == "__main__":
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
-    # student_take_exam_Math_500(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
-    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/1.5b/checkpoint-1568")
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
+    # student_take_exam_AIME(year=2024)
+    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/7b/checkpoint-target-reached-epoch-8")
+    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
+    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
@@ -1327,7 +1370,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_10ep_0422_2016")
+    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/7b/checkpoint-target-reached-epoch-8")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1336,17 +1379,41 @@ if __name__ == "__main__":
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
-    # gen_sft_dataset(10)
-    # run_sft_training_baseline(model_path=model_path, real_data_epochs=10)
-    
-    ########################################################################################################
+    # gen_sft_dataset(50)
+    # run_sft_training_baseline(model_path=model_path, real_data_epochs=50)
 
-    run_sdft_training_baseline(data_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json", 
-                               model_path = model_path, 
-                               batch_size = 4,
-                               real_data_epochs = 10)
+    # ########################################################################################################################################################################
 
     
+    student_take_exam_Gsm8k(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337")
+    teacher.teacher_mark_paper_with_save()
+    exam_roll_recheck_mistake(use_lora=True,
+                              lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337",
+                              save_log_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/exam_result.txt",
+                              log_prompt="sdft_GSM_TRAIN_4096")
+    
+    student_take_exam_Gsm8k(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337")
+    teacher.teacher_mark_paper_with_save()
+    exam_roll_recheck_mistake(use_lora=True,
+                              lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337",
+                              save_log_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/exam_result.txt",
+                              log_prompt="sdft_GSM_TRAIN_4096")
+    
+
+    student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337")
+    teacher.teacher_mark_paper_with_save()
+    exam_roll_recheck_mistake(use_lora=True,
+                              lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337",
+                              save_log_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/exam_result.txt",
+                              log_prompt="sdft_math_4096")
+    
+
+    student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337")
+    teacher.teacher_mark_paper_with_save()
+    exam_roll_recheck_mistake(use_lora=True,
+                              lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env3/CELPO/output/sdft_10ep_0425_0337",
+                              save_log_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/exam_result.txt",
+                              log_prompt="sdft_AIME_4096")
 
     use_worker() 
 
