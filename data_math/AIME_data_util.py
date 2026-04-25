@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 
 class AIME():
-    def __init__(self, train: bool = True, year: int = 2024):
+    def __init__(self, year: int = 2024):
         dataset_mapping = {
             2024: 'math-ai/aime24',
             2025: 'math-ai/aime25',
@@ -23,32 +23,43 @@ class AIME():
 
         dataset_loader = LoadDataset(
             dataset_name=dataset_mapping[year],
-            split='train',
+            split='test',
             local_path=f'./datasets/data/aime_{year}',
         )
 
         self.year = year
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
-            dataset_loader.get_dataset())
+            dataset_loader.get_dataset(), year)
+        print("######################")
+        print(len(self.problems))
 
-    def extract_data(self, dataset: Dataset) -> tuple[list, list, list, int]:
+    def extract_data(self, dataset: Dataset, year) -> tuple[list, list, list, int]:
         problems = []
         solutions = []
         answers = []
 
-        for data in dataset:
-            problem = data.get("problem", None)
-            solution = data.get("solution", None)
-            answer = data.get("answer", None)
-
-            if problem and solution and answer:
-                problems.append(problem)
-                solutions.append(solution)
-                answers.append(answer)
+        if year == 2024:
+            for data in dataset:
+                problem = data.get("problem", None)
+                solution = data.get("solution", None)
+                answer = data.get("solution", None)
+                if problem and solution and answer:
+                    problems.append(problem)
+                    solutions.append(solution)
+                    answers.append(answer)
+        else:
+            for data in dataset:
+                problem = data.get("problem", None)
+                solution = data.get("answer", None)
+                answer = data.get("answer", None)
+                if problem and solution and answer:
+                    problems.append(problem)
+                    solutions.append(solution)
+                    answers.append(answer)
         return problems, solutions, answers, len(problems)
             
 def main():
-   data = AIME(False, year=2025)
+   data = AIME(False, year=2024)
    split ="#" * 20
    print("problems:" + data.problems[0])
    print(split)
