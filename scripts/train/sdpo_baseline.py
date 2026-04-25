@@ -264,7 +264,7 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "actor_rollout_ref.model.target_modules=all-linear",
         f"actor_rollout_ref.actor.optim.lr={config.learning_rate}",
         f"actor_rollout_ref.actor.ppo_mini_batch_size={ppo_mini_batch_size}",
-        f"actor_rollout_ref.actor.ppo_micro_batch_size={max(1, ppo_mini_batch_size)}",
+        f"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={max(1, ppo_mini_batch_size)}",
         "actor_rollout_ref.actor.policy_loss.loss_mode=sdpo",
         f"+actor_rollout_ref.actor.self_distillation.alpha={config.alpha}",
         "+actor_rollout_ref.actor.self_distillation.distillation_topk=100",
