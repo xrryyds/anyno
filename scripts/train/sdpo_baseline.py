@@ -274,6 +274,8 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "actor_rollout_ref.actor.optim.lr_warmup_steps=10",
         f"actor_rollout_ref.rollout.n={config.rollout_batch_size}",
         "actor_rollout_ref.rollout.calculate_log_probs=True",
+        f"actor_rollout_ref.rollout.log_prob_micro_batch_size={max(1, config.rollout_batch_size)}",
+        f"actor_rollout_ref.ref.log_prob_micro_batch_size={max(1, config.rollout_batch_size)}",
         f"actor_rollout_ref.rollout.val_kwargs.n={config.val_n}",
         f"actor_rollout_ref.rollout.max_model_len={config.max_prompt_length + config.max_response_length}",
         f"actor_rollout_ref.rollout.max_num_batched_tokens={config.max_prompt_length + config.max_response_length}",
