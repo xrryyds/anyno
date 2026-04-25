@@ -12,7 +12,6 @@ miniconda.sh
 .vscode/
 output/
 model/
-self-distillation/
 
 exam_roll.json
 
