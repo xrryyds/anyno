@@ -1099,12 +1099,22 @@ def compute_self_distillation_loss(
 
     metrics = {}
 
+    def _cfg_get(key: str, default: Any = None) -> Any:
+        if hasattr(self_distillation_config, "get"):
+            return self_distillation_config.get(key, default)
+        return getattr(self_distillation_config, key, default)
+
     loss_mask = response_mask
     if self_distillation_mask is not None:
         loss_mask = loss_mask * self_distillation_mask.unsqueeze(1)
 
-    if self_distillation_config.full_logit_distillation:
-        use_topk = self_distillation_config.distillation_topk is not None
+    full_logit_distillation = _cfg_get("full_logit_distillation", True)
+    distillation_topk = _cfg_get("distillation_topk", None)
+    distillation_add_tail = _cfg_get("distillation_add_tail", True)
+    alpha_cfg = _cfg_get("alpha", 1.0)
+
+    if full_logit_distillation:
+        use_topk = distillation_topk is not None
         if use_topk:
             if student_topk_log_probs is None or teacher_topk_log_probs is None:
                 raise ValueError("top-k distillation requires student_topk_log_probs and teacher_topk_log_probs.")
@@ -1123,7 +1133,7 @@ def compute_self_distillation_loss(
 
             student_distill_log_probs = student_topk_log_probs
             teacher_distill_log_probs = teacher_topk_log_probs
-            if self_distillation_config.distillation_add_tail:
+            if distillation_add_tail:
                 student_distill_log_probs = add_tail(student_distill_log_probs)
                 teacher_distill_log_probs = add_tail(teacher_distill_log_probs)
             else:
@@ -1135,11 +1145,11 @@ def compute_self_distillation_loss(
             student_distill_log_probs = student_all_log_probs
             teacher_distill_log_probs = teacher_all_log_probs
 
-        if self_distillation_config.alpha == 0.0:
+        if alpha_cfg == 0.0:
             kl_loss = F.kl_div(
                 student_distill_log_probs, teacher_distill_log_probs, reduction="none", log_target=True
             )
-        elif self_distillation_config.alpha == 1.0:
+        elif alpha_cfg == 1.0:
             kl_loss = F.kl_div(
                 teacher_distill_log_probs, student_distill_log_probs, reduction="none", log_target=True
             )
@@ -1147,7 +1157,7 @@ def compute_self_distillation_loss(
             # Compute the log of the mixture distribution
             # log(a + b) = log(exp(log(a)) + exp(log(b))) -> for mixture
             alpha = torch.tensor(
-                self_distillation_config.alpha,
+                alpha_cfg,
                 dtype=student_distill_log_probs.dtype,
                 device=student_distill_log_probs.device,
             )
@@ -1161,11 +1171,11 @@ def compute_self_distillation_loss(
 
         per_token_loss = kl_loss.sum(-1)
     else:
-        assert self_distillation_config.alpha == 1.0, "Only reverse KL is supported for non-full-logit distillation"
+        assert alpha_cfg == 1.0, "Only reverse KL is supported for non-full-logit distillation"
         log_ratio = student_log_probs - teacher_log_probs
         per_token_loss = log_ratio.detach() * student_log_probs
 
-    is_clip = self_distillation_config.is_clip
+    is_clip = _cfg_get("is_clip", None)
     if is_clip is not None:
         if old_log_probs is None:
             raise ValueError("old_log_probs is required for distillation IS ratio.")
