@@ -1389,7 +1389,7 @@ if __name__ == "__main__":
         data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
         batch_size=2,
         real_data_epochs=1,
-        device_num=1,
+        device_num=2,
     )
 
     # use_worker() 
