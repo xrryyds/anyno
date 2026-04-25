@@ -1386,10 +1386,9 @@ if __name__ == "__main__":
 
     run_sdpo_training_baseline(
         model_path=model_path,
-        data_path="datasets/exam/adv_hints.json",
+        data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
         batch_size=8,
         real_data_epochs=1,
-        output_base_dir="output",
         device_num=1,
     )
 
