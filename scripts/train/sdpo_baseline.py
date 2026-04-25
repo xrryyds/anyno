@@ -258,6 +258,7 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "trainer.max_actor_ckpt_to_keep=1",
         f"actor_rollout_ref.model.path={config.model_path}",
         "actor_rollout_ref.model.trust_remote_code=True",
+        "+actor_rollout_ref.model.override_config.attn_implementation=eager",
         f"actor_rollout_ref.model.lora_rank={config.lora_rank}",
         f"actor_rollout_ref.model.lora_alpha={config.lora_alpha}",
         "actor_rollout_ref.model.target_modules=all-linear",
