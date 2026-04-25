@@ -1384,15 +1384,19 @@ if __name__ == "__main__":
 
     # ########################################################################################################################################################################
 
-    run_sdpo_training_baseline(
-        model_path=model_path,
-        data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
-        batch_size=2,
-        real_data_epochs=1,
-        device_num=2,
-    )
-
-    # use_worker() 
-
+    try:
+        # 优先执行主训练函数
+        run_sdpo_training_baseline(
+            model_path=model_path,
+            data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
+            batch_size=8,
+            real_data_epochs=1,
+            device_num=2,
+        )
+    except Exception as e:
+        # 上方函数执行失败（报错）时，自动运行备用函数
+        print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
+        use_worker()
+    use_worker()
 
     
