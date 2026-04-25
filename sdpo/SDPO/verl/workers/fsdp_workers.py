@@ -291,13 +291,17 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
         tiled_mlp_shards=4,
     ):
         from torch.distributed.fsdp import CPUOffload, MixedPrecision
-        from transformers import (
-            AutoConfig,
-            AutoModel,
-            AutoModelForCausalLM,
-            AutoModelForImageTextToText,
-            AutoModelForVision2Seq,
-        )
+        from transformers import AutoConfig, AutoModel, AutoModelForCausalLM
+        try:
+            from transformers import AutoModelForImageTextToText
+        except ImportError:
+            AutoModelForImageTextToText = None
+        try:
+            from transformers import AutoModelForVision2Seq
+        except ImportError:
+            AutoModelForVision2Seq = AutoModelForImageTextToText
+        if AutoModelForImageTextToText is None:
+            AutoModelForImageTextToText = AutoModelForVision2Seq
 
         from verl.utils.model import get_generation_config, print_model_size, update_model_config
         from verl.utils.torch_dtypes import PrecisionType

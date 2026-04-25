@@ -20,13 +20,12 @@ from typing import Optional
 
 import torch
 from accelerate import init_empty_weights
-from transformers import (
-    AutoConfig,
-    AutoModelForCausalLM,
-    AutoModelForTokenClassification,
-    AutoModelForVision2Seq,
-    GenerationConfig,
-)
+from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForTokenClassification, GenerationConfig
+
+try:
+    from transformers import AutoModelForVision2Seq
+except ImportError:
+    from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
 
 from verl.utils import hf_processor, hf_tokenizer
 
