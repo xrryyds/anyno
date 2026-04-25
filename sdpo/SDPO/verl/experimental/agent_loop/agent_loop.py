@@ -222,6 +222,47 @@ class AgentLoopBase(ABC):
         self.system_prompt = initialize_system_prompt(self.tokenizer, **self.apply_chat_template_kwargs)
         self.loop = get_event_loop()
 
+    def _normalize_prompt_ids(self, prompt_ids, messages: list[dict], tools: list[dict] = None) -> list[int]:
+        """Normalize chat template output into a flat list of integer token ids.
+
+        Some tokenizer / processor combinations can unexpectedly return raw text
+        or string-like token sequences. vLLM strictly requires integer token ids.
+        """
+        if isinstance(prompt_ids, torch.Tensor):
+            prompt_ids = prompt_ids.squeeze(0).tolist()
+        elif isinstance(prompt_ids, dict) and "input_ids" in prompt_ids:
+            input_ids = prompt_ids["input_ids"]
+            if isinstance(input_ids, torch.Tensor):
+                prompt_ids = input_ids.squeeze(0).tolist()
+            else:
+                prompt_ids = input_ids
+
+        if isinstance(prompt_ids, str):
+            prompt_ids = self.tokenizer(prompt_ids, add_special_tokens=False)["input_ids"]
+        elif isinstance(prompt_ids, list) and prompt_ids and isinstance(prompt_ids[0], str):
+            raw_prompt = self.tokenizer.apply_chat_template(
+                messages,
+                tools=tools,
+                add_generation_prompt=True,
+                tokenize=False,
+                **self.apply_chat_template_kwargs,
+            )
+            prompt_ids = self.tokenizer(raw_prompt, add_special_tokens=False)["input_ids"]
+
+        if not isinstance(prompt_ids, list):
+            prompt_ids = list(prompt_ids)
+
+        normalized_prompt_ids = []
+        for token_id in prompt_ids:
+            if isinstance(token_id, int):
+                normalized_prompt_ids.append(token_id)
+            elif isinstance(token_id, np.integer):
+                normalized_prompt_ids.append(int(token_id))
+            else:
+                raise TypeError(f"Prompt token ids must be integers, got {type(token_id).__name__}: {token_id!r}")
+
+        return normalized_prompt_ids
+
     async def process_vision_info(self, messages: list[dict]) -> dict:
         """Extract images and videos from messages.
 
@@ -302,6 +343,8 @@ class AgentLoopBase(ABC):
                     **self.apply_chat_template_kwargs,
                 ),
             )
+
+        prompt_ids = self._normalize_prompt_ids(prompt_ids, messages, tools=tools)
 
         if remove_system_prompt:
             prompt_ids = prompt_ids[len(self.system_prompt) :]
