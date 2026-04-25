@@ -12,59 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
+
+logger = logging.getLogger(__name__)
+
 # To support different vLLM versions, we add the model into SUPPORTED_MOE_MODELS separately to avoid triggering
 # unsupported issues.
 SUPPORTED_MOE_MODELS = []
 
-try:
-    from vllm.model_executor.models.deepseek_v2 import DeepseekV2ForCausalLM, DeepseekV3ForCausalLM
 
-    SUPPORTED_MOE_MODELS.append(DeepseekV2ForCausalLM)
-    SUPPORTED_MOE_MODELS.append(DeepseekV3ForCausalLM)
-except ImportError:
-    pass
+def _try_register_moe_models(import_path, class_names):
+    try:
+        module = __import__(import_path, fromlist=class_names)
+        for class_name in class_names:
+            SUPPORTED_MOE_MODELS.append(getattr(module, class_name))
+    except Exception as exc:
+        # Some vLLM model modules can fail at import time due to upstream
+        # transformers/python compatibility issues even when they are unrelated
+        # to the current model. Skip them so non-MoE models can continue.
+        logger.debug("Skipping optional vLLM MoE model import %s: %s", import_path, exc)
 
-try:
-    from vllm.model_executor.models.mixtral import MixtralForCausalLM
 
-    SUPPORTED_MOE_MODELS.append(MixtralForCausalLM)
-except ImportError:
-    pass
-
-try:
-    from vllm.model_executor.models.qwen2_moe import Qwen2MoeForCausalLM
-
-    SUPPORTED_MOE_MODELS.append(Qwen2MoeForCausalLM)
-except ImportError:
-    pass
-
-try:
-    from vllm.model_executor.models.qwen3_moe import Qwen3MoeForCausalLM
-
-    SUPPORTED_MOE_MODELS.append(Qwen3MoeForCausalLM)
-except ImportError:
-    pass
-
-try:
-    from vllm.model_executor.models.qwen3_vl_moe import Qwen3MoeLLMForCausalLM
-
-    SUPPORTED_MOE_MODELS.append(Qwen3MoeLLMForCausalLM)
-except ImportError:
-    pass
-
-try:
-    from vllm.model_executor.models.qwen3_next import Qwen3NextForCausalLM
-
-    SUPPORTED_MOE_MODELS.append(Qwen3NextForCausalLM)
-except ImportError:
-    pass
-
-try:
-    from vllm.model_executor.models.kimi_vl import KimiVLForConditionalGeneration
-
-    SUPPORTED_MOE_MODELS.append(KimiVLForConditionalGeneration)
-except ImportError:
-    pass
+_try_register_moe_models(
+    "vllm.model_executor.models.deepseek_v2",
+    ["DeepseekV2ForCausalLM", "DeepseekV3ForCausalLM"],
+)
+_try_register_moe_models("vllm.model_executor.models.mixtral", ["MixtralForCausalLM"])
+_try_register_moe_models("vllm.model_executor.models.qwen2_moe", ["Qwen2MoeForCausalLM"])
+_try_register_moe_models("vllm.model_executor.models.qwen3_moe", ["Qwen3MoeForCausalLM"])
+_try_register_moe_models("vllm.model_executor.models.qwen3_vl_moe", ["Qwen3MoeLLMForCausalLM"])
+_try_register_moe_models("vllm.model_executor.models.qwen3_next", ["Qwen3NextForCausalLM"])
+_try_register_moe_models("vllm.model_executor.models.kimi_vl", ["KimiVLForConditionalGeneration"])
 
 
 def patch_vllm_moe_model_weight_loader(model):
