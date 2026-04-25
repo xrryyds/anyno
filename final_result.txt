@@ -1,0 +1,432 @@
+####################################
+##### 7-32B 2048-16384 MATH GSM ####
+############# 2048 #################
+#################################### 
+Recheck Result -> Original: 2773, Solved: 1394, Remaining: 1379
+7B_sft_train_MATH
+#############################
+Recheck Result -> Original: 2316, Solved: 977, Remaining: 1339
+7B_sft_test_MATH
+#############################
+Recheck Result -> Original: 1033, Solved: 654, Remaining: 379
+7B_sft_train_GSM8k
+#############################
+Recheck Result -> Original: 227, Solved: 136, Remaining: 91
+7B_sft_test_GSM8k
+#############################
+
+
+
+
+####################################
+#### 7-32B 2048-16384 MATH GSM  ####
+############# 4196 #################
+#################################### 
+Recheck Result -> Original: 1988, Solved: 728, Remaining: 1260
+7B_sft_train_MATH
+#############################
+Recheck Result -> Original: 1709, Solved: 682, Remaining: 1027
+7B_sft_test_MATH
+#############################
+Recheck Result -> Original: 803, Solved: 489, Remaining: 314
+7B_sft_train_GSM8k
+#############################
+Recheck Result -> Original: 181, Solved: 106, Remaining: 75
+7B_sft_test_GSM8k
+#############################
+
+
+
+
+
+####################################
+##### 7-32B 2048-16384 MATH GSM ####
+############# 8196# ################
+#################################### 
+Recheck Result -> Original: 1938, Solved: 682, Remaining: 1256
+7B_sft_train_MATH
+#############################
+Recheck Result -> Original: 1603, Solved: 639, Remaining: 964
+7B_sft_test_MATH
+#############################
+Recheck Result -> Original: 785, Solved: 472, Remaining: 313
+7B_sft_train_GSM8k
+#############################
+Recheck Result -> Original: 165, Solved: 96, Remaining: 69
+7B_sft_test_GSM8k
+#############################
+
+
+
+
+
+####################################
+### 7-32B 2048-16384 MATH GSM ######
+############# 16384 ################
+#################################### 
+Recheck Result -> Original: 1905, Solved: 647, Remaining: 1258
+7B_sft_train_MATH
+#############################
+Recheck Result -> Original: 1566, Solved: 611, Remaining: 955
+7B_sft_test_MATH
+#############################
+Recheck Result -> Original: 778, Solved: 458, Remaining: 320
+7B_sft_train_GSM8k
+#############################
+Recheck Result -> Original: 169, Solved: 100, Remaining: 69
+7B_sft_test_GSM8k
+#############################
+Recheck Result -> Original: 200, Solved: 139, Remaining: 61
+7b_GSM_test_without
+#############################
+Recheck Result -> Original: 960, Solved: 706, Remaining: 254
+7b_GSM_train_without
+#############################
+Recheck Result -> Original: 230, Solved: 174, Remaining: 56
+7b_GSM_test_SIRA
+#############################
+Recheck Result -> Original: 1088, Solved: 836, Remaining: 252
+7b_GSM_train_SIRA
+#############################
+Recheck Result -> Original: 172, Solved: 94, Remaining: 78
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 771, Solved: 461, Remaining: 310
+7b_GSM_train_sft
+######
+
+
+
+
+
+
+
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   ######
+############# 2048 #################
+#################################### 
+#####################
+Recheck Result -> Original: 887, Solved: 74, Remaining: 813
+1.5B_AIME20
+#############################
+Recheck Result -> Original: 868, Solved: 79, Remaining: 789
+7B_AIME20
+#############################
+Recheck Result -> Original: 856, Solved: 66, Remaining: 790
+32B_AIME20
+#############################
+Recheck Result -> Original: 885, Solved: 101, Remaining: 784
+7B_sft_AIME20
+#############################
+Recheck Result -> Original: 819, Solved: 180, Remaining: 639
+1.5B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 755, Solved: 223, Remaining: 532
+7B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 752, Solved: 258, Remaining: 494
+32B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 227, Solved: 135, Remaining: 92
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 1032, Solved: 643, Remaining: 389
+7b_GSM_train_sft
+#############################
+
+
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   ######
+############# 4096 #################
+#################################### 
+Recheck Result -> Original: 660, Solved: 186, Remaining: 474
+7b_AIME_without
+#############################
+Recheck Result -> Original: 663, Solved: 251, Remaining: 412
+7b_AIME_sira
+#############################
+Recheck Result -> Original: 813, Solved: 123, Remaining: 690
+7b_AIME_sft
+#############################
+Recheck Result -> Original: 797, Solved: 484, Remaining: 313
+7b_GSM_train_sft
+#############################
+Recheck Result -> Original: 171, Solved: 107, Remaining: 64
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 786, Solved: 224, Remaining: 562
+1.5b_AIME_without
+#############################
+Recheck Result -> Original: 788, Solved: 210, Remaining: 578
+1.5b_AIME_sira
+#############################
+Recheck Result -> Original: 611, Solved: 184, Remaining: 427
+32b_AIME_without
+#############################
+Recheck Result -> Original: 629, Solved: 273, Remaining: 356
+32b_AIME_sira
+#############################
+
+
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   ######
+############# 8192 #################
+#################################### 
+Recheck Result -> Original: 775, Solved: 119, Remaining: 656
+7b_AIME_sft
+#############################
+Recheck Result -> Original: 759, Solved: 465, Remaining: 294
+7b_GSM_train_sft
+#############################
+Recheck Result -> Original: 168, Solved: 98, Remaining: 70
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 478, Solved: 250, Remaining: 228
+7b_AIME_without
+#############################
+Recheck Result -> Original: 629, Solved: 318, Remaining: 311
+7b_AIME_sira
+#############################
+Recheck Result -> Original: 773, Solved: 145, Remaining: 628
+7b_AIME_sft
+#############################
+Recheck Result -> Original: 776, Solved: 469, Remaining: 307
+7b_GSM_train_sft
+#############################
+Recheck Result -> Original: 176, Solved: 107, Remaining: 69
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 710, Solved: 339, Remaining: 371
+1.5b_AIME_without
+#############################
+Recheck Result -> Original: 773, Solved: 262, Remaining: 511
+1.5b_AIME_sira
+#############################
+Recheck Result -> Original: 400, Solved: 222, Remaining: 178
+32b_AIME_without
+#############################
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   ######
+############# 16384 ################
+#################################### 
+Recheck Result -> Original: 695, Solved: 385, Remaining: 310
+1.5B_AIME20
+#############################
+Recheck Result -> Original: 432, Solved: 288, Remaining: 144
+7B_AIME20
+#############################
+Recheck Result -> Original: 343, Solved: 207, Remaining: 136
+32B_AIME20
+#############################
+Recheck Result -> Original: 746, Solved: 128, Remaining: 618
+7B_sft_AIME20
+#############################
+Recheck Result -> Original: 766, Solved: 258, Remaining: 508
+1.5B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 603, Solved: 320, Remaining: 283
+7B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 508, Solved: 353, Remaining: 140
+32B_SIRA_AIME20
+#############################
+
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   #####
+############# 8192 ################
+#################################### 
+Recheck Result -> Original: 775, Solved: 119, Remaining: 656
+7b_AIME_sft
+#############################
+Recheck Result -> Original: 759, Solved: 465, Remaining: 294
+7b_GSM_train_sft
+#############################
+Recheck Result -> Original: 168, Solved: 98, Remaining: 70
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 478, Solved: 250, Remaining: 228
+7b_AIME_without
+#############################
+Recheck Result -> Original: 629, Solved: 318, Remaining: 311
+7b_AIME_sira
+#############################
+Recheck Result -> Original: 773, Solved: 145, Remaining: 628
+7b_AIME_sft
+#############################
+Recheck Result -> Original: 776, Solved: 469, Remaining: 307
+7b_GSM_train_sft
+#############################
+Recheck Result -> Original: 176, Solved: 107, Remaining: 69
+7b_GSM_test_sft
+#############################
+Recheck Result -> Original: 710, Solved: 339, Remaining: 371
+1.5b_AIME_without
+#############################
+Recheck Result -> Original: 773, Solved: 262, Remaining: 511
+1.5b_AIME_sira
+#############################
+Recheck Result -> Original: 400, Solved: 222, Remaining: 178
+32b_AIME_without
+#############################
+
+
+
+
+####################################
+##### 7-32B 2048-16384 AIME   #####
+############# 16384 ################
+#################################### 
+Recheck Result -> Original: 695, Solved: 385, Remaining: 310
+1.5B_AIME20
+#############################
+Recheck Result -> Original: 432, Solved: 288, Remaining: 144
+7B_AIME20
+#############################
+Recheck Result -> Original: 343, Solved: 207, Remaining: 136
+32B_AIME20
+#############################
+Recheck Result -> Original: 746, Solved: 128, Remaining: 618
+7B_sft_AIME20
+#############################
+Recheck Result -> Original: 766, Solved: 258, Remaining: 508
+1.5B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 603, Solved: 320, Remaining: 283
+7B_SIRA_AIME20
+#############################
+Recheck Result -> Original: 508, Solved: 353, Remaining: 140
+32B_SIRA_AIME20
+#############################
+
+
+消融 
+8192 AIME
+###############
+Recheck Result -> Original: 643, Solved: 339, Remaining: 304
+witout_gate_2048
+#############################
+Recheck Result -> Original: 600, Solved: 300, Remaining: 300
+witout_sira_2048
+#############################
+Recheck Result -> Original: 594, Solved: 296, Remaining: 298
+witout_batch_deal_2048
+#############################
+
+
+消融
+16384 AIME
+###########
+Recheck Result -> Original: 644, Solved: 364, Remaining: 280
+witout_gate_2048
+#############################
+Recheck Result -> Original: 590, Solved: 316, Remaining: 274
+witout_sira_2048
+#############################
+Recheck Result -> Original: 581, Solved: 336, Remaining: 245
+witout_batch_deal_2048
+#############################
+
+
+
+消融（MATH）
+####################Recheck Result -> Original: 1549, Solved: 1047, Remaining: 502
+witout_gate_2048
+#############################
+Recheck Result -> Original: 1401, Solved: 1003, Remaining: 398
+witout_gate_4096
+#############################
+Recheck Result -> Original: 2075, Solved: 1194, Remaining: 881
+witout_sira_2048
+#############################
+Recheck Result -> Original: 1131, Solved: 668, Remaining: 463
+witout_sira_4096
+#############################
+Recheck Result -> Original: 2038, Solved: 1143, Remaining: 895
+witout_batch_deal_2048
+#############################
+Recheck Result -> Original: 1148, Solved: 671, Remaining: 477
+witout_batch_deal_4096
+#############################
+Recheck Result -> Original: 1368, Solved: 1018, Remaining: 350
+witout_gate_8192
+#############################
+Recheck Result -> Original: 932, Solved: 556, Remaining: 376
+witout_sira_8192
+#############################
+Recheck Result -> Original: 913, Solved: 525, Remaining: 388
+witout_batch_deal_8192
+#############################
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+ 
+SDFT 2048
+################# 
+MATH Original: 1821, Solved: 740, Remaining: 1081
+################Recheck Result -> Original: 1642, Solved: 1214, Remaining: 428
+sdft_GSM_TRAIN_2048
+#############################
+Recheck Result -> Original: 349, Solved: 253, Remaining: 96
+sdft_GSM_TRAIN_2048
+#############################
+
+
+SDFT 4096
+#################################
+Recheck Result -> Original: 1640, Solved: 1233, Remaining: 407
+sdft_GSM_TRAIN_4096
+#############################
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -12,10 +12,10 @@ miniconda.sh
 .vscode/
 output/
 model/
-self-distillation/
 
 exam_roll.json
 
 workflow.txt
 exam_result.txt
 
+exam_result.txt

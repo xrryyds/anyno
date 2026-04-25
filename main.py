@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import run_sira_training_v2, run_sira_training_v3, run_sft_training_baseline
+from scripts import run_sira_training_v2, run_sira_training_v3, run_sft_training_baseline, run_sdft_training_baseline
 from transformers import (
     AutoTokenizer,
     AutoModelForCausalLM,
@@ -45,10 +45,10 @@ exam_paper = FileIOUtils()
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
-model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
+model_path= "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
 # model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1"
-# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-14B"
-# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
+model_path_32b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
+model_path_1_5b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
 
 def exam_roll_recheck_hints(lora_path: str = None):
     try:
@@ -374,7 +374,7 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None):
+def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, model_path: str= model_path):
     data = Math_All(subset_name=subset,train=train)
     question = data.problems
     solution = data.solutions
@@ -438,7 +438,7 @@ def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
+def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None, model_path = model_path):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -524,7 +524,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
 
 
-def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str=""):
+def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path: str = model_path):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
@@ -1310,10 +1310,10 @@ if __name__ == "__main__":
     # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
-    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    teacher.teacher_mark_paper_with_save()
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
+    # student_take_exam_Math_500(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_1ep_0423_1515")
+    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/1.5b/checkpoint-1568")
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # # 示例：使用 SIRA 训练的结果进行 GRPO
@@ -1327,7 +1327,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
+    # exam_roll_recheck_mistake(True, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sdft_baseline_10ep_0422_2016")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1336,43 +1336,17 @@ if __name__ == "__main__":
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
-    # gen_sft_dataset(50)
-    # run_sft_training_baseline(model_path=model_path, real_data_epochs=50)
-
-    # ########################################################################################################################################################################
-    # student_take_exam_Math_sub(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora= True,
-    #                         lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659",
-    #                         save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/exam_result.txt",
-    #                         log_prompt="7B_sft_train_MATH",
-    #                         )
-
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora= True,
-    #                         lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659",
-    #                         save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/exam_result.txt",
-    #                         log_prompt="7B_sft_test_MATH",
-    #                         )
-
-    # student_take_exam_Gsm8k(train=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora= True,
-    #                         lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659",
-    #                         save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/exam_result.txt",
-    #                         log_prompt="7B_sft_train_GSM8k",
-    #                         )
+    # gen_sft_dataset(10)
+    # run_sft_training_baseline(model_path=model_path, real_data_epochs=10)
     
+    ########################################################################################################
+
+    run_sdft_training_baseline(data_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json", 
+                               model_path = model_path, 
+                               batch_size = 4,
+                               real_data_epochs = 10)
+
     
-    # student_take_exam_Gsm8k(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora= True,
-    #                         lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659",
-    #                         save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/exam_result.txt",
-    #                         log_prompt="7B_sft_test_GSM8k",
-    #                         )
-    # ###########################################################################################################################################################################
 
     use_worker() 
 
