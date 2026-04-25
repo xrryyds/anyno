@@ -232,6 +232,11 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
     test_parquet = os.path.join(dataset_dir, "test.parquet")
     exp_name = config.exp_name or os.path.basename(output_dir)
     ppo_mini_batch_size = config.ppo_mini_batch_size or config.train_batch_size
+    ppo_micro_batch_size = max(1, min(4, ppo_mini_batch_size))
+    log_prob_micro_batch_size = min(8, max(1, config.rollout_batch_size))
+    # For 7B-scale models that already fit on one GPU, tensor parallelism across
+    # two GPUs often slows rollout down more than it helps.
+    tensor_parallel_size = 1
 
     cmd = [
         sys.executable,
@@ -264,7 +269,7 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "actor_rollout_ref.model.target_modules=all-linear",
         f"actor_rollout_ref.actor.optim.lr={config.learning_rate}",
         f"actor_rollout_ref.actor.ppo_mini_batch_size={ppo_mini_batch_size}",
-        f"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={max(1, ppo_mini_batch_size)}",
+        f"actor_rollout_ref.actor.ppo_micro_batch_size_per_gpu={ppo_micro_batch_size}",
         "actor_rollout_ref.actor.policy_loss.loss_mode=sdpo",
         f"+actor_rollout_ref.actor.self_distillation.alpha={config.alpha}",
         "+actor_rollout_ref.actor.self_distillation.distillation_topk=100",
@@ -283,9 +288,9 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "actor_rollout_ref.rollout.agent.num_workers=1",
         f"actor_rollout_ref.rollout.n={config.rollout_batch_size}",
         "actor_rollout_ref.rollout.calculate_log_probs=True",
-        f"actor_rollout_ref.rollout.log_prob_micro_batch_size={max(1, config.rollout_batch_size)}",
-        f"actor_rollout_ref.rollout.tensor_model_parallel_size={config.n_gpus_per_node}",
-        f"actor_rollout_ref.ref.log_prob_micro_batch_size={max(1, config.rollout_batch_size)}",
+        f"actor_rollout_ref.rollout.log_prob_micro_batch_size={log_prob_micro_batch_size}",
+        f"actor_rollout_ref.rollout.tensor_model_parallel_size={tensor_parallel_size}",
+        f"actor_rollout_ref.ref.log_prob_micro_batch_size={log_prob_micro_batch_size}",
         f"actor_rollout_ref.rollout.val_kwargs.n={config.val_n}",
         f"actor_rollout_ref.rollout.max_model_len={config.max_prompt_length + config.max_response_length}",
         f"actor_rollout_ref.rollout.max_num_batched_tokens={config.max_prompt_length + config.max_response_length}",
