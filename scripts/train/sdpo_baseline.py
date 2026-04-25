@@ -274,6 +274,7 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         "+actor_rollout_ref.actor.self_distillation.teacher_update_rate=0.05",
         "+actor_rollout_ref.actor.self_distillation.remove_thinking_from_demonstration=True",
         "+actor_rollout_ref.actor.self_distillation.environment_feedback_only_without_solution=True",
+        "+actor_rollout_ref.actor.self_distillation.reprompt_truncation=right",
         "+actor_rollout_ref.actor.self_distillation.is_clip=2.0",
         f"+actor_rollout_ref.actor.self_distillation.dont_reprompt_on_self_success={str(config.dont_reprompt_on_self_success)}",
         f"+actor_rollout_ref.actor.self_distillation.include_environment_feedback={str(config.include_environment_feedback)}",
