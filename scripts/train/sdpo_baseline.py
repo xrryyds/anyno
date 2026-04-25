@@ -252,7 +252,6 @@ def _build_sdpo_command(config: SDPOWrapperConfig, output_dir: str, dataset_dir:
         f"trainer.n_gpus_per_node={config.n_gpus_per_node}",
         "trainer.nnodes=1",
         f"trainer.project_name=CELPO-SDPO",
-        f"trainer.group_name={exp_name}",
         f"trainer.experiment_name={exp_name}",
         f"trainer.default_local_dir={output_dir}",
         "trainer.save_freq=5",
