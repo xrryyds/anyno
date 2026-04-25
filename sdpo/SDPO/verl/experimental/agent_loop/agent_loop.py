@@ -17,6 +17,7 @@ import logging
 import os
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Any, Optional
 from uuid import uuid4
 
@@ -230,7 +231,13 @@ class AgentLoopBase(ABC):
         """
         if isinstance(prompt_ids, torch.Tensor):
             prompt_ids = prompt_ids.squeeze(0).tolist()
-        elif isinstance(prompt_ids, dict) and "input_ids" in prompt_ids:
+        elif isinstance(prompt_ids, Mapping) and "input_ids" in prompt_ids:
+            input_ids = prompt_ids["input_ids"]
+            if isinstance(input_ids, torch.Tensor):
+                prompt_ids = input_ids.squeeze(0).tolist()
+            else:
+                prompt_ids = input_ids
+        elif hasattr(prompt_ids, "__contains__") and hasattr(prompt_ids, "__getitem__") and "input_ids" in prompt_ids:
             input_ids = prompt_ids["input_ids"]
             if isinstance(input_ids, torch.Tensor):
                 prompt_ids = input_ids.squeeze(0).tolist()
