@@ -1,6 +1,6 @@
 import logging
 import os
-from datasets import load_dataset, load_from_disk
+from .hf_datasets import load_dataset, load_from_disk
 
 logger = logging.getLogger(__name__)
 

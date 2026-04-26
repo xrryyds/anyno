@@ -1,5 +1,5 @@
 import logging
-from datasets import Dataset
+from .hf_datasets import Dataset
 from .load_dataset import LoadDataset
 from prompt import QUESTION_PROMPT, ANSWER_PROMPT
 from sklearn.model_selection import train_test_split 
