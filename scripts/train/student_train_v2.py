@@ -356,12 +356,19 @@ class SequentialTrainer(Trainer):
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
-                l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps) if a_count > 0 else torch.tensor(0.0, device=logits.device)
 
-                # KL(teacher||student): hint always, answer weighted by gate
-                kl_w = h_m + gate.detach() * a_m
-                l_kl = (kl_ts[i] * kl_w).sum() / (kl_w.sum() + eps)
-                l_gen = l_ce + self.hint_config.kl_lambda * l_kl
+                # [Old code kept for ablation reference]
+                # l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                #
+                # # KL(teacher||student): hint always, answer weighted by gate
+                # kl_w = h_m + gate.detach() * a_m
+                # l_kl = (kl_ts[i] * kl_w).sum() / (kl_w.sum() + eps)
+                # l_gen = l_ce + self.hint_config.kl_lambda * l_kl
+
+                # New mode_b logic:
+                # keep hint CE, replace answer CE with gated answer KL
+                l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * kl_answer
 
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
@@ -398,9 +405,14 @@ class SequentialTrainer(Trainer):
 
                 # KL(ref||student) on answer only
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
-                anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
 
-                suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
+                # [Old code kept for ablation reference]
+                # anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
+                # suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
+
+                # New anchor logic:
+                # directly use answer-region KL as the final anchor loss
+                suppressed_anchor_losses.append(kl_anchor)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": instance_suppress.item()}
 
         alpha_balance, batch_beta_val = 0.0, 0.0
@@ -408,19 +420,27 @@ class SequentialTrainer(Trainer):
             batch_ref_mean = batch_ref_anchor_loss_sum / valid_anchor_count
             batch_beta_val = batch_ref_mean.item()
             safe_batch_beta = batch_ref_mean.detach() + 1e-6
-            # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
-            total_valid = valid_anchor_count + len(gen_indices)
-            r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
-            # vol_balance = (1 - r) / r
-            vol_balance = 1
-            raw_loss_ratio = scaling_gen_loss / safe_batch_beta
-            smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
-            alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
+
+            # [Old code kept for ablation reference]
+            # # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
+            # total_valid = valid_anchor_count + len(gen_indices)
+            # r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
+            # # vol_balance = (1 - r) / r
+            # vol_balance = 1
+            # raw_loss_ratio = scaling_gen_loss / safe_batch_beta
+            # smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
+            # alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
+
+            # New anchor logic disables alpha balancing.
+            alpha_balance = 1.0
 
         anchor_idx_ptr = 0
         for idx in anchor_indices:
             if idx in debug_map: 
-                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr] * alpha_balance
+                # [Old code kept for ablation reference]
+                # final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr] * alpha_balance
+
+                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr]
                 final_losses_map[idx] = final_anchor_loss
                 debug_map[idx]["loss_contrib"] = final_anchor_loss.item()
                 debug_map[idx]["final_balance_alpha"] = alpha_balance
@@ -558,7 +578,7 @@ def run_sira_training_v2(
         data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=spilt,
-        anchor_loss_weight_k=0.1, 
+        anchor_loss_weight_k=1.0, 
         suppress_max_scale=1.0,
         anchor_sigmoid_slope=50, 
         anchor_loss_tolerance=1.01,
