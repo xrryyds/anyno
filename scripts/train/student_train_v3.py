@@ -1,7 +1,6 @@
 import os
 # 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-from transformers import BitsAndBytesConfig
 
 import sys
 import json
@@ -37,6 +36,7 @@ logger = logging.getLogger(__name__)
 
 # 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
+SAVE_TOTAL = 2
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning, module="torch.utils.checkpoint")
@@ -49,7 +49,8 @@ except ImportError:
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # ==========================================
-# 1. 配置与工具类
+# 1. 配置与工具类 (已精简)
+# save_total_limit=2
 # ==========================================
 
 @dataclass
@@ -60,11 +61,14 @@ class HintSFTConfig:
     split_r: float = 0.5
     
     # 核心超参
-    anchor_loss_weight_k: float = 1
+    anchor_loss_weight_k: float = 0.2
     suppress_max_scale: float = 1.0
-    anchor_sigmoid_slope: float = 1000.0
+    anchor_sigmoid_slope: float = 100.0
     anchor_loss_tolerance: float = 1.00
     
+    # === [关键修改] ===
+    # 移除了 target_loss_ratio
+    # 仅保留 target_mode_b 作为早停标准
     target_mode_b: Optional[float] = None
     
     metrics_log_interval: int = 8
@@ -83,7 +87,7 @@ def setup_logging(output_dir):
     return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
 
 # ==========================================
-# 2. Metrics Tracker
+# 2. Metrics Tracker (保持不变)
 # ==========================================
 class TrainingMetricsTracker:
     def __init__(self):
@@ -170,7 +174,7 @@ class TrainingMetricsTracker:
 tracker = TrainingMetricsTracker()
 
 # ==========================================
-# 3. Data Collator
+# 3. Data Collator (保持不变)
 # ==========================================
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
@@ -284,13 +288,6 @@ class SequentialTrainer(Trainer):
         if self.model.training:
             tracker.update(loss.item(), metadata, debug_info_list, current_alpha, dynamic_beta)
 
-        # ======【防OOM核心】：及时清理庞大的中间 Logits 张量 ======
-        del ref_logits
-        del logits
-        if not return_outputs:
-            del outputs
-        # ==========================================================
-
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
@@ -359,12 +356,19 @@ class SequentialTrainer(Trainer):
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 avg_a_loss = (token_losses[i] * a_m).sum() / a_count if a_count > 0 else torch.tensor(0.0, device=logits.device)
-                l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps) if a_count > 0 else torch.tensor(0.0, device=logits.device)
 
-                # KL(teacher||student): hint always, answer weighted by gate
-                kl_w = h_m + gate.detach() * a_m
-                l_kl = (kl_ts[i] * kl_w).sum() / (kl_w.sum() + eps)
-                l_gen = l_ce + self.hint_config.kl_lambda * l_kl
+                # [Old code kept for ablation reference]
+                # l_ce = self.hint_config.hint_fixed_weight * avg_h_loss + gate * avg_a_loss
+                #
+                # # KL(teacher||student): hint always, answer weighted by gate
+                # kl_w = h_m + gate.detach() * a_m
+                # l_kl = (kl_ts[i] * kl_w).sum() / (kl_w.sum() + eps)
+                # l_gen = l_ce + self.hint_config.kl_lambda * l_kl
+
+                # New mode_b logic:
+                # keep hint CE, replace answer CE with gated answer KL
+                l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * kl_answer
 
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
@@ -401,9 +405,14 @@ class SequentialTrainer(Trainer):
 
                 # KL(ref||student) on answer only
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
-                anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
 
-                suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
+                # [Old code kept for ablation reference]
+                # anchor_loss_with_kl = raw_curr + self.hint_config.kl_beta * kl_anchor
+                # suppressed_anchor_losses.append(instance_suppress * anchor_loss_with_kl)
+
+                # New anchor logic:
+                # directly use answer-region KL as the final anchor loss
+                suppressed_anchor_losses.append(kl_anchor)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": instance_suppress.item()}
 
         alpha_balance, batch_beta_val = 0.0, 0.0
@@ -411,19 +420,27 @@ class SequentialTrainer(Trainer):
             batch_ref_mean = batch_ref_anchor_loss_sum / valid_anchor_count
             batch_beta_val = batch_ref_mean.item()
             safe_batch_beta = batch_ref_mean.detach() + 1e-6
-            # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
-            total_valid = valid_anchor_count + len(gen_indices)
-            r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
-            # vol_balance = (1 - r) / r
-            vol_balance = 1
-            raw_loss_ratio = scaling_gen_loss / safe_batch_beta
-            smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
-            alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
+
+            # [Old code kept for ablation reference]
+            # # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
+            # total_valid = valid_anchor_count + len(gen_indices)
+            # r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
+            # # vol_balance = (1 - r) / r
+            # vol_balance = 1
+            # raw_loss_ratio = scaling_gen_loss / safe_batch_beta
+            # smooth_scaler = 1.0 + 0.8 * torch.log(raw_loss_ratio) if raw_loss_ratio > 1.0 else raw_loss_ratio
+            # alpha_balance = (self.hint_config.anchor_loss_weight_k * vol_balance * smooth_scaler).item()
+
+            # New anchor logic disables alpha balancing.
+            alpha_balance = 1.0
 
         anchor_idx_ptr = 0
         for idx in anchor_indices:
             if idx in debug_map: 
-                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr] * alpha_balance
+                # [Old code kept for ablation reference]
+                # final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr] * alpha_balance
+
+                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr]
                 final_losses_map[idx] = final_anchor_loss
                 debug_map[idx]["loss_contrib"] = final_anchor_loss.item()
                 debug_map[idx]["final_balance_alpha"] = alpha_balance
@@ -452,7 +469,7 @@ class SequentialTrainer(Trainer):
         return final_loss, debug_info_list, alpha_balance, batch_beta_val
 
 # ==========================================
-# 5. Callbacks
+# 5. Callbacks (已修改，彻底移除 Ratio 逻辑)
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
@@ -474,6 +491,9 @@ class StepLogCallback(TrainerCallback):
                 val_str = f"{v:.6f}" if isinstance(v, float) else str(v)
                 log_parts.append(f"{k}: {val_str}")
             logger.info(" | ".join(log_parts))
+            
+            # 彻底移除了这里的 Early Stopping 逻辑
+            # 现在仅负责 Log
             
             tracker.reset_window()
 
@@ -501,6 +521,7 @@ class LogicalEpochLogCallback(TrainerCallback):
             logger.info(f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***")
             logger.info(f"  Avg ModeB (Raw):{stats['avg_mode_b_loss_raw']:.4f}")
             
+            # === 仅检查 Epoch 级别的 Mode B Loss 是否达标 (target_mode_b) ===
             epoch_mode_b_raw = stats.get('avg_mode_b_loss_raw', 999.0)
             target = self.config.target_mode_b
             
@@ -527,15 +548,16 @@ class LogicalEpochLogCallback(TrainerCallback):
 # 6. Main Execution Function
 # ==========================================
 
-def run_sira_training_v3(
+def run_sira_training_v2(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
-    batch_size: int = 4,
+    batch_size: int = 8,
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
-    target_mode_b: float = 0.1,
+    # 默认值可以设为您期望的停止阈值
+    target_mode_b: float = 0.13,
     lora_path: Optional[str] = None,
 ):
     current_file_path = os.path.abspath(__file__)
@@ -556,9 +578,9 @@ def run_sira_training_v3(
         data_path=data_path, 
         output_base_dir=output_base_dir,
         split_r=spilt,
-        anchor_loss_weight_k=1, 
+        anchor_loss_weight_k=1.0, 
         suppress_max_scale=1.0,
-        anchor_sigmoid_slope=50.0, 
+        anchor_sigmoid_slope=50, 
         anchor_loss_tolerance=1.01,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
@@ -591,17 +613,12 @@ def run_sira_training_v3(
         steps_per_logical_epoch = 1
         logger.warning(f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1.")
 
-    bnb_config = BitsAndBytesConfig(load_in_8bit= True)
-    # ======【免编译，防OOM核心】：8-bit 显存减半 + PyTorch原生加速 ======
     model = AutoModelForCausalLM.from_pretrained(
         hint_config.model_path,
-        quantization_config = bnb_config,
+        torch_dtype=torch.bfloat16,
         device_map="auto",
-        trust_remote_code=True,
-        attn_implementation="sdpa"           # 采用 PyTorch 2+ 内置的高效缩放点积注意力，免装 flash-attn
+        trust_remote_code=True
     )
-    # ======================================================================
-
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
@@ -640,27 +657,24 @@ def run_sira_training_v3(
 
     model.enable_input_require_grads()
 
-    # ======【防OOM核心】：8-bit 优化器进一步压缩显存 ======
     training_args = TrainingArguments(
         output_dir=output_dir,
         num_train_epochs=1,
-        per_device_train_batch_size=batch_size // device_num, # 这里确保维持在你的 4，不破坏损失计算逻辑
-        gradient_accumulation_steps=1,                         
-        optim="paged_adamw_8bit",                              # 优化器状态显存占用极大缩小
+        per_device_train_batch_size=batch_size // device_num,
+        gradient_accumulation_steps=1,
         learning_rate=5e-5, 
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=hint_config.metrics_log_interval, 
         save_strategy="steps",           
-        save_steps=steps_per_logical_epoch,
-        save_total_limit=2,
+        save_steps=steps_per_logical_epoch * (real_data_epochs/SAVE_TOTAL),
+        save_total_limit=SAVE_TOTAL,
         fp16=False, bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
         dataloader_drop_last=True, report_to="none"                 
     )
-    # ========================================================
 
     step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)
     epoch_callback = LogicalEpochLogCallback(epoch_log_file, steps_per_logical_epoch, hint_config, output_dir)
@@ -691,9 +705,9 @@ if __name__ == "__main__":
     default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
 
-    run_sira_training_v3(
+    run_sira_training_v2(
         model_path=default_model_url,
-        batch_size=4,       # 注意：已为你保住了目标 batch=4，算法逻辑不会被破坏
+        batch_size=8,
         real_data_epochs=50,
-        target_mode_b=1.2   
+        target_mode_b=1.2  # 在这里修改你的目标阈值
     )
