@@ -435,8 +435,16 @@ class SequentialTrainer(Trainer):
         if len(anchor_indices) > 0:
             task_weights[anchor_indices] = 0.5 / len(anchor_indices)
 
-        weighted_loss_vec = raw_loss_vector * task_weights * 2.0
-        final_loss = weighted_loss_vec.sum()
+        weighted_loss_vec = raw_loss_vector * task_weights * 2.0 
+        if len(gen_indices) > 0:
+            is_mode_b = torch.zeros(batch_size, device=logits.device)
+            is_mode_b[gen_indices] = 1.0
+            loss_b_vec = weighted_loss_vec * is_mode_b
+            norm_b = torch.norm(loss_b_vec, p=2) 
+            norm_total = torch.norm(weighted_loss_vec, p=2)
+            final_loss = (weighted_loss_vec * (norm_b / norm_total).detach()).sum() if norm_total > 1e-6 else weighted_loss_vec.sum()
+        else:
+            final_loss = weighted_loss_vec.sum()
 
         return final_loss, debug_info_list, alpha_balance, batch_beta_val
 
