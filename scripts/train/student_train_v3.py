@@ -287,9 +287,9 @@ class SequentialTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
-    def _per_token_reverse_kl(logits_s, logits_t, chunk_size: int = 8192):
-        """KL(p_s || p_t) per token in bfloat16. Inputs: raw logits [T, V].
-        计算逆向 KL (Reverse KL)，即 student 匹配 teacher。
+    def _per_token_forward_kl(logits_s, logits_t, chunk_size: int = 8192):
+        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V].
+        计算正向 KL (Forward KL)，与 SDFT 默认蒸馏方向一致。
         """
         T, V = logits_s.shape
 
@@ -307,12 +307,12 @@ class SequentialTrainer(Trainer):
             log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
             log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
             
-            p_s_chunk = log_p_s_chunk.exp()            # [T, C]
+            p_t_chunk = log_p_t_chunk.exp()            # [T, C]
 
-            # p_s * (log_p_s - log_p_t)
-            kl = kl + (p_s_chunk * (log_p_s_chunk - log_p_t_chunk)).sum(dim=-1)
+            # p_t * (log_p_t - log_p_s)
+            kl = kl + (p_t_chunk * (log_p_t_chunk - log_p_s_chunk)).sum(dim=-1)
 
-            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_s_chunk
+            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_t_chunk
 
         return kl
 
@@ -328,8 +328,8 @@ class SequentialTrainer(Trainer):
         kl_list = []
         for j in range(shift_logits.size(0)):
             token_losses_list.append(loss_fct(shift_logits[j], shift_labels[j]))
-            # 调用逆向 KL 函数
-            kl_list.append(self._per_token_reverse_kl(shift_logits[j], shift_ref_logits[j]))
+            # 使用 SDFT 风格的正向 KL: KL(ref || student)
+            kl_list.append(self._per_token_forward_kl(shift_logits[j], shift_ref_logits[j]))
             
         token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
         kl_ts = torch.stack(kl_list)  # [B, T]
@@ -345,11 +345,13 @@ class SequentialTrainer(Trainer):
             if h_count > 0:
                 gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
-                gate = torch.sigmoid(self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach()))
+                gate = 2.0 * torch.sigmoid(
+                    self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
+                )
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 
-                # Answer 部分使用 KL
+                # Answer 部分使用 forward KL
                 kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps) if a_count > 0 else torch.tensor(0.0, device=logits.device)
 
                 # Mode B Loss: Hint CE + Gate * Answer KL
@@ -384,7 +386,7 @@ class SequentialTrainer(Trainer):
                 batch_ref_anchor_loss_sum += raw_ref
                 valid_anchor_count += 1
 
-                # KL(ref||student) on answer only
+                # Forward KL(ref||student) on answer only
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
 
                 # Anchor 简化为纯 KL 乘以 kl_beta
