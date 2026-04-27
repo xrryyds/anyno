@@ -55,8 +55,8 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
-    gate_threshold: float = 0.1
-    gate_slope: float = 3.0
+    gate_threshold: float = 0.2
+    gate_slope: float = 100.0
     split_r: float = 0.5
     
     # 核心超参
@@ -73,7 +73,7 @@ class HintSFTConfig:
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
     kl_lambda: float = 0.5   # 弃用（不再使用旧的前向KL组合公式）
-    kl_beta: float = 0.05    # KL(ref||student) weight for anchor
+    kl_beta: float = 1    # KL(ref||student) weight for anchor
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -507,7 +507,7 @@ class LogicalEpochLogCallback(TrainerCallback):
 # 6. Main Execution Function
 # ==========================================
 
-def run_sira_training_v2(
+def run_sira_training_v3(
     model_path: str,
     data_path: Optional[str] = None,
     output_base_dir: Optional[str] = None,
