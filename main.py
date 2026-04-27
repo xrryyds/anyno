@@ -1348,12 +1348,12 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 1)
     # gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    # run_sira_training_v3(model_path=model_path,real_data_epochs=10)
+    run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
+    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_2032")
     # student_take_exam_AIME(year=2024)
-    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/7b/checkpoint-target-reached-epoch-8")
+    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_1506")
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
     # teacher.teacher_mark_paper_with_save()
@@ -1370,7 +1370,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/7b/checkpoint-target-reached-epoch-8")
+    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_1506")
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
@@ -1384,19 +1384,19 @@ if __name__ == "__main__":
 
     # ########################################################################################################################################################################
 
-    try:
-        # 优先执行主训练函数
-        run_sdpo_training_baseline(
-            model_path=model_path,
-            data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
-            batch_size=8,
-            real_data_epochs=1,
-            device_num=2,
-        )
-    except Exception as e:
-        # 上方函数执行失败（报错）时，自动运行备用函数
-        print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
-        use_worker()
-    use_worker()
+    # try:
+    #     # 优先执行主训练函数
+    #     run_sdpo_training_baseline(
+    #         model_path=model_path,
+    #         data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
+    #         batch_size=8,
+    #         real_data_epochs=1,
+    #         device_num=2,
+    #     )
+    # except Exception as e:
+    #     # 上方函数执行失败（报错）时，自动运行备用函数
+    #     print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
+    #     use_worker()
+    # use_worker()
 
     
