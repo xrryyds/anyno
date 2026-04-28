@@ -467,6 +467,7 @@ class LogicalEpochLogCallback(TrainerCallback):
         self.output_dir = output_dir
         self.current_logical_epoch = 0
         self.early_stopped = False
+        self.saved_model_dir = None
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
         if state.global_step > 0 and state.global_step % self.steps_per_epoch == 0:
@@ -493,6 +494,7 @@ class LogicalEpochLogCallback(TrainerCallback):
                     if model is not None:
                         model.save_pretrained(early_stop_dir)
                         if tokenizer is not None: tokenizer.save_pretrained(early_stop_dir)
+                        self.saved_model_dir = early_stop_dir
                 except Exception as e:
                     logger.error(f"Failed to save model: {e}")
                 
@@ -649,8 +651,13 @@ def run_sira_training_v3(
         trainer.save_model(output_dir)
         tokenizer.save_pretrained(output_dir)
         logger.info(f"Training finished normally (max epochs reached). Model saved to {output_dir}")
+        final_lora_path = output_dir
     else:
         logger.info(f"Training finished with early stopping (Target Loss reached).")
+        final_lora_path = epoch_callback.saved_model_dir or output_dir
+
+    logger.info(f"Final LoRA path: {final_lora_path}")
+    return final_lora_path
 
 if __name__ == "__main__":
     current_file_path = os.path.abspath(__file__)
