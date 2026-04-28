@@ -51,7 +51,7 @@ model_path= "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/mod
 model_path_32b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
 model_path_1_5b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
 
-def exam_roll_recheck_hints(lora_path: str = None):
+def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048):
     try:
         logger.info("Step 1: Loading Dataset...")
         # 虽然这里读取了data_a，但在后续逻辑中主要使用 exam_paper.parse_hints_exam 解析出的数据
@@ -69,9 +69,9 @@ def exam_roll_recheck_hints(lora_path: str = None):
 
         logger.info("Step 2: Student Rolling Exam...")
         if lora_path:
-            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=2048)
+            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=max_token)
         else:
-            student_exam = TakeExam(model_path=model_path, max_seq_length=2048)
+            student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
         student_exam.exam_roll_k_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
         logger.info("Step 3: Teacher Grading...")
@@ -173,7 +173,7 @@ def exam_roll_recheck_hints(lora_path: str = None):
 
 
 
-def process_exam_file_batch(file_path, lora_path:str = None):
+def process_exam_file_batch(file_path, lora_path:str = None, max_token: int = 2048):
     """
     读取JSON文件，提取所有字段为列表，然后一次性调用 student_exam.exam
     """
@@ -197,9 +197,9 @@ def process_exam_file_batch(file_path, lora_path:str = None):
         student_exam = None
 
         if lora_path:
-            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path)
+            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
         else:
-            student_exam = TakeExam(model_path=model_path )
+            student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
         # 3. 一次性调用 exam 方法，传入数组
         student_exam.exam(
             question=questions, 
@@ -220,7 +220,7 @@ def process_exam_file_batch(file_path, lora_path:str = None):
 
 
 
-def student_correct(lora_path: str = None):
+def student_correct(lora_path: str = None, max_token: int = 2048):
     logger.info("Step 1: Loading Dataset...")
     # 1. 加载原始带有提示的数据
     exam_paper.load_question_with_hints()
@@ -230,9 +230,9 @@ def student_correct(lora_path: str = None):
     # 2. 学生考试 (使用带提示的题目进行推理)
     logger.info("Step 2: Student Taking Exam...")
     if lora_path:
-        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=2048)
+        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=max_token)
     else:
-        student_exam = TakeExam(model_path=model_path, max_seq_length=2048)
+        student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
     # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
     student_exam.exam_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
@@ -351,12 +351,12 @@ def teacher_correct():
     del teacher
 
 
-def single_qusestion(qusetion):
-    student_exam = TakeExam(model_path)
+def single_qusestion(qusetion, max_token: int = 2048):
+    student_exam = TakeExam(model_path, max_seq_length=max_token)
     return student_exam.answer_single_question(qusetion)
 
 
-def student_take_exam_Math500():
+def student_take_exam_Math500(max_token: int = 2048):
     math_500 = Math_500()
     question = math_500.problems
     solution = math_500.solutions
@@ -364,7 +364,7 @@ def student_take_exam_Math500():
     
     logger.info(f"dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
     
-    take_exam = TakeExam(model_path=model_path)
+    take_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
@@ -375,7 +375,7 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, max_seq_length:int=2048):
+def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, max_token: int = 2048):
     data = Math_All(subset_name=subset,train=train)
     question = data.problems
     solution = data.solutions
@@ -385,9 +385,9 @@ def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:st
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = []
     for idx in range(len(question)):
@@ -395,7 +395,7 @@ def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:st
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = model_path):
+def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = model_path, max_token: int = 2048):
     data = AIME(year=year)
     question = data.problems
     solution = data.solutions
@@ -405,9 +405,9 @@ def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = 
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = []
     for idx in range(len(question)):
@@ -416,7 +416,7 @@ def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = 
 
 
 
-def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path,  max_seq_length:int = 2048):
+def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path, max_token: int = 2048):
     data = AIME_1983_2024()
     question = data.problems
     solution = data.solutions
@@ -426,9 +426,9 @@ def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = mod
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = []
     for idx in range(len(question)):
@@ -437,7 +437,7 @@ def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = mod
 
 
 
-def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:str = None):
+def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:str = None, max_token: int = 2048):
     data = Math_500()
     question = data.problems
     solution = data.solutions
@@ -447,9 +447,9 @@ def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:st
 
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = []
     for idx in range(len(question)):
@@ -457,7 +457,7 @@ def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:st
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
+def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None, max_token: int = 2048):
     """Run an exam on the LiveMathBench-en dataset.
 
     Args:
@@ -472,15 +472,15 @@ def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
     logger.info(f"LiveMathBench dataset_len_check: {len(question)} {len(solution)} {len(answer)}")
 
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path=lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path=lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = list(range(len(question)))
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None,  max_seq_length: int = 2048):
+def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None, max_token: int = 2048):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -490,9 +490,9 @@ def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None,  max_seq_le
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path,  max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
 
     question_idx = []
     for idx in range(len(question)):
@@ -566,7 +566,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
 
 
-def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path, max_seq_length:int = 2048):
+def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path, max_token: int = 2048):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
@@ -574,9 +574,9 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
 
     take_exam = None
     if use_lora:
-        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path,  max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path, max_seq_length=max_token)
     else:
-        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
+        take_exam = TakeExam(model_path, max_seq_length=max_token)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
@@ -792,7 +792,7 @@ def grpo_on_MATH500(lora_path: str, num_generations: int = 8):
 
 
 
-def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
+def test_adv_hints_accuracy(model_path: str, dataset_path: str = None, max_token: int = 2048):
     """
     测试 Advantageous Hints 数据集的复现准确率。
     理论上，由于这些数据是之前模型答对过的，准确率应该很高（接近 100%）。
@@ -849,7 +849,7 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     # 4. 执行考试 (Roll-8 Inference)
     logger.info("Step 2: Running exam_roll_k_with_hints (k=8)...")
     
-    student_exam = TakeExam(model_path=model_path,  max_seq_length=2048)
+    student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
     student_exam.exam_roll_k_with_hints(
         question=questions,
         solution=solutions,
@@ -1064,7 +1064,7 @@ def analyze_knowledge_change(corr_pre: str):
         }
 
 
-def test_grpo_on_MATH500(grpo_lora_path: str):
+def test_grpo_on_MATH500(grpo_lora_path: str, max_token: int = 2048):
     """
     测试 GRPO 训练后的模型在 MATH500 上的表现
     
@@ -1094,7 +1094,8 @@ def test_grpo_on_MATH500(grpo_lora_path: str):
     take_exam = TakeExam(
         model_path=model_path,
         use_lora=True,
-        adapter_path=grpo_lora_path
+        adapter_path=grpo_lora_path,
+        max_seq_length=max_token,
     )
     
     take_exam.exam(
@@ -1140,7 +1141,7 @@ def gen_sft_dataset(epoch):
                       exam_paper.sft_dataset_path,
                       epoch)
 
-def compute_and_save_avg_loss_per_vocab(question, answer):
+def compute_and_save_avg_loss_per_vocab(question, answer, max_token: int = 2048):
     """
     根据给定的 (question, answer) 列表，调用 TakeExam 计算 avg_loss_per_vocab，
     并将结果保存到:
@@ -1156,7 +1157,7 @@ def compute_and_save_avg_loss_per_vocab(question, answer):
     logger.info(f"[avg_loss_per_vocab] Start computing on {len(question)} QA pairs...")
 
     # 1. 用当前全局的 model_path 初始化 TakeExam
-    student_exam = TakeExam(model_path=model_path,  max_seq_length=2048)
+    student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
 
     # 2. 计算 vocab 级别的平均 loss 向量（shape = [vocab_size]）
     avg_loss_per_vocab = student_exam.compute_answer_vocab_loss_vector(
