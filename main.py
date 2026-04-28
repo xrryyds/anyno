@@ -68,9 +68,9 @@ def exam_roll_recheck_hints(lora_path: str = None):
 
         logger.info("Step 2: Student Rolling Exam...")
         if lora_path:
-            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
+            student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=2048)
         else:
-            student_exam = TakeExam(model_path=model_path)
+            student_exam = TakeExam(model_path=model_path, max_seq_length=2048)
         student_exam.exam_roll_k_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
         logger.info("Step 3: Teacher Grading...")
@@ -229,9 +229,9 @@ def student_correct(lora_path: str = None):
     # 2. 学生考试 (使用带提示的题目进行推理)
     logger.info("Step 2: Student Taking Exam...")
     if lora_path:
-        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path)
+        student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=2048)
     else:
-        student_exam = TakeExam(model_path=model_path)
+        student_exam = TakeExam(model_path=model_path, max_seq_length=2048)
     # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
     student_exam.exam_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
@@ -374,7 +374,7 @@ def student_take_exam_Math500():
 
 
 
-def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None):
+def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, max_seq_length:int=2048):
     data = Math_All(subset_name=subset,train=train)
     question = data.problems
     solution = data.solutions
@@ -384,9 +384,9 @@ def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:st
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_seq_length)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
 
     question_idx = []
     for idx in range(len(question)):
@@ -415,7 +415,7 @@ def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = 
 
 
 
-def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path):
+def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path,  max_seq_length:int = 2048):
     data = AIME_1983_2024()
     question = data.problems
     solution = data.solutions
@@ -425,9 +425,9 @@ def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = mod
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_seq_length)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
 
     question_idx = []
     for idx in range(len(question)):
@@ -479,7 +479,7 @@ def student_take_exam_LiveMath(lora_path: str = None, max_size: int = None):
     take_exam.exam(question, solution, answer, question_idx)
 
 
-def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
+def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None,  max_seq_length: int = 2048):
     gsm8k = GSM8K(train=train)
     question = gsm8k.problems
     solution = gsm8k.solutions
@@ -489,9 +489,9 @@ def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None):
     
     take_exam = None
     if lora_path:
-        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path)
+        take_exam = TakeExam(model_path, use_lora=True, adapter_path = lora_path,  max_seq_length=max_seq_length)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
 
     question_idx = []
     for idx in range(len(question)):
@@ -565,7 +565,7 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         spilt, epoch)
 
 
-def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path):
+def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path, max_seq_length:int = 2048):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
     
@@ -573,9 +573,9 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
 
     take_exam = None
     if use_lora:
-        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path)
+        take_exam = TakeExam(model_path=model_path,use_lora=True, adapter_path=lora_path,  max_seq_length=max_seq_length)
     else:
-        take_exam = TakeExam(model_path)
+        take_exam = TakeExam(model_path, max_seq_length=max_seq_length)
     take_exam.exam_roll_k(m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7)
 
     teacher = TeacherCorrecter()
@@ -848,7 +848,7 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None):
     # 4. 执行考试 (Roll-8 Inference)
     logger.info("Step 2: Running exam_roll_k_with_hints (k=8)...")
     
-    student_exam = TakeExam(model_path=model_path)
+    student_exam = TakeExam(model_path=model_path,  max_seq_length=2048)
     student_exam.exam_roll_k_with_hints(
         question=questions,
         solution=solutions,
@@ -1155,7 +1155,7 @@ def compute_and_save_avg_loss_per_vocab(question, answer):
     logger.info(f"[avg_loss_per_vocab] Start computing on {len(question)} QA pairs...")
 
     # 1. 用当前全局的 model_path 初始化 TakeExam
-    student_exam = TakeExam(model_path=model_path)
+    student_exam = TakeExam(model_path=model_path,  max_seq_length=2048)
 
     # 2. 计算 vocab 级别的平均 loss 向量（shape = [vocab_size]）
     avg_loss_per_vocab = student_exam.compute_answer_vocab_loss_vector(
@@ -1346,17 +1346,17 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
-    gen_IRDCL_dataset_v2(4, 0.75, 10)
+    # gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
+    # run_sira_training_v3(model_path=model_path,real_data_epochs=2)
     # 4. check 
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_2032")
     # student_take_exam_AIME(year=2024)
-    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_1506")
+    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_seq_length=4096)
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # # 示例：使用 SIRA 训练的结果进行 GRPO
@@ -1370,7 +1370,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_1506")
+    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_seq_length=2048)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
