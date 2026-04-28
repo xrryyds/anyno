@@ -1348,21 +1348,17 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 1)
-    # gen_IRDCL_dataset_v2(4, 0.75, 10)
+    gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    lora_path = run_sira_training_v3(model_path=model_path,real_data_epochs=2)
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        torch.cuda.ipc_collect()
+    lora_path = run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
-    student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
+    # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
     # student_take_exam_AIME(year=2024)
     # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_token=4096)
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
     # # 示例：使用 SIRA 训练的结果进行 GRPO
