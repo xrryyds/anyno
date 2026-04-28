@@ -1357,9 +1357,9 @@ if __name__ == "__main__":
         torch.cuda.ipc_collect()
     # 4. check 
     # student_take_exam_LiveMath()
-    student_take_exam_Math_sub(train=False, lora_path=lora_path, max_new_token=4096)
+    student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
     # student_take_exam_AIME(year=2024)
-    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_seq_length=4096)
+    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_token=4096)
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
     # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
     teacher.teacher_mark_paper_with_save()
@@ -1376,7 +1376,7 @@ if __name__ == "__main__":
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_seq_length=2048)
+    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_token=2048)
 
     # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
