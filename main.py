@@ -1348,7 +1348,7 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 1)
     gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    run_sira_training_v3(model_path=model_path,real_data_epochs=10)
+    # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # 4. check 
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_2032")

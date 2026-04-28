@@ -56,7 +56,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
     hint_ce_mix_lambda: float = 0.7
-    gate_threshold: float = 0.2
+    gate_threshold: float = 0.17
     gate_slope: float = 100.0
     split_r: float = 0.5
     
@@ -514,7 +514,7 @@ def run_sira_training_v3(
     real_data_epochs: int = 10,
     device_num: int = 1,
     spilt: float = 0.5,
-    target_mode_b: float = 0.13,
+    target_mode_b: float = 0.15,
     lora_path: Optional[str] = None,
 ):
     current_file_path = os.path.abspath(__file__)
