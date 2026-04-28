@@ -55,6 +55,7 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
+    hint_ce_mix_lambda: float = 0.7
     gate_threshold: float = 0.2
     gate_slope: float = 100.0
     split_r: float = 0.5
@@ -345,6 +346,11 @@ class SequentialTrainer(Trainer):
             if h_count > 0:
                 gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
+                kl_hint = (kl_ts[i] * h_m).sum() / (h_count + eps)
+                mixed_hint_loss = (
+                    self.hint_config.hint_ce_mix_lambda * avg_h_loss
+                    + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_hint
+                )
                 gate = 2.0 * torch.sigmoid(
                     self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
                 )
@@ -354,8 +360,8 @@ class SequentialTrainer(Trainer):
                 # Answer 部分使用 forward KL
                 kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps) if a_count > 0 else torch.tensor(0.0, device=logits.device)
 
-                # Mode B Loss: Hint CE + Gate * Answer KL
-                l_gen = self.hint_config.hint_fixed_weight * avg_h_loss + gate * kl_answer
+                # Mode B Loss: mixed hint loss + gated answer KL
+                l_gen = self.hint_config.hint_fixed_weight * mixed_hint_loss + gate * kl_answer
 
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
