@@ -1,5 +1,6 @@
 import os
 import json
+import gc
 import torch
 import numpy as np
 import logging
@@ -1348,10 +1349,14 @@ if __name__ == "__main__":
     # gen_IRDCL_dataset(8, 0.875, 1)
     # gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    # run_sira_training_v3(model_path=model_path,real_data_epochs=2)
+    lora_path = run_sira_training_v3(model_path=model_path,real_data_epochs=2)
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
     # 4. check 
     # student_take_exam_LiveMath()
-    # student_take_exam_Math_sub(train=False, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env4/CELPO/output/sira_sft_10ep_0427_2032")
+    student_take_exam_Math_sub(train=False, lora_path=lora_path, max_new_token=4096)
     # student_take_exam_AIME(year=2024)
     # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sira_sft_2ep_0428_1400", max_seq_length=4096)
     # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
