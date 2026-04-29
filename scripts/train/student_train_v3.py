@@ -362,13 +362,13 @@ class SequentialTrainer(Trainer):
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 
-                # Answer 部分也使用 CE + (1-CE) * KL 的混合形式
+                # Answer 部分使用 (1-λ) * CE + λ * KL 的混合形式（λ 和 CE 反转）
                 if a_count > 0:
                     avg_a_loss = (token_losses[i] * a_m).sum() / a_count
                     kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps)
                     mixed_answer_loss = (
-                        self.hint_config.hint_ce_mix_lambda * avg_a_loss
-                        + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_answer
+                        (1.0 - self.hint_config.hint_ce_mix_lambda) * avg_a_loss
+                        + self.hint_config.hint_ce_mix_lambda * kl_answer
                     )
                 else:
                     mixed_answer_loss = torch.tensor(0.0, device=logits.device)
@@ -414,10 +414,10 @@ class SequentialTrainer(Trainer):
                 # Forward KL(ref||student) on answer only
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
 
-                # Anchor 与 hint 一样使用 CE + (1-CE) * KL 的混合形式
+                # Anchor 使用 (1-λ) * CE + λ * KL 的混合形式（λ 和 CE 反转）
                 mixed_anchor_loss = (
-                    self.hint_config.hint_ce_mix_lambda * raw_curr
-                    + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_anchor
+                    (1.0 - self.hint_config.hint_ce_mix_lambda) * raw_curr
+                    + self.hint_config.hint_ce_mix_lambda * kl_anchor
                 )
                 anchor_losses.append(mixed_anchor_loss)
                 
