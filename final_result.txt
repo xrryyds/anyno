@@ -242,7 +242,9 @@ Recheck Result -> Original: 603, Solved: 320, Remaining: 283
 Recheck Result -> Original: 508, Solved: 353, Remaining: 140
 32B_SIRA_AIME20
 #############################
-
+Recheck Result -> Original: 425, Solved: 279, Remaining: 146
+sdft_AIME_16384
+#############################
 
 
 
