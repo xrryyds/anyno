@@ -26,7 +26,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # 全局序列长度超参数（训练/推理可统一调节）
-MAX_SEQ_LENGTH = 8192
+MAX_SEQ_LENGTH = 2048
 
 # Qwen-Math 的标准 System Prompt，这对激发数学能力至关重要
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
@@ -54,8 +54,9 @@ class TakeExam:
     def __init__(
         self,
         model_path: str = "/root/autodl-tmp/model/Qwen/Qwen2.5-Math-7B-Instruct",
-        use_lora: bool = False,      
-        adapter_path: str = None     
+        use_lora: bool = False,
+        adapter_path: str = None,
+        max_seq_length: Optional[int] = None,
     ):
         # ================== Path ==================
         current_file_path = os.path.abspath(__file__)
@@ -73,9 +74,10 @@ class TakeExam:
         self.seed = 42
         set_all_seeds(self.seed)  # 再次确保种子设置
 
-        # 全局推理长度超参数（可以按需调整）
-        self.MAX_NEW_TOKENS = MAX_SEQ_LENGTH
-        self.MAX_MODEL_LEN = MAX_SEQ_LENGTH
+        # 推理长度超参数，优先使用实例初始化时传入的值
+        self.max_seq_length = max_seq_length or MAX_SEQ_LENGTH
+        self.MAX_NEW_TOKENS = self.max_seq_length
+        self.MAX_MODEL_LEN = self.max_seq_length + 1024
 
         self.LOCAL_MODEL_PATH = model_path
         self.use_lora = use_lora
@@ -496,6 +498,7 @@ class TakeExam:
                     self.LOCAL_MODEL_PATH,
                     self.use_lora,
                     self.adapter_path,
+                    self.max_seq_length,
                     self.seed,
                     q_shard,
                     s_shard,
@@ -738,6 +741,7 @@ def _run_exam_shard_worker(args):
         model_path,
         use_lora,
         adapter_path,
+        max_seq_length,
         seed,
         question_shard,
         solution_shard,
@@ -758,6 +762,7 @@ def _run_exam_shard_worker(args):
         model_path=model_path,
         use_lora=use_lora,
         adapter_path=adapter_path,
+        max_seq_length=max_seq_length,
     )
     worker.seed = seed
     set_all_seeds(worker.seed)
