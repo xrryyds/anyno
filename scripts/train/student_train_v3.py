@@ -74,7 +74,7 @@ class HintSFTConfig:
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
     kl_lambda: float = 0.5   # 弃用（不再使用旧的前向KL组合公式）
-    kl_beta: float = 1    # KL(ref||student) weight for anchor
+    kl_beta: float = 20    # KL(ref||student) weight for anchor
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)

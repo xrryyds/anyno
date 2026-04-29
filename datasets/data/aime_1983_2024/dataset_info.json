@@ -1,0 +1,58 @@
+{
+  "builder_name": "csv",
+  "citation": "",
+  "config_name": "default",
+  "dataset_name": "aime-1983-2024",
+  "dataset_size": 358605,
+  "description": "",
+  "download_checksums": {
+    "hf://datasets/gneubig/aime-1983-2024@5d610df981dec508dd93d0a16333a029ac1739d8/AIME_Dataset_1983_2024.csv": {
+      "num_bytes": 342215,
+      "checksum": null
+    }
+  },
+  "download_size": 342215,
+  "features": {
+    "ID": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "Year": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "Problem Number": {
+      "dtype": "int64",
+      "_type": "Value"
+    },
+    "Question": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "Answer": {
+      "dtype": "string",
+      "_type": "Value"
+    },
+    "Part": {
+      "dtype": "string",
+      "_type": "Value"
+    }
+  },
+  "homepage": "",
+  "license": "",
+  "size_in_bytes": 700820,
+  "splits": {
+    "train": {
+      "name": "train",
+      "num_bytes": 358605,
+      "num_examples": 933,
+      "dataset_name": "aime-1983-2024"
+    }
+  },
+  "version": {
+    "version_str": "0.0.0",
+    "major": 0,
+    "minor": 0,
+    "patch": 0
+  }
+}
