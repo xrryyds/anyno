@@ -96,7 +96,6 @@ class TrainingMetricsTracker:
         self.win_gate_values, self.win_anchor_losses_weighted = [], []
         self.win_anchor_losses_raw = []
         self.win_mode_b_losses, self.win_mode_b_raw = [], [] 
-        self.win_mode_b_answer_losses = []
         self.win_counts = {"anchor": 0, "mode_b": 0}
         self.win_beta_values = [] 
         self.win_alpha_values = []
@@ -106,7 +105,6 @@ class TrainingMetricsTracker:
         self.ep_gate_values, self.ep_anchor_losses_weighted = [], []
         self.ep_anchor_losses_raw = []
         self.ep_mode_b_losses, self.ep_mode_b_raw = [], []
-        self.ep_mode_b_answer_losses = []
         self.ep_counts = {"anchor": 0, "mode_b": 0}
         self.ep_beta_values = []
         self.ep_alpha_values = []
@@ -137,8 +135,6 @@ class TrainingMetricsTracker:
                 self.ep_counts["mode_b"] += 1
                 self.win_mode_b_losses.append(loss_contrib)
                 self.ep_mode_b_losses.append(loss_contrib)
-                self.win_mode_b_answer_losses.append(info.get("answer_loss_contrib", 0.0))
-                self.ep_mode_b_answer_losses.append(info.get("answer_loss_contrib", 0.0))
                 self.win_gate_values.append(gate_val)
                 self.ep_gate_values.append(gate_val)
                 self.win_mode_b_raw.append(raw_loss)
@@ -152,14 +148,13 @@ class TrainingMetricsTracker:
                 self.win_anchor_losses_raw.append(raw_loss)
                 self.ep_anchor_losses_raw.append(raw_loss) 
 
-    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w, anchor_raw, mode_b, mode_b_raw, mode_b_answer, counts, alpha_vals, beta_vals):
+    def _calculate_stats(self, loss_sum, steps, gate_vals, anchor_w, anchor_raw, mode_b, mode_b_raw, counts, alpha_vals, beta_vals):
         avg = lambda l: sum(l)/len(l) if l else 0.0
         return {
             "avg_train_loss": loss_sum / max(steps, 1), 
             "avg_gate_value": avg(gate_vals),
             "avg_anchor_loss_weighted": avg(anchor_w), 
             "avg_mode_b_loss": avg(mode_b), 
-            "avg_mode_b_answer_loss": avg(mode_b_answer),
             "avg_final_alpha": avg(alpha_vals),   
             "avg_mode_b_loss_raw": avg(mode_b_raw),
             "avg_anchor_loss_raw": avg(anchor_raw),   
@@ -168,10 +163,10 @@ class TrainingMetricsTracker:
         }
 
     def get_window_stats(self):
-        return self._calculate_stats(self.win_loss, self.win_steps, self.win_gate_values, self.win_anchor_losses_weighted, self.win_anchor_losses_raw, self.win_mode_b_losses, self.win_mode_b_raw, self.win_mode_b_answer_losses, self.win_counts, self.win_alpha_values, self.win_beta_values)
+        return self._calculate_stats(self.win_loss, self.win_steps, self.win_gate_values, self.win_anchor_losses_weighted, self.win_anchor_losses_raw, self.win_mode_b_losses, self.win_mode_b_raw, self.win_counts, self.win_alpha_values, self.win_beta_values)
 
     def get_epoch_stats(self):
-        return self._calculate_stats(self.ep_loss, self.ep_steps, self.ep_gate_values, self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, self.ep_mode_b_losses, self.ep_mode_b_raw, self.ep_mode_b_answer_losses, self.ep_counts, self.ep_alpha_values, self.ep_beta_values)
+        return self._calculate_stats(self.ep_loss, self.ep_steps, self.ep_gate_values, self.ep_anchor_losses_weighted, self.ep_anchor_losses_raw, self.ep_mode_b_losses, self.ep_mode_b_raw, self.ep_counts, self.ep_alpha_values, self.ep_beta_values)
 
 tracker = TrainingMetricsTracker()
 
@@ -362,31 +357,17 @@ class SequentialTrainer(Trainer):
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 
-                # Answer 部分也使用 CE + (1-CE) * KL 的混合形式
-                if a_count > 0:
-                    avg_a_loss = (token_losses[i] * a_m).sum() / a_count
-                    kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps)
-                    mixed_answer_loss = (
-                        self.hint_config.hint_ce_mix_lambda * avg_a_loss
-                        + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_answer
-                    )
-                else:
-                    mixed_answer_loss = torch.tensor(0.0, device=logits.device)
+                # Answer 部分使用 forward KL
+                kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps) if a_count > 0 else torch.tensor(0.0, device=logits.device)
 
-                # Mode B Loss: mixed hint loss + gated mixed answer loss
-                gated_answer_loss = gate * mixed_answer_loss
-                l_gen = self.hint_config.hint_fixed_weight * mixed_hint_loss + gated_answer_loss
+                # Mode B Loss: mixed hint loss + gated answer KL
+                l_gen = self.hint_config.hint_fixed_weight * mixed_hint_loss + gate * kl_answer
 
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
                 total_valid_tokens = h_count + a_count
                 raw_b_loss = ((token_losses[i] * h_m).sum() + (token_losses[i] * a_m).sum()) / total_valid_tokens if total_valid_tokens > 0 else torch.tensor(0.0)
-                debug_map[i] = {
-                    "gate": gate.item(),
-                    "loss_contrib": l_gen.item(),
-                    "answer_loss_contrib": gated_answer_loss.item(),
-                    "raw_loss": raw_b_loss.item()
-                }
+                debug_map[i] = {"gate": gate.item(), "loss_contrib": l_gen.item(), "raw_loss": raw_b_loss.item()}
             else:
                 anchor_indices.append(i)
 
@@ -398,7 +379,7 @@ class SequentialTrainer(Trainer):
             scaling_gen_loss = torch.tensor(self.running_gen_loss, device=logits.device)
 
         batch_ref_anchor_loss_sum = torch.tensor(0.0, device=logits.device)
-        anchor_losses = []
+        suppressed_anchor_losses = [] 
         valid_anchor_count = 0
 
         for idx in anchor_indices:
@@ -414,12 +395,8 @@ class SequentialTrainer(Trainer):
                 # Forward KL(ref||student) on answer only
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
 
-                # Anchor 与 hint 一样使用 CE + (1-CE) * KL 的混合形式
-                mixed_anchor_loss = (
-                    self.hint_config.hint_ce_mix_lambda * raw_curr
-                    + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_anchor
-                )
-                anchor_losses.append(mixed_anchor_loss)
+                # Anchor 简化为纯 KL 乘以 kl_beta
+                suppressed_anchor_losses.append(self.hint_config.kl_beta * kl_anchor)
                 
                 # 记录调试信息 (Instance suppress 等不再用于计算，仅占位)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": 0.0}
@@ -435,7 +412,7 @@ class SequentialTrainer(Trainer):
         anchor_idx_ptr = 0
         for idx in anchor_indices:
             if idx in debug_map: 
-                final_anchor_loss = anchor_losses[anchor_idx_ptr]
+                final_anchor_loss = suppressed_anchor_losses[anchor_idx_ptr]
                 final_losses_map[idx] = final_anchor_loss
                 debug_map[idx]["loss_contrib"] = final_anchor_loss.item()
                 debug_map[idx]["final_balance_alpha"] = alpha_balance
@@ -502,8 +479,6 @@ class LogicalEpochLogCallback(TrainerCallback):
                 
             logger.info(f"="*60)
             logger.info(f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***")
-            logger.info(f"  Avg Anchor (Actual):{stats['avg_anchor_loss_weighted']:.4f}")
-            logger.info(f"  Avg ModeB Answer (Actual):{stats['avg_mode_b_answer_loss']:.4f}")
             logger.info(f"  Avg ModeB (Raw):{stats['avg_mode_b_loss_raw']:.4f}")
             
             epoch_mode_b_raw = stats.get('avg_mode_b_loss_raw', 999.0)
