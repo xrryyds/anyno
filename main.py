@@ -1347,10 +1347,10 @@ if __name__ == "__main__":
     # sft_on_adv_Data()
     
     # 3. gen dataset
-    # gen_IRDCL_dataset(8, 0.875, 1)
-    # gen_IRDCL_dataset_v2(4, 0.75, 50)
+    # gen_IRDCL_dataset(8, 0.875, 10)
+    gen_IRDCL_dataset_v2(4, 0.75, 50)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
+    run_sira_training_v3(model_path=model_path,real_data_epochs=50)
     # 4. check 
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
@@ -1386,35 +1386,35 @@ if __name__ == "__main__":
 
     # ########################################################################################################################################################################
 
-    try:
-        # 优先执行主训练函数
-        # run_sdpo_training_baseline(
-        #     model_path=model_path,
-        #     data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
-        #     batch_size=8,
-        #     real_data_epochs=1,
-        #     device_num=2,
-        # )
-        student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=8192)
-        teacher.teacher_mark_paper_with_save()
-        exam_roll_recheck_mistake(use_lora=True,
-                                lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
-                                max_token=8192,
-                                log_prompt="sdcl_8192_AIME",
-                                save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
+    # try:
+    #     # 优先执行主训练函数
+    #     # run_sdpo_training_baseline(
+    #     #     model_path=model_path,
+    #     #     data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
+    #     #     batch_size=8,
+    #     #     real_data_epochs=1,
+    #     #     device_num=2,
+    #     # )
+    #     student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=8192)
+    #     teacher.teacher_mark_paper_with_save()
+    #     exam_roll_recheck_mistake(use_lora=True,
+    #                             lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
+    #                             max_token=8192,
+    #                             log_prompt="sdcl_8192_AIME",
+    #                             save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
 
 
-        student_take_exam_Math_sub(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=2048)
-        teacher.teacher_mark_paper_with_save()
-        exam_roll_recheck_mistake(use_lora=True,
-                                lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
-                                max_token=2048,
-                                log_prompt="sdcl_2048_MATH",
-                                save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
-    except Exception as e:
-        # 上方函数执行失败（报错）时，自动运行备用函数
-        print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
-        use_worker()
+    #     student_take_exam_Math_sub(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=2048)
+    #     teacher.teacher_mark_paper_with_save()
+    #     exam_roll_recheck_mistake(use_lora=True,
+    #                             lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
+    #                             max_token=2048,
+    #                             log_prompt="sdcl_2048_MATH",
+    #                             save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
+    # except Exception as e:
+    #     # 上方函数执行失败（报错）时，自动运行备用函数
+    #     print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
+    #     use_worker()
     use_worker()
 
     
