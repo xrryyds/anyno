@@ -55,9 +55,9 @@ SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\b
 @dataclass
 class HintSFTConfig:
     hint_fixed_weight: float = 1.0
-    hint_ce_mix_lambda: float = 0.8
-    gate_threshold: float = 0.15
-    gate_slope: float = 100.0
+    hint_ce_mix_lambda: float = 0.8      # 保留但不再用于 answer/anchor（仅历史兼容）
+    gate_threshold: float = 0.4          # 放宽 gate 阈值（原 0.15 太严格）
+    gate_slope: float = 20.0             # 降低斜率使 gate 过渡更平滑（原 100.0）
     split_r: float = 0.5
     
     # 核心超参
@@ -65,6 +65,10 @@ class HintSFTConfig:
     suppress_max_scale: float = 1.0
     anchor_sigmoid_slope: float = 100.0
     anchor_loss_tolerance: float = 1.00
+    
+    # Answer/Anchor KL 正则权重
+    answer_kl_beta: float = 1          # Mode B answer 部分的 KL 权重
+    anchor_kl_beta: float = 1         # Anchor 部分的 KL 权重
     
     target_mode_b: Optional[float] = None
     
@@ -74,7 +78,7 @@ class HintSFTConfig:
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
     kl_lambda: float = 0.5   # 弃用（不再使用旧的前向KL组合公式）
-    kl_beta: float = 1   # KL(ref||student) weight for anchor
+    kl_beta: float = 1   # 弃用（已被 answer_kl_beta / anchor_kl_beta 替代）
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -351,31 +355,26 @@ class SequentialTrainer(Trainer):
             if h_count > 0:
                 gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
-                kl_hint = (kl_ts[i] * h_m).sum() / (h_count + eps)
-                mixed_hint_loss = (
-                    self.hint_config.hint_ce_mix_lambda * avg_h_loss
-                    + (1.0 - self.hint_config.hint_ce_mix_lambda) * kl_hint
-                )
+                
+                # Hint 部分：纯 CE（学习生成 hint）
+                hint_loss = avg_h_loss
+                
                 gate = torch.sigmoid(
                     self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
                 )
                 a_m = shift_a_masks[i]
                 a_count = a_m.sum()
                 
-                # Answer 部分使用 (1-λ) * CE + λ * KL 的混合形式（λ 和 CE 反转）
+                # Answer 部分：纯 β * KL（保持 answer 分布不变，不学习新内容）
                 if a_count > 0:
-                    avg_a_loss = (token_losses[i] * a_m).sum() / a_count
                     kl_answer = (kl_ts[i] * a_m).sum() / (a_count + eps)
-                    mixed_answer_loss = (
-                        (1.0 - self.hint_config.hint_ce_mix_lambda) * avg_a_loss
-                        + self.hint_config.hint_ce_mix_lambda * kl_answer
-                    )
+                    answer_kl_loss = self.hint_config.answer_kl_beta * kl_answer
                 else:
-                    mixed_answer_loss = torch.tensor(0.0, device=logits.device)
+                    answer_kl_loss = torch.tensor(0.0, device=logits.device)
 
-                # Mode B Loss: mixed hint loss + gated mixed answer loss
-                gated_answer_loss = gate * mixed_answer_loss
-                l_gen = self.hint_config.hint_fixed_weight * mixed_hint_loss + gated_answer_loss
+                # Mode B Loss: hint CE + gated answer KL
+                gated_answer_loss = gate * answer_kl_loss
+                l_gen = self.hint_config.hint_fixed_weight * hint_loss + gated_answer_loss
 
                 gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
@@ -411,15 +410,10 @@ class SequentialTrainer(Trainer):
                 batch_ref_anchor_loss_sum += raw_ref
                 valid_anchor_count += 1
 
-                # Forward KL(ref||student) on answer only
+                # Anchor 部分：纯 β * KL（保持 anchor 分布不变，不学习新内容）
                 kl_anchor = (kl_ts[idx] * a_m).sum() / (a_count + eps)
-
-                # Anchor 使用 (1-λ) * CE + λ * KL 的混合形式（λ 和 CE 反转）
-                mixed_anchor_loss = (
-                    (1.0 - self.hint_config.hint_ce_mix_lambda) * raw_curr
-                    + self.hint_config.hint_ce_mix_lambda * kl_anchor
-                )
-                anchor_losses.append(mixed_anchor_loss)
+                anchor_kl_loss = self.hint_config.anchor_kl_beta * kl_anchor
+                anchor_losses.append(anchor_kl_loss)
                 
                 # 记录调试信息 (Instance suppress 等不再用于计算，仅占位)
                 debug_map[idx] = {"gate": 0.0, "raw_loss": raw_curr.item(), "instance_beta": raw_ref.item(), "instance_suppress": 0.0}
@@ -541,7 +535,7 @@ def run_sira_training_v3(
     real_data_epochs: int = 10,
     device_num: int = 1,
     spilt: float = 0.5,
-    target_mode_b: float = 0.12,
+    target_mode_b: float = 0.16,
     lora_path: Optional[str] = None,
 ):
     current_file_path = os.path.abspath(__file__)
