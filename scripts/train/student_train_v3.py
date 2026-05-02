@@ -67,8 +67,9 @@ class HintSFTConfig:
     anchor_loss_tolerance: float = 1.00
     
     # Answer/Anchor KL 正则权重
-    answer_kl_beta: float = 1          # Mode B answer 部分的 KL 权重
-    anchor_kl_beta: float = 1         # Anchor 部分的 KL 权重
+    hint_kl_beta: float = 0.3          # Hint 部分的 KL 正则权重
+    answer_kl_beta: float = 1.0        # Mode B answer 部分的 KL 权重
+    anchor_kl_beta: float = 1.0        # Anchor 部分的 KL 权重
     
     target_mode_b: Optional[float] = None
     
@@ -355,9 +356,10 @@ class SequentialTrainer(Trainer):
             if h_count > 0:
                 gen_indices.append(i)
                 avg_h_loss = (token_losses[i] * h_m).sum() / h_count
+                kl_hint = (kl_ts[i] * h_m).sum() / (h_count + eps)
                 
-                # Hint 部分：纯 CE（学习生成 hint）
-                hint_loss = avg_h_loss
+                # Hint 部分：CE + β_hint * KL（学习生成 hint，KL 作为正则防止偏离过远）
+                hint_loss = avg_h_loss + self.hint_config.hint_kl_beta * kl_hint
                 
                 gate = torch.sigmoid(
                     self.hint_config.gate_slope * (self.hint_config.gate_threshold - avg_h_loss.detach())
