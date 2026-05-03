@@ -1417,4 +1417,36 @@ if __name__ == "__main__":
     #     use_worker()
     use_worker()
 
-    
+
+def ca_answer_length(log_path: str):
+    """统计 exam.json 中模型输出(answer字段)的平均 token 数，写入指定文件。"""
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+    exam_path = exam_paper.exam_file_path
+    try:
+        with open(exam_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load exam.json: {e}")
+        return
+
+    if not data:
+        logger.warning("exam.json is empty, skip ca_answer_length.")
+        return
+
+    total_tokens = 0
+    count = 0
+    for item in data:
+        answer = item.get("answer", "")
+        if answer:
+            tokens = tokenizer.encode(answer, add_special_tokens=False)
+            total_tokens += len(tokens)
+            count += 1
+
+    avg_length = total_tokens / count if count > 0 else 0
+    result_line = f"avg_answer_token_length: {avg_length:.2f} (total_samples: {count})\n"
+    logger.info(result_line.strip())
+
+    if os.path.dirname(log_path):
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(result_line)
