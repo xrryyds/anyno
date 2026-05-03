@@ -246,17 +246,25 @@ class SequentialTrainer(Trainer):
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
 
+        # --- 显存优化：不再同时保存两份完整 [B, T, V] logits ---
+        # Step 1: ref 前向（no grad），只保留 shifted logits
         with torch.no_grad():
             with self.model.disable_adapter():
-                ref_logits = model(**inputs).get("logits")[..., :-1, :].contiguous()
+                ref_outputs = model(**inputs)
+                ref_logits = ref_outputs.logits[..., :-1, :].contiguous()
+                del ref_outputs
+                torch.cuda.empty_cache()
 
+        # Step 2: student 前向
         outputs = model(**inputs)
-        logits = outputs.get("logits")
+        logits = outputs.logits
         labels = inputs.get("labels")
 
-        loss, debug_info_list = self.adaptive_gating_loss(
+        # Step 3: 逐样本计算 loss，计算完一个样本就释放对应 ref slice
+        loss, debug_info_list = self._memory_efficient_loss(
             logits, ref_logits, labels, hint_masks, answer_masks
         )
+        del ref_logits
 
         if self.model.training:
             tracker.update(loss.item(), metadata, debug_info_list)
@@ -264,154 +272,136 @@ class SequentialTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
-    def _per_token_forward_kl(logits_s, logits_t, chunk_size: int = 8192):
-        """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V].
-        计算正向 KL (Forward KL)，与 SDFT 默认蒸馏方向一致。
-        用于 Hint 部分：以 ref 为基准，确保 student 覆盖 ref 的所有模式。
+    def _compute_masked_kl(logits_s, logits_t, mask, forward=True):
+        """显存优化版 KL 计算：只对 mask=1 的 token 计算 KL
+        
+        Args:
+            logits_s: student logits [T, V]
+            logits_t: ref logits [T, V]
+            mask: [T] 0/1 mask
+            forward: True=Forward KL(ref||student), False=Reverse KL(student||ref)
+        
+        Returns:
+            masked_kl_sum: 只对 mask=1 的 token 的 KL 总和（标量）
         """
-        T, V = logits_s.shape
+        valid_indices = mask.nonzero(as_tuple=True)[0]
+        if len(valid_indices) == 0:
+            return torch.tensor(0.0, device=logits_s.device)
+        
+        # 只取有效 token 的 logits
+        s_valid = logits_s[valid_indices]  # [N, V]
+        t_valid = logits_t[valid_indices]  # [N, V]
+        
+        # 转为 log_prob
+        log_p_s = torch.log_softmax(s_valid, dim=-1)  # [N, V]
+        log_p_t = torch.log_softmax(t_valid, dim=-1)  # [N, V]
+        
+        if forward:
+            # Forward KL: KL(ref || student) = sum_v p_t(v) * (log p_t(v) - log p_s(v))
+            p_t = torch.exp(log_p_t)
+            kl = (p_t * (log_p_t - log_p_s)).sum(dim=-1)  # [N]
+        else:
+            # Reverse KL: KL(student || ref) = sum_v p_s(v) * (log p_s(v) - log p_t(v))
+            p_s = torch.exp(log_p_s)
+            kl = (p_s * (log_p_s - log_p_t)).sum(dim=-1)  # [N]
+        
+        return kl.sum()  # 返回总和
 
-        logsumexp_s = torch.logsumexp(logits_s, dim=-1, keepdim=True)  # [T, 1]
-        logsumexp_t = torch.logsumexp(logits_t, dim=-1, keepdim=True)  # [T, 1]
-
-        kl = torch.zeros(T, device=logits_s.device, dtype=logits_s.dtype)
-
-        for start in range(0, V, chunk_size):
-            end = min(start + chunk_size, V)
-
-            s_chunk = logits_s[:, start:end]  # [T, C]
-            t_chunk = logits_t[:, start:end]  # [T, C]
-
-            log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
-            log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
-            
-            p_t_chunk = log_p_t_chunk.exp()            # [T, C]
-
-            # p_t * (log_p_t - log_p_s)
-            kl = kl + (p_t_chunk * (log_p_t_chunk - log_p_s_chunk)).sum(dim=-1)
-
-            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_t_chunk
-
-        return kl
-
-    @staticmethod
-    def _per_token_reverse_kl(logits_s, logits_t, chunk_size: int = 8192):
-        """KL(p_s || p_t) per token in bfloat16. Inputs: raw logits [T, V].
-        计算反向 KL (Reverse KL)。
-        用于 Answer/Anchor 部分：以 student 为基准，严厉惩罚 student 偏离 ref 的行为。
+    def _memory_efficient_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
+        """显存优化版 loss 计算：
+        - 只对有 mask 的 token 计算 KL（跳过 prompt 部分）
+        - 逐样本处理，避免堆积大张量
         """
-        T, V = logits_s.shape
-
-        logsumexp_s = torch.logsumexp(logits_s, dim=-1, keepdim=True)  # [T, 1]
-        logsumexp_t = torch.logsumexp(logits_t, dim=-1, keepdim=True)  # [T, 1]
-
-        kl = torch.zeros(T, device=logits_s.device, dtype=logits_s.dtype)
-
-        for start in range(0, V, chunk_size):
-            end = min(start + chunk_size, V)
-
-            s_chunk = logits_s[:, start:end]  # [T, C]
-            t_chunk = logits_t[:, start:end]  # [T, C]
-
-            log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
-            log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
-
-            p_s_chunk = log_p_s_chunk.exp()            # [T, C]
-
-            # p_s * (log_p_s - log_p_t)
-            kl = kl + (p_s_chunk * (log_p_s_chunk - log_p_t_chunk)).sum(dim=-1)
-
-            del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_s_chunk
-
-        return kl
-
-    def adaptive_gating_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
         shift_logits = logits[..., :-1, :].contiguous()
-        shift_ref_logits = ref_logits  
+        shift_ref_logits = ref_logits  # 已经在 compute_loss 中做过 shift
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
 
         loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
-        token_losses_list = []
-        fwd_kl_list = []
-        rev_kl_list = []
-        for j in range(shift_logits.size(0)):
-            token_losses_list.append(loss_fct(shift_logits[j], shift_labels[j]))
-            # Forward KL: KL(ref || student) — 用于 Hint 部分
-            fwd_kl_list.append(self._per_token_forward_kl(shift_logits[j], shift_ref_logits[j]))
-            # Reverse KL: KL(student || ref) — 用于 Answer/Anchor 部分
-            rev_kl_list.append(self._per_token_reverse_kl(shift_logits[j], shift_ref_logits[j]))
-            
-        token_losses = torch.stack(token_losses_list, dim=0)  # (batch, seq_len)
-        fwd_kl_ts = torch.stack(fwd_kl_list)  # [B, T] Forward KL
-        rev_kl_ts = torch.stack(rev_kl_list)  # [B, T] Reverse KL
-
         eps = 1e-8
-        gen_losses = []
-        anchor_indices, gen_indices = [], []
-        debug_map, final_losses_map = {}, {}
+        batch_size = shift_logits.size(0)
+        device = logits.device
 
-        for i in range(token_losses.size(0)):
-            h_m = shift_h_masks[i]
+        gen_indices, anchor_indices = [], []
+        final_losses_map, debug_map = {}, {}
+
+        for i in range(batch_size):
+            s_logits_i = shift_logits[i]   # [T, V]
+            r_logits_i = shift_ref_logits[i]  # [T, V]
+            labels_i = shift_labels[i]     # [T]
+            h_m = shift_h_masks[i]         # [T]
+            a_m = shift_a_masks[i]         # [T]
+
+            # CE loss（只对有 label 的 token）
+            token_ce = loss_fct(s_logits_i, labels_i)  # [T]
+
             h_count = h_m.sum()
+
             if h_count > 0:
+                # === Mode B 样本 ===
                 gen_indices.append(i)
+
                 # Hint CE
-                hint_ce = (token_losses[i] * h_m).sum() / h_count
-                # Hint Forward KL
-                hint_kl_raw = (fwd_kl_ts[i] * h_m).sum() / (h_count + eps)
+                hint_ce = (token_ce * h_m).sum() / h_count
+
+                # Hint Forward KL（只对 hint mask 的 token 计算）
+                hint_fwd_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, h_m, forward=True)
+                hint_kl_raw = hint_fwd_kl_sum / (h_count + eps)
+
                 # Hint 总 loss = CE + β_hint * Forward KL
                 hint_loss = hint_ce + self.hint_config.hint_kl_beta * hint_kl_raw
 
-                a_m = shift_a_masks[i]
                 a_count = a_m.sum()
-
-                # Answer 部分
                 if a_count > 0:
-                    answer_ce = (token_losses[i] * a_m).sum() / a_count
-                    answer_kl_raw = (rev_kl_ts[i] * a_m).sum() / (a_count + eps)
+                    answer_ce = (token_ce * a_m).sum() / a_count
+                    # Answer Reverse KL（只对 answer mask 的 token 计算）
+                    answer_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
+                    answer_kl_raw = answer_rev_kl_sum / (a_count + eps)
                     answer_weighted = self.hint_config.answer_kl_beta * answer_kl_raw
                 else:
-                    answer_ce = torch.tensor(0.0, device=logits.device)
-                    answer_weighted = torch.tensor(0.0, device=logits.device)
+                    answer_ce = torch.tensor(0.0, device=device)
+                    answer_kl_raw = torch.tensor(0.0, device=device)
+                    answer_weighted = torch.tensor(0.0, device=device)
 
-                # Mode B Loss: hint loss + answer KL
                 l_gen = hint_loss + answer_weighted
-
-                gen_losses.append(l_gen)
                 final_losses_map[i] = l_gen
                 debug_map[i] = {
                     "hint_ce": hint_ce.item(),
                     "hint_kl": hint_kl_raw.item(),
                     "hint_loss": hint_loss.item(),
                     "answer_raw": answer_ce.item(),
+                    "answer_kl_raw": answer_kl_raw.item(),
                     "answer_weighted": answer_weighted.item(),
                 }
             else:
+                # === Anchor 样本 ===
                 anchor_indices.append(i)
+                a_count = a_m.sum()
+                if a_count > 0:
+                    anchor_ce = (token_ce * a_m).sum() / a_count
+                    # Anchor Reverse KL（只对 answer mask 的 token 计算）
+                    anchor_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
+                    anchor_kl_raw = anchor_rev_kl_sum / (a_count + eps)
+                    anchor_weighted = self.hint_config.anchor_kl_beta * anchor_kl_raw
+                    final_losses_map[i] = anchor_weighted
+                    debug_map[i] = {
+                        "anchor_raw": anchor_ce.item(),
+                        "anchor_kl_raw": anchor_kl_raw.item(),
+                        "anchor_weighted": anchor_weighted.item(),
+                    }
 
-        anchor_losses = []
-        for idx in anchor_indices:
-            a_m = shift_a_masks[idx]
-            a_count = a_m.sum()
-            if a_count > 0:
-                anchor_ce = (token_losses[idx] * a_m).sum() / a_count
-                anchor_kl_raw = (rev_kl_ts[idx] * a_m).sum() / (a_count + eps)
-                anchor_weighted = self.hint_config.anchor_kl_beta * anchor_kl_raw
-                anchor_losses.append(anchor_weighted)
-                final_losses_map[idx] = anchor_weighted
-                debug_map[idx] = {
-                    "anchor_raw": anchor_ce.item(),
-                    "anchor_weighted": anchor_weighted.item(),
-                }
+            # 释放当前样本的中间变量
+            del token_ce
 
-        debug_info_list = [debug_map.get(i) for i in range(token_losses.size(0))]
-        batch_size = token_losses.size(0)
-        raw_loss_vector = torch.stack([final_losses_map.get(i, torch.tensor(0.0, device=logits.device)) for i in range(batch_size)])
+        debug_info_list = [debug_map.get(i) for i in range(batch_size)]
 
         # 50/50 任务加权
-        task_weights = torch.zeros(batch_size, device=raw_loss_vector.device)
+        raw_loss_vector = torch.stack([
+            final_losses_map.get(i, torch.tensor(0.0, device=device))
+            for i in range(batch_size)
+        ])
+        task_weights = torch.zeros(batch_size, device=device)
         if len(gen_indices) > 0:
             task_weights[gen_indices] = 0.5 / len(gen_indices)
         if len(anchor_indices) > 0:
