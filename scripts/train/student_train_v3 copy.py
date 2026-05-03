@@ -24,6 +24,10 @@ from transformers import (
     set_seed
 )
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
+try:
+    from transformers import BitsAndBytesConfig
+except ImportError:
+    BitsAndBytesConfig = None
 
 # ==========================================
 # Logger 配置
@@ -246,16 +250,25 @@ class SequentialTrainer(Trainer):
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
 
-        # --- 极致显存优化：逐样本计算 ref logits，避免 batch 级别的 [B,T,V] 张量 ---
-        # Step 1: student 前向（需要梯度）
+        # --- 显存优化：不再同时保存两份完整 [B, T, V] logits ---
+        # Step 1: ref 前向（no grad），只保留 shifted logits
+        with torch.no_grad():
+            with self.model.disable_adapter():
+                ref_outputs = model(**inputs)
+                ref_logits = ref_outputs.logits[..., :-1, :].contiguous()
+                del ref_outputs
+                torch.cuda.empty_cache()
+
+        # Step 2: student 前向
         outputs = model(**inputs)
         logits = outputs.logits
         labels = inputs.get("labels")
 
-        # Step 2: 逐样本计算 loss（ref forward 在循环内部按需计算）
-        loss, debug_info_list = self._ultra_memory_efficient_loss(
-            model, inputs, logits, labels, hint_masks, answer_masks
+        # Step 3: 逐样本计算 loss，计算完一个样本就释放对应 ref slice
+        loss, debug_info_list = self._memory_efficient_loss(
+            logits, ref_logits, labels, hint_masks, answer_masks
         )
+        del ref_logits
 
         if self.model.training:
             tracker.update(loss.item(), metadata, debug_info_list)
@@ -298,13 +311,13 @@ class SequentialTrainer(Trainer):
         
         return kl.sum()  # 返回总和
 
-    def _ultra_memory_efficient_loss(self, model, inputs, logits, labels, hint_masks, answer_masks):
-        """极致显存优化版 loss 计算：
-        - ref forward 逐样本计算，每次只保留 1 个样本的 ref logits [1, T, V]
-        - 只对有 mask 的 token 计算 KL
-        - 峰值显存 = 模型权重 + 1份student logits[B,T,V] + 1份ref logits[1,T,V]
+    def _memory_efficient_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
+        """显存优化版 loss 计算：
+        - 只对有 mask 的 token 计算 KL（跳过 prompt 部分）
+        - 逐样本处理，避免堆积大张量
         """
         shift_logits = logits[..., :-1, :].contiguous()
+        shift_ref_logits = ref_logits  # 已经在 compute_loss 中做过 shift
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
@@ -319,28 +332,12 @@ class SequentialTrainer(Trainer):
 
         for i in range(batch_size):
             s_logits_i = shift_logits[i]   # [T, V]
+            r_logits_i = shift_ref_logits[i]  # [T, V]
             labels_i = shift_labels[i]     # [T]
             h_m = shift_h_masks[i]         # [T]
             a_m = shift_a_masks[i]         # [T]
 
-            # 判断是否需要 KL（如果 hint 或 answer mask 有值才需要 ref）
-            need_kl = (h_m.sum() > 0) or (a_m.sum() > 0)
-
-            # 逐样本计算 ref logits（只保留当前 1 个样本的 ref logits）
-            if need_kl:
-                single_inputs = {
-                    k: v[i:i+1] for k, v in inputs.items()
-                    if isinstance(v, torch.Tensor)
-                }
-                with torch.no_grad():
-                    with self.model.disable_adapter():
-                        ref_out = model(**single_inputs)
-                        r_logits_i = ref_out.logits[0, :-1, :].contiguous()  # [T, V]
-                        del ref_out
-            else:
-                r_logits_i = None
-
-            # CE loss
+            # CE loss（只对有 label 的 token）
             token_ce = loss_fct(s_logits_i, labels_i)  # [T]
 
             h_count = h_m.sum()
@@ -352,14 +349,17 @@ class SequentialTrainer(Trainer):
                 # Hint CE
                 hint_ce = (token_ce * h_m).sum() / h_count
 
-                # Hint Forward KL
+                # Hint Forward KL（只对 hint mask 的 token 计算）
                 hint_fwd_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, h_m, forward=True)
                 hint_kl_raw = hint_fwd_kl_sum / (h_count + eps)
+
+                # Hint 总 loss = CE + β_hint * Forward KL
                 hint_loss = hint_ce + self.hint_config.hint_kl_beta * hint_kl_raw
 
                 a_count = a_m.sum()
                 if a_count > 0:
                     answer_ce = (token_ce * a_m).sum() / a_count
+                    # Answer Reverse KL（只对 answer mask 的 token 计算）
                     answer_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
                     answer_kl_raw = answer_rev_kl_sum / (a_count + eps)
                     answer_weighted = self.hint_config.answer_kl_beta * answer_kl_raw
@@ -384,6 +384,7 @@ class SequentialTrainer(Trainer):
                 a_count = a_m.sum()
                 if a_count > 0:
                     anchor_ce = (token_ce * a_m).sum() / a_count
+                    # Anchor Reverse KL（只对 answer mask 的 token 计算）
                     anchor_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
                     anchor_kl_raw = anchor_rev_kl_sum / (a_count + eps)
                     anchor_weighted = self.hint_config.anchor_kl_beta * anchor_kl_raw
@@ -394,8 +395,8 @@ class SequentialTrainer(Trainer):
                         "anchor_weighted": anchor_weighted.item(),
                     }
 
-            # 立即释放当前样本的 ref logits
-            del token_ce, r_logits_i
+            # 释放当前样本的中间变量
+            del token_ce
 
         debug_info_list = [debug_map.get(i) for i in range(batch_size)]
 
@@ -553,12 +554,30 @@ def run_sira_training_v3(
         steps_per_logical_epoch = 1
         logger.warning(f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1.")
 
-    model = AutoModelForCausalLM.from_pretrained(
-        hint_config.model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True
-    )
+    # 4-bit 量化配置（QLoRA）— 将模型权重从 64GB 降到 ~18GB
+    if BitsAndBytesConfig is not None:
+        logger.info("Using 4-bit quantization (QLoRA) to reduce memory usage")
+        bnb_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_use_double_quant=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            hint_config.model_path,
+            quantization_config=bnb_config,
+            device_map="auto",
+            trust_remote_code=True
+        )
+    else:
+        logger.warning("BitsAndBytesConfig not available, loading in bf16 (high memory usage)")
+        model = AutoModelForCausalLM.from_pretrained(
+            hint_config.model_path,
+            torch_dtype=torch.bfloat16,
+            device_map="auto",
+            trust_remote_code=True
+        )
+    
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
 
