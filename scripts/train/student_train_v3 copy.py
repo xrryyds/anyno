@@ -427,19 +427,12 @@ class SequentialTrainer(Trainer):
 
         debug_info_list = [debug_map.get(i) for i in range(batch_size)]
 
-        # 50/50 任务加权
+        # 简单 batch 平均（去掉 50/50 任务加权）
         raw_loss_vector = torch.stack([
             final_losses_map.get(i, torch.tensor(0.0, device=device))
             for i in range(batch_size)
         ])
-        task_weights = torch.zeros(batch_size, device=device)
-        if len(gen_indices) > 0:
-            task_weights[gen_indices] = 0.5 / len(gen_indices)
-        if len(anchor_indices) > 0:
-            task_weights[anchor_indices] = 0.5 / len(anchor_indices)
-
-        weighted_loss_vec = raw_loss_vector * task_weights * 2.0
-        final_loss = weighted_loss_vec.sum()
+        final_loss = raw_loss_vector.mean()
 
         return final_loss, debug_info_list
 
