@@ -65,6 +65,9 @@ class HintSFTConfig:
     answer_kl_beta: float = 1.0        # Mode B answer 部分的 Reverse KL 权重
     anchor_kl_beta: float = 1.0        # Anchor 部分的 Reverse KL 权重
     
+    # 高熵过滤：只对 student 熵最高的 top-ρ token 计算 KL loss
+    top_entropy_quantile: float = 0.2  # 保留 top 20% 高熵 token，1.0 = 不过滤
+    
     # Early stop 目标
     target_mode_b: Optional[float] = None
     
@@ -276,21 +279,24 @@ class SequentialTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
     @staticmethod
-    def _compute_masked_kl(logits_s, logits_t, mask, forward=True):
-        """显存优化版 KL 计算：只对 mask=1 的 token 计算 KL
+    def _compute_masked_kl(logits_s, logits_t, mask, forward=True, top_entropy_quantile=1.0):
+        """显存优化版 KL 计算：只对 mask=1 的 token 计算 KL，支持高熵过滤
         
         Args:
             logits_s: student logits [T, V]
             logits_t: ref logits [T, V]
             mask: [T] 0/1 mask
             forward: True=Forward KL(ref||student), False=Reverse KL(student||ref)
+            top_entropy_quantile: 只保留 student 熵最高的 top-ρ 比例 token 计算 KL
+                                  1.0 = 不过滤（保留全部），0.2 = 只保留 top 20%
         
         Returns:
-            masked_kl_sum: 只对 mask=1 的 token 的 KL 总和（标量）
+            masked_kl_sum: KL 总和（标量）
+            effective_count: 实际参与计算的 token 数（标量）
         """
         valid_indices = mask.nonzero(as_tuple=True)[0]
         if len(valid_indices) == 0:
-            return torch.tensor(0.0, device=logits_s.device)
+            return torch.tensor(0.0, device=logits_s.device), torch.tensor(0.0, device=logits_s.device)
         
         # 只取有效 token 的 logits
         s_valid = logits_s[valid_indices]  # [N, V]
@@ -309,7 +315,21 @@ class SequentialTrainer(Trainer):
             p_s = torch.exp(log_p_s)
             kl = (p_s * (log_p_s - log_p_t)).sum(dim=-1)  # [N]
         
-        return kl.sum()  # 返回总和
+        # 高熵过滤：只保留 student 熵最高的 top-ρ token
+        if top_entropy_quantile < 1.0 and len(kl) > 1:
+            # 计算 student 每个 token 的熵: H = -sum(p * log_p)
+            p_s_for_entropy = torch.exp(log_p_s)
+            entropy = -(p_s_for_entropy * log_p_s).sum(dim=-1)  # [N]
+            
+            # 保留熵 >= (1-ρ) 分位数的 token
+            threshold = torch.quantile(entropy, 1.0 - top_entropy_quantile)
+            high_entropy_mask = entropy >= threshold
+            kl = kl[high_entropy_mask]
+            
+            del p_s_for_entropy, entropy
+        
+        effective_count = torch.tensor(float(len(kl)), device=logits_s.device)
+        return kl.sum(), effective_count
 
     def _memory_efficient_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
         """显存优化版 loss 计算：
@@ -326,6 +346,7 @@ class SequentialTrainer(Trainer):
         eps = 1e-8
         batch_size = shift_logits.size(0)
         device = logits.device
+        rho = self.hint_config.top_entropy_quantile
 
         gen_indices, anchor_indices = [], []
         final_losses_map, debug_map = {}, {}
@@ -349,9 +370,11 @@ class SequentialTrainer(Trainer):
                 # Hint CE
                 hint_ce = (token_ce * h_m).sum() / h_count
 
-                # Hint Forward KL（只对 hint mask 的 token 计算）
-                hint_fwd_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, h_m, forward=True)
-                hint_kl_raw = hint_fwd_kl_sum / (h_count + eps)
+                # Hint Forward KL（只对 hint mask 的 token 计算，高熵过滤）
+                hint_fwd_kl_sum, hint_kl_eff_count = self._compute_masked_kl(
+                    s_logits_i, r_logits_i, h_m, forward=True, top_entropy_quantile=rho
+                )
+                hint_kl_raw = hint_fwd_kl_sum / (hint_kl_eff_count + eps)
 
                 # Hint 总 loss = CE + β_hint * Forward KL
                 hint_loss = hint_ce + self.hint_config.hint_kl_beta * hint_kl_raw
@@ -359,9 +382,11 @@ class SequentialTrainer(Trainer):
                 a_count = a_m.sum()
                 if a_count > 0:
                     answer_ce = (token_ce * a_m).sum() / a_count
-                    # Answer Reverse KL（只对 answer mask 的 token 计算）
-                    answer_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
-                    answer_kl_raw = answer_rev_kl_sum / (a_count + eps)
+                    # Answer Reverse KL（只对 answer mask 的 token 计算，高熵过滤）
+                    answer_rev_kl_sum, answer_kl_eff_count = self._compute_masked_kl(
+                        s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
+                    )
+                    answer_kl_raw = answer_rev_kl_sum / (answer_kl_eff_count + eps)
                     answer_weighted = self.hint_config.answer_kl_beta * answer_kl_raw
                 else:
                     answer_ce = torch.tensor(0.0, device=device)
@@ -384,9 +409,11 @@ class SequentialTrainer(Trainer):
                 a_count = a_m.sum()
                 if a_count > 0:
                     anchor_ce = (token_ce * a_m).sum() / a_count
-                    # Anchor Reverse KL（只对 answer mask 的 token 计算）
-                    anchor_rev_kl_sum = self._compute_masked_kl(s_logits_i, r_logits_i, a_m, forward=False)
-                    anchor_kl_raw = anchor_rev_kl_sum / (a_count + eps)
+                    # Anchor Reverse KL（只对 answer mask 的 token 计算，高熵过滤）
+                    anchor_rev_kl_sum, anchor_kl_eff_count = self._compute_masked_kl(
+                        s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
+                    )
+                    anchor_kl_raw = anchor_rev_kl_sum / (anchor_kl_eff_count + eps)
                     anchor_weighted = self.hint_config.anchor_kl_beta * anchor_kl_raw
                     final_losses_map[i] = anchor_weighted
                     debug_map[i] = {
@@ -618,7 +645,7 @@ def run_sira_training_v3(
         num_train_epochs=1,
         per_device_train_batch_size=batch_size // device_num,
         gradient_accumulation_steps=1,
-        learning_rate=5e-5, 
+        learning_rate=5e-6,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
         logging_steps=hint_config.metrics_log_interval, 
