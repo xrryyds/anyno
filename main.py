@@ -41,6 +41,39 @@ logger = logging.getLogger(__name__)
 # Global Config
 # =====================================================
 exam_paper = FileIOUtils()
+_tokenizer_cache = None
+
+def _get_tokenizer():
+    """Lazy-load tokenizer for hint truncation."""
+    global _tokenizer_cache
+    if _tokenizer_cache is None:
+        _tokenizer_cache = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
+    return _tokenizer_cache
+
+def truncate_hints_by_tokens(hints_list: list, max_tokens: int) -> list:
+    """Truncate each hint string in hints_list to at most max_tokens tokens.
+    
+    Args:
+        hints_list: List of hint strings.
+        max_tokens: Maximum number of tokens to keep for each hint.
+    
+    Returns:
+        List of truncated hint strings.
+    """
+    if max_tokens is None:
+        return hints_list
+    tokenizer = _get_tokenizer()
+    truncated = []
+    for hint in hints_list:
+        if hint is None or hint == "":
+            truncated.append(hint)
+            continue
+        token_ids = tokenizer.encode(hint, add_special_tokens=False)
+        if len(token_ids) > max_tokens:
+            token_ids = token_ids[:max_tokens]
+            hint = tokenizer.decode(token_ids, skip_special_tokens=True)
+        truncated.append(hint)
+    return truncated
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
 # model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
@@ -51,7 +84,7 @@ model_path= "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/mod
 model_path_32b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
 model_path_1_5b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
 
-def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048):
+def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_token_limit: int = None):
     try:
         logger.info("Step 1: Loading Dataset...")
         # 虽然这里读取了data_a，但在后续逻辑中主要使用 exam_paper.parse_hints_exam 解析出的数据
@@ -60,6 +93,11 @@ def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048):
             
         # 解析原始输入数据，获取元数据（hints, from_entropy等）
         question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(data)
+        
+        # Truncate hints if hint_token_limit is specified
+        if hint_token_limit is not None:
+            logger.info(f"Truncating hints to {hint_token_limit} tokens...")
+            hints = truncate_hints_by_tokens(hints, hint_token_limit)
         
         # 建立元数据映射字典，方便后续根据ID找回 hints 和 原始熵
         # Key: question_idx, Value: {hints, entropy}
@@ -220,13 +258,18 @@ def process_exam_file_batch(file_path, lora_path:str = None, max_token: int = 20
 
 
 
-def student_correct(lora_path: str = None, max_token: int = 2048):
+def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_limit: int = None):
     logger.info("Step 1: Loading Dataset...")
     # 1. 加载原始带有提示的数据
     exam_paper.load_question_with_hints()
     # 解析数据：注意这里最后获取了 from_entropy (原始熵)
     question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
-   
+    
+    # Truncate hints if hint_token_limit is specified
+    if hint_token_limit is not None:
+        logger.info(f"Truncating hints to {hint_token_limit} tokens...")
+        hints = truncate_hints_by_tokens(hints, hint_token_limit)
+
     # 2. 学生考试 (使用带提示的题目进行推理)
     logger.info("Step 2: Student Taking Exam...")
     if lora_path:
@@ -1450,3 +1493,122 @@ def ca_answer_length(log_path: str):
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, 'a', encoding='utf-8') as f:
         f.write(result_line)
+
+
+def run_hint_truncation_experiment(lora_path: str = None, max_token: int = 2048):
+    """Run hint truncation experiment with different token limits.
+    
+    This function calls student_correct() and exam_roll_recheck_hints() with
+    hint_token_limit set to 5, 10, 20, 30, 40, and 50 tokens. After each run,
+    it records the number of items in adv_hints.json and saves the results to
+    a file.
+    
+    Args:
+        lora_path: Optional LoRA adapter path.
+        max_token: Maximum sequence length for model inference.
+    """
+    token_limits = [5, 10, 20, 30, 40, 50]
+    results = []
+    
+    output_file = os.path.join(os.path.dirname(exam_paper.adv_hints_dataset_path),
+                               "hint_truncation_experiment_results.txt")
+    
+    logger.info("=" * 80)
+    logger.info("Starting Hint Truncation Experiment")
+    logger.info(f"Token limits to test: {token_limits}")
+    logger.info(f"Results will be saved to: {output_file}")
+    logger.info("=" * 80)
+    
+    for token_limit in token_limits:
+        logger.info(f"\n{'='*80}")
+        logger.info(f"Running experiment with hint_token_limit={token_limit}")
+        logger.info(f"{'='*80}\n")
+        
+        # Clear adv_hints.json before each run to get accurate counts
+        if os.path.exists(exam_paper.adv_hints_dataset_path):
+            logger.info(f"Clearing {exam_paper.adv_hints_dataset_path} before run...")
+            exam_paper.save_results_to_json([], exam_paper.adv_hints_dataset_path)
+        
+        try:
+            # Run student_correct with current token limit
+            logger.info(f"Step 1: Running student_correct(hint_token_limit={token_limit})...")
+            student_correct(lora_path=lora_path, max_token=max_token, hint_token_limit=token_limit)
+            
+            # Count items in adv_hints.json after student_correct
+            count_after_student_correct = 0
+            if os.path.exists(exam_paper.adv_hints_dataset_path):
+                with open(exam_paper.adv_hints_dataset_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    count_after_student_correct = len(data) if isinstance(data, list) else 0
+            
+            logger.info(f"Items in adv_hints.json after student_correct: {count_after_student_correct}")
+            
+            # Run exam_roll_recheck_hints with current token limit
+            logger.info(f"Step 2: Running exam_roll_recheck_hints(hint_token_limit={token_limit})...")
+            result = exam_roll_recheck_hints(lora_path=lora_path, max_token=max_token, hint_token_limit=token_limit)
+            
+            # Count items in adv_hints.json after exam_roll_recheck_hints
+            final_count = 0
+            if os.path.exists(exam_paper.adv_hints_dataset_path):
+                with open(exam_paper.adv_hints_dataset_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    final_count = len(data) if isinstance(data, list) else 0
+            
+            logger.info(f"Final items in adv_hints.json: {final_count}")
+            
+            # Record results
+            result_entry = {
+                'hint_token_limit': token_limit,
+                'count_after_student_correct': count_after_student_correct,
+                'count_after_exam_roll_recheck': final_count,
+                'success': result.get('success', False) if isinstance(result, dict) else True
+            }
+            results.append(result_entry)
+            
+            logger.info(f"Completed run for hint_token_limit={token_limit}")
+            
+        except Exception as e:
+            logger.error(f"Error during experiment with hint_token_limit={token_limit}: {e}")
+            import traceback
+            traceback.print_exc()
+            results.append({
+                'hint_token_limit': token_limit,
+                'count_after_student_correct': 0,
+                'count_after_exam_roll_recheck': 0,
+                'success': False,
+                'error': str(e)
+            })
+    
+    # Save results to file
+    logger.info(f"\n{'='*80}")
+    logger.info("Experiment Complete - Saving Results")
+    logger.info(f"{'='*80}\n")
+    
+    os.makedirs(os.path.dirname(output_file), exist_ok=True)
+    with open(output_file, 'w', encoding='utf-8') as f:
+        f.write("Hint Truncation Experiment Results\n")
+        f.write("=" * 80 + "\n\n")
+        f.write(f"Experiment Date: {json.dumps(results, indent=2)}\n\n")
+        f.write("Summary:\n")
+        f.write("-" * 80 + "\n")
+        f.write(f"{'Token Limit':<15} {'After student_correct':<25} {'After exam_roll_recheck':<25} {'Success':<10}\n")
+        f.write("-" * 80 + "\n")
+        
+        for result in results:
+            token_limit = result['hint_token_limit']
+            count_sc = result['count_after_student_correct']
+            count_err = result['count_after_exam_roll_recheck']
+            success = result['success']
+            f.write(f"{token_limit:<15} {count_sc:<25} {count_err:<25} {success!s:<10}\n")
+        
+        f.write("-" * 80 + "\n")
+    
+    logger.info(f"Results saved to: {output_file}")
+    logger.info("\nExperiment Summary:")
+    for result in results:
+        logger.info(f"  Token Limit {result['hint_token_limit']}: "
+                   f"student_correct={result['count_after_student_correct']}, "
+                   f"exam_roll_recheck={result['count_after_exam_roll_recheck']}, "
+                   f"success={result['success']}")
+    
+    return results
