@@ -1,6 +1,7 @@
 import os
 import json
 import gc
+import random
 import torch
 import numpy as np
 import logging
@@ -607,6 +608,37 @@ def gen_IRDCL_dataset_v2(batch_size, spilt, epoch):
                         exam_paper.irdcl_dataset_path,
                         batch_size,
                         spilt, epoch)
+
+
+def shuffle_irdcl_dataset(seed: int = None):
+    """Read irdcl_data.json, shuffle the data in-place, and write it back.
+
+    Args:
+        seed: Optional random seed for reproducibility. If None, uses system randomness.
+    """
+    irdcl_path = exam_paper.irdcl_dataset_path
+
+    if not os.path.exists(irdcl_path):
+        logger.error(f"File not found: {irdcl_path}")
+        return
+
+    with open(irdcl_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        logger.error(f"Expected a JSON list in {irdcl_path}, got {type(data).__name__}")
+        return
+
+    logger.info(f"Shuffling {len(data)} items in {irdcl_path} (seed={seed})...")
+
+    if seed is not None:
+        random.seed(seed)
+    random.shuffle(data)
+
+    with open(irdcl_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    logger.info(f"Shuffled and saved {len(data)} items back to {irdcl_path}")
 
 
 def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path, max_token: int = 2048):
