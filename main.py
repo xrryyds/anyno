@@ -641,6 +641,50 @@ def shuffle_irdcl_dataset(seed: int = None):
     logger.info(f"Shuffled and saved {len(data)} items back to {irdcl_path}")
 
 
+def replace_hints_with_ref_solution_prefix(max_tokens: int = 50):
+    """Replace all hints in adv_hints.json with the first `max_tokens` tokens of ref_solution.
+
+    This reads adv_hints.json, truncates each item's ref_solution to the first
+    `max_tokens` tokens, and overwrites the hints field with that truncated text.
+    The modified data is written back to adv_hints.json.
+
+    Args:
+        max_tokens: Number of tokens to take from the beginning of ref_solution.
+                    Defaults to 50.
+    """
+    adv_path = exam_paper.adv_hints_dataset_path
+
+    if not os.path.exists(adv_path):
+        logger.error(f"File not found: {adv_path}")
+        return
+
+    with open(adv_path, 'r', encoding='utf-8') as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        logger.error(f"Expected a JSON list in {adv_path}, got {type(data).__name__}")
+        return
+
+    tokenizer = _get_tokenizer()
+    modified_count = 0
+
+    for item in data:
+        ref_sol = item.get("ref_solution", "")
+        if not ref_sol:
+            continue
+        token_ids = tokenizer.encode(ref_sol, add_special_tokens=False)
+        truncated_ids = token_ids[:max_tokens]
+        truncated_text = tokenizer.decode(truncated_ids, skip_special_tokens=True)
+        item["hints"] = truncated_text
+        modified_count += 1
+
+    with open(adv_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    logger.info(f"Replaced hints with first {max_tokens} tokens of ref_solution "
+                f"for {modified_count}/{len(data)} items in {adv_path}")
+
+
 def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_path:str=None, log_prompt:str="", model_path=model_path, max_token: int = 2048):
     exam_paper.load_mistakes()
     m_question_idx, m_question, m_answer, m_ref_answer, m_ref_solution, m_entropy = exam_paper.parse_data(exam_paper.mistakes)
