@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from datasets import Dataset
-from torch.utils.data import DataLoader, SequentialSampler
+from torch.utils.data import DataLoader, SequentialSampler, DistributedSampler
 from transformers import (
     AutoTokenizer, 
     AutoModelForCausalLM, 
@@ -24,10 +24,6 @@ from transformers import (
     set_seed
 )
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
-try:
-    from transformers import BitsAndBytesConfig
-except ImportError:
-    BitsAndBytesConfig = None
 
 # ==========================================
 # Logger 配置
@@ -238,10 +234,22 @@ class SequentialTrainer(Trainer):
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
+        
+        # Use DistributedSampler in DDP mode, otherwise SequentialSampler
+        if self.args.local_rank != -1:
+            sampler = DistributedSampler(
+                self.train_dataset,
+                num_replicas=self.args.world_size,
+                rank=self.args.local_rank,
+                shuffle=False,  # Keep sequential order within each rank
+            )
+        else:
+            sampler = SequentialSampler(self.train_dataset)
+        
         return DataLoader(
             self.train_dataset,
             batch_size=self._train_batch_size,
-            sampler=SequentialSampler(self.train_dataset),
+            sampler=sampler,
             collate_fn=self.data_collator,
             drop_last=self.args.dataloader_drop_last,
             num_workers=self.args.dataloader_num_workers,
@@ -273,7 +281,7 @@ class SequentialTrainer(Trainer):
         )
         del ref_logits
 
-        if self.model.training:
+        if self.model.training and self.args.local_rank in (-1, 0):
             tracker.update(loss.item(), metadata, debug_info_list)
 
         return (loss, outputs) if return_outputs else loss
@@ -448,8 +456,10 @@ class StepLogCallback(TrainerCallback):
         self.output_dir = output_dir
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
+        if args.local_rank not in (-1, 0):
+            return
         if state.global_step > 0 and state.global_step % self.log_interval == 0:
-            stats = tracker.get_window_stats() 
+            stats = tracker.get_window_stats()
             json_stats = stats.copy()
             json_stats.update({"epoch": state.epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
             with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(json_stats) + "\n")
@@ -473,6 +483,8 @@ class LogicalEpochLogCallback(TrainerCallback):
         self.saved_model_dir = None
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
+        if args.local_rank not in (-1, 0):
+            return
         if state.global_step > 0 and state.global_step % self.steps_per_epoch == 0:
             self.current_logical_epoch += 1
             
@@ -574,29 +586,13 @@ def run_sira_training_v3(
         steps_per_logical_epoch = 1
         logger.warning(f"Total steps ({total_steps}) < real epochs ({real_data_epochs}). Set logical step to 1.")
 
-    # 4-bit 量化配置（QLoRA）— 将模型权重从 64GB 降到 ~18GB
-    if BitsAndBytesConfig is not None:
-        logger.info("Using 4-bit quantization (QLoRA) to reduce memory usage")
-        bnb_config = BitsAndBytesConfig(
-            load_in_4bit=True,
-            bnb_4bit_use_double_quant=True,
-            bnb_4bit_quant_type="nf4",
-            bnb_4bit_compute_dtype=torch.bfloat16
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            hint_config.model_path,
-            quantization_config=bnb_config,
-            device_map="auto",
-            trust_remote_code=True
-        )
-    else:
-        logger.warning("BitsAndBytesConfig not available, loading in bf16 (high memory usage)")
-        model = AutoModelForCausalLM.from_pretrained(
-            hint_config.model_path,
-            torch_dtype=torch.bfloat16,
-            device_map="auto",
-            trust_remote_code=True
-        )
+    # 使用 bf16 全精度（与 student_train_v3.py 保持一致）
+    model = AutoModelForCausalLM.from_pretrained(
+        hint_config.model_path,
+        torch_dtype=torch.bfloat16,
+        device_map={"": int(os.environ.get("LOCAL_RANK", 0))},
+        trust_remote_code=True
+    )
     
     model.config.use_cache = False
     model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
@@ -641,15 +637,16 @@ def run_sira_training_v3(
         learning_rate=1e-6,
         warmup_ratio=0.05,
         lr_scheduler_type="cosine",
-        logging_steps=hint_config.metrics_log_interval, 
-        save_strategy="steps",           
+        logging_steps=hint_config.metrics_log_interval,
+        save_strategy="steps",
         save_steps=steps_per_logical_epoch * (real_data_epochs/SAVE_TOTAL),
         save_total_limit=SAVE_TOTAL,
         fp16=False, bf16=True,
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,
-        dataloader_drop_last=True, report_to="none"                 
+        dataloader_drop_last=True, report_to="none",
+        ddp_find_unused_parameters=False,
     )
 
     step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)
@@ -686,9 +683,10 @@ if __name__ == "__main__":
     default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
 
-    run_sira_training_v2(
+    run_sira_training_v3(
         model_path=default_model_url,
         batch_size=8,
         real_data_epochs=50,
-        target_mode_b=1.2 
+        device_num=2,
+        target_mode_b=1.2
     )
