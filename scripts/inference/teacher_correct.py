@@ -959,7 +959,7 @@ class TeacherCorrecter:
         )
         return True
 
-    def teacher_mark_paper_with_save(self) -> bool:
+    def teacher_mark_paper_with_save(self, log_prompt: str = "", save_log_path: str = None) -> bool:
         incorrect_data, correct_data = self.teacher_mark_paper()
         (
             err_question_idx,
@@ -977,6 +977,28 @@ class TeacherCorrecter:
             correct_ref_answers,
             correct_entropy,
         ) = correct_data
+        
+        # Calculate statistics
+        total_count = len(err_question_idx) + len(correct_question_idx)
+        correct_count = len(correct_question_idx)
+        incorrect_count = len(err_question_idx)
+        accuracy = (correct_count / total_count * 100.0) if total_count > 0 else 0.0
+        
+        result_log = f"Grading Result -> Total: {total_count}, Correct: {correct_count}, Incorrect: {incorrect_count}, Accuracy: {accuracy:.2f}%"
+        print(result_log)
+        
+        # Write to log file if save_log_path is provided
+        if save_log_path:
+            import os
+            log_lines = [result_log]
+            if log_prompt:
+                log_lines.append(log_prompt)
+            if os.path.dirname(save_log_path):
+                os.makedirs(os.path.dirname(save_log_path), exist_ok=True)
+            with open(save_log_path, 'a', encoding='utf-8') as f:
+                f.write("\n".join(log_lines) + "\n")
+                f.write("#############################\n")
+        
         self.file.save_mistakes(
             err_question_idx,
             err_questions,
