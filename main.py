@@ -1362,9 +1362,9 @@ if __name__ == "__main__":
     
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 10)
-    gen_IRDCL_dataset_v2(4, 0.75, 50)
+    gen_IRDCL_dataset_v2(4, 0.75, 10)
     # run_sira_training_v2(model_path=model_path,real_data_epochs=10)
-    run_sira_training_v3(model_path=model_path,real_data_epochs=50)
+    run_sira_training_v3(model_path=model_path,real_data_epochs=10)
     # 4. check 
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
