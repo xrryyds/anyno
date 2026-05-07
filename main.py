@@ -28,6 +28,8 @@ from utils import (
 )
 from data_math import Math_500, GSM8K, AIME, Math_All, Math_Subset, LiveMathBench, AIME_1983_2024
 
+model_path = ""
+
 
 # =====================================================
 # Logger Setup
@@ -75,15 +77,8 @@ def truncate_hints_by_tokens(hints_list: list, max_tokens: int) -> list:
             hint = tokenizer.decode(token_ids, skip_special_tokens=True)
         truncated.append(hint)
     return truncated
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-7B"
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/OREAL/OREAL-32B"
-# model_path = "/mnt/petrelfs/wanhaiyuan/xrr/CELPO/model/deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
-# model_path = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
-# model_path = "/root/autodl-tmp/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
-model_path= "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-7B"
-# model_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1"
-model_path_32b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-32B"
-model_path_1_5b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS/DeepSeek-R1-Distill-Qwen-1.5B"
+
+
 
 def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_token_limit: int = None):
     try:
