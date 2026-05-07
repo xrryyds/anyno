@@ -1364,62 +1364,33 @@ if __name__ == "__main__":
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
     # student_take_exam_AIME(year=2024)
-    # student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=8192)
-    # student_take_exam_Math_500(train=True, lora_path="/root/autodl-tmp/CELPO/output/sira_sft_10ep_0311_1435")
-    # student_take_exam_Gsm8k(train=False, lora_path = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env2/CELPO/output/sft_baseline_50ep_0415_0659")
+    # student_take_exam_AIME_1983_2024(lora_path="", max_token=8192)
+    # student_take_exam_Math_500(train=True, lora_path="")
+    # student_take_exam_Gsm8k(train=False, lora_path = "")
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
+    # grpo_on_MATH500(lora_path="")
     
-    # test_grpo_on_MATH500(grpo_lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
+    # test_grpo_on_MATH500(grpo_lora_path="")
     
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra") 
 
     #####################################################################################################
     # process_exam_file_batch("/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json", "/root/autodl-tmp/CELPO/output/sira_sft_50ep_0309_2202")
     # teacher.teacher_mark_paper_with_save()
-    # exam_roll_recheck_mistake(use_lora=True, lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=8192)
+    # exam_roll_recheck_mistake(use_lora=True, lora_path="", max_token=8192)
 
-    # test_adv_hints_accuracy(model_path=model_path, dataset_path="/root/autodl-tmp/CELPO/datasets/exam/adv_hints.json")
+    # test_adv_hints_accuracy(model_path=model_path, dataset_path="")
     # analyze_knowledge_change("/root/autodl-tmp/CELPO/datasets/exam/corr_AL_MATH.json")
 
     ####################################################################################################
     # gen_vocab("/root/autodl-tmp/CELPO/datasets/exam/corr_answer.json")
     # run_sira_training_v3(model_path=model_path,real_data_epochs=50)
-    # merge_lora_to_base_model(model_path, "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/output/sira_sft_10ep_0402_1306","/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/model/DS_7b_1")
     # gen_sft_dataset(50)
     # run_sft_training_baseline(model_path=model_path, real_data_epochs=50)
 
     # ########################################################################################################################################################################
-
-    # try:
-    #     # run_sdpo_training_baseline(
-    #     #     model_path=model_path,
-    #     #     data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
-    #     #     batch_size=8,
-    #     #     real_data_epochs=1,
-    #     #     device_num=2,
-    #     # )
-    #     student_take_exam_AIME_1983_2024(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=8192)
-    #     teacher.teacher_mark_paper_with_save()
-    #     exam_roll_recheck_mistake(use_lora=True,
-    #                             lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
-    #                             max_token=8192,
-    #                             log_prompt="sdcl_8192_AIME",
-    #                             save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
-
-
-    #     student_take_exam_Math_sub(lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16", max_token=2048)
-    #     teacher.teacher_mark_paper_with_save()
-    #     exam_roll_recheck_mistake(use_lora=True,
-    #                             lora_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/output/sira_sft_50ep_0429_1458/checkpoint-target-reached-epoch-16",
-    #                             max_token=2048,
-    #                             log_prompt="sdcl_2048_MATH",
-    #                             save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
-    # except Exception as e:
-    #     use_worker()
-    use_worker()
 
 
 def ca_answer_length(log_path: str):
