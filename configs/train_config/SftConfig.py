@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SftConfig:
     model_name: str = "Qwen/Qwen2-1.5B-Instruct"
-    output_dir: str = "/home/xrrfolder/CELPO/outputs/sft"
+    output_dir: str = "/home/xxxfolder/CELPO/outputs/sft"
     bf16: bool = True
     per_device_train_batch_size: int = 1
     gradient_accumulation_steps: int = 4

@@ -3,7 +3,7 @@ import sys
 from transformers import AutoTokenizer
 
 # ==========================================
-MODEL_PATH = "/root/project/data/xrr/OREAL-7B" 
+MODEL_PATH = "" 
 # ==========================================
 
 def check_tokenizer(model_path):

@@ -1,7 +1,7 @@
 
 model:
   # name: "Qwen/Qwen2-1.5B-Instruct" 
-  name: "/home/xrrfolder/models/Qwen2.5-3B-Instruct" 
+  name: "/home/xxxfolder/models/Qwen2.5-3B-Instruct" 
   max_seq_length: 1024
 
 lora:
@@ -21,7 +21,7 @@ training:
   bf16: true
 
 system:
-  output_dir: "/home/xrrfolder/CELPO/outputs/sft" # output_dir
+  output_dir: "/home/xxxfolder/CELPO/outputs/sft" # output_dir
   save_steps: 50
   logging_steps: 10
   report_to: "none"

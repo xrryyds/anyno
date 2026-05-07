@@ -520,7 +520,7 @@
 #         LORA_PATH = os.path.join(project_root, "CELPO", "output", "hint_sft_XXXX_XXXX") 
 
 #         take_exam = TakeExam(
-#             model_path="/root/project/data/xrr/Qwen/Qwen2.5-Math-7B-Instruct",
+#             model_path="/root/project/data/xxx/Qwen/Qwen2.5-Math-7B-Instruct",
 #         )
         
 #         # k=8, temperature=0.7

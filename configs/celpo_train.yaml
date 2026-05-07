@@ -1,7 +1,7 @@
 
 model:
   # name: "Qwen/Qwen2-1.5B-Instruct"    
-  name: "/home/xrrfolder/models/Qwen2.5-3B-Instruct" 
+  name: "" 
   max_length: 512
   max_new_tokens: 512
   quantization:

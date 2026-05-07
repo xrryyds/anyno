@@ -1,8 +1,8 @@
 
 model:
-  model_path: "/home/xrrfolder/CELPO/outputs/sft/best_model_final" 
+  model_path: "" 
   # base_model: "Qwen/Qwen2-1.5B-Instruct"
-  base_model: "/home/xrrfolder/models/Qwen2.5-3B-Instruct"  
+  base_model: ""  
   use_lora: false
 
 lora:
