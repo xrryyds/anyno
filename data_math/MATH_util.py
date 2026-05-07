@@ -2,7 +2,6 @@ import logging
 import os
 import json
 from datasets import Dataset, concatenate_datasets
-# 假设这些模块在你本地存在
 from .load_dataset import LoadDataset
 from utils import extract_boxed_content
 
@@ -12,12 +11,11 @@ class Math_All():
     def __init__(self, train: bool = True, subset_name: str = "all", shuffle: bool = True):
         """
         Args:
-            train (bool): True 为训练集, False 为测试集
-            subset_name (str): 指定加载哪个子集，例如 "algebra"。
-                               如果为 "all"，则加载所有子集并混合。
-            shuffle (bool): 是否打乱数据顺序。
+            train (bool): True , False 
+            subset_name (str):  "algebra"
+                                "all"
+            shuffle (bool): 
         """
-        # 定义所有可用的子集名称
         all_possible_subsets = [
             "algebra",
             "counting_and_probability",
@@ -28,7 +26,6 @@ class Math_All():
             "precalculus"
         ]
 
-        # 1. 根据 subset_name 决定要加载的目标列表
         if subset_name.lower() == "all":
             target_subsets = all_possible_subsets
             logger.info(f"Mode: Load ALL subsets and MIX.")
@@ -38,7 +35,6 @@ class Math_All():
         else:
             raise ValueError(f"Invalid subset_name: '{subset_name}'. Must be 'all' or one of {all_possible_subsets}")
 
-        # 2. 设定路径
         if train:
             target_split = 'train'
             local_path_base = './datasets/data/MATH/train'
@@ -49,7 +45,6 @@ class Math_All():
         loaded_datasets = []
         print(f"Start loading MATH dataset (Split: {target_split}, Target: {subset_name})...")
 
-        # 3. 循环加载目标子集
         for subset in target_subsets:
             try:
                 current_local_path = os.path.join(local_path_base, subset)
@@ -72,15 +67,12 @@ class Math_All():
         if not loaded_datasets:
             raise ValueError(f"No datasets loaded. Please check paths or network.")
 
-        # 4. 合并数据集
         full_dataset = concatenate_datasets(loaded_datasets)
         
-        # 5. 【关键】如果是 "all" 或者是单独子集但要求 shuffle，则进行打乱
         if shuffle:
             print("Shuffling (mixing) data...")
             full_dataset = full_dataset.shuffle(seed=42)
 
-        # 6. 提取数据
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(full_dataset)
         print(f"Done. Total valid samples: {self.data_len}")
 
@@ -117,16 +109,13 @@ def save_to_jsonl(math_obj, output_path):
 
 def main():
     # ==========================================
-    # 场景 1: 获取所有 Train 数据并混合
     # ==========================================
     try:
         print("\n--- 1. Loading ALL Train Data (Mixed) ---")
-        # subset_name="all" 会加载所有子集并混合
         math_all_train = Math_All(train=True, subset_name="all")
         
         save_to_jsonl(math_all_train, "./processed_data/math_train_all_mixed.jsonl")
         
-        # 验证前几个是否来自不同领域（因为混合了）
         print("Preview (Problem Start):")
         for i in range(3):
             print(f" {i+1}. {math_all_train.problems[i][:50]}...")
@@ -135,11 +124,9 @@ def main():
         print(f"Error: {e}")
 
     # ==========================================
-    # 场景 2: 只获取 Geometry 的 Train 数据
     # ==========================================
     try:
         print("\n--- 2. Loading ONLY Geometry Train Data ---")
-        # subset_name="geometry" 只加载几何
         math_geo_train = Math_All(train=True, subset_name="geometry")
         
         save_to_jsonl(math_geo_train, "./processed_data/math_train_geometry.jsonl")

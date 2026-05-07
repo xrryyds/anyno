@@ -10,11 +10,10 @@ from transformers import AutoTokenizer, set_seed
 from vllm import LLM, SamplingParams
 from vllm.lora.request import LoRARequest
 
-# ==================== 环境变量设置 ====================
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
-os.environ["CUDA_LAUNCH_BLOCKING"] = "1"  # CUDA 同步
-os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"  # 确定性 CUBLAS
-os.environ["PYTHONHASHSEED"] = "42"  # Python 哈希种子
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+os.environ["PYTHONHASHSEED"] = "42"
 
 # =====================================================
 # Logger
@@ -25,30 +24,24 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局序列长度超参数（训练/推理可统一调节）
 MAX_SEQ_LENGTH = 2048
 
-# Qwen-Math 的标准 System Prompt，这对激发数学能力至关重要
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # =====================================================
-# 全局种子设置函数
 # =====================================================
 def set_all_seeds(seed=42):
-    """确保所有随机性来源都使用相同种子"""
+    """"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-    # PyTorch 确定性设置
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    # 使用确定性算法（warn_only=True 避免某些操作不支持时报错）
     torch.use_deterministic_algorithms(True, warn_only=True)
 
-# 初始化全局种子
 set_all_seeds(42)
-set_seed(42)  # Transformers 的种子
+set_seed(42)
 
 class TakeExam:
     def __init__(
@@ -72,9 +65,8 @@ class TakeExam:
 
         # ================== Config ==================
         self.seed = 42
-        set_all_seeds(self.seed)  # 再次确保种子设置
+        set_all_seeds(self.seed)
 
-        # 推理长度超参数，优先使用实例初始化时传入的值
         self.max_seq_length = max_seq_length or MAX_SEQ_LENGTH
         self.MAX_NEW_TOKENS = self.max_seq_length
         self.MAX_MODEL_LEN = self.max_seq_length + 1024
@@ -91,27 +83,25 @@ class TakeExam:
             use_fast=False, 
         )
 
-        # 准备 Qwen 特有的 Stop Tokens ID
         # 151645: <|im_end|>, 151643: <|endoftext|>
         self.stop_token_ids = [self.tokenizer.eos_token_id, 151643, 151645]
 
         # ================== Initialize vLLM ==================
         logger.info(f"Initializing vLLM Engine from {self.LOCAL_MODEL_PATH}...")
         
-        # 单 GPU 设置，确保完全确定性
         logger.info("Using single GPU (tensor_parallel_size=1) for deterministic results")
 
         self.llm = LLM(
             model=self.LOCAL_MODEL_PATH,
             trust_remote_code=True,
-            tensor_parallel_size=1,  # ✅ 单 GPU，确保确定性
+            tensor_parallel_size=1,
             gpu_memory_utilization=0.9,
             max_model_len=self.MAX_MODEL_LEN,
             enable_lora=use_lora,
             max_lora_rank=64,
-            enforce_eager=True,  # ✅ 强制 eager 模式，避免编译优化带来的不确定性
+            enforce_eager=True,
             seed=self.seed,
-            dtype="bfloat16"  # ✅ 明确指定精度，避免自动选择的不确定性
+            dtype="bfloat16"
         )
 
         self.lora_request = None
@@ -123,12 +113,11 @@ class TakeExam:
 
         logger.info("vLLM Engine loaded successfully.")
         
-        # vLLM 初始化后再次设置种子，确保不被污染
         set_all_seeds(self.seed)
 
     def _build_prompts(self, questions):
         """
-        统一构建带有 System Prompt 的输入
+         System Prompt 
         """
         prompts = []
         for q in questions:
@@ -145,7 +134,6 @@ class TakeExam:
         return prompts
 
     # =====================================================
-    # 计算 answer 的 vocab 级 loss 向量
     # =====================================================
     def compute_answer_vocab_loss_vector(self, question, answer):
         """Compute per-vocab average loss using vLLM prompt_logprobs (no second model needed).
@@ -232,18 +220,16 @@ class TakeExam:
         return avg_loss_per_vocab
 
     # =====================================================
-    # 单题推理
     # =====================================================
     def answer_single_question(self, question: str) -> str:
         try:
-            # 每次推理前重置种子，确保一致性
             set_all_seeds(self.seed)
             
             prompts = self._build_prompts([question])
             
             sampling_params = SamplingParams(
-                temperature=0.0,  # ✅ 贪心解码
-                top_p=1.0,        # ✅ temperature=0 时必须为 1.0
+                temperature=0.0,
+                top_p=1.0,
                 max_tokens=self.MAX_NEW_TOKENS,
                 stop_token_ids=self.stop_token_ids,
                 seed=self.seed 
@@ -266,7 +252,6 @@ class TakeExam:
         self.exam(question, solution, answer, question_idx)
 
     # =====================================================
-    # 批量 Roll K 次考试
     # =====================================================
     def exam_roll_k(
         self,
@@ -278,12 +263,11 @@ class TakeExam:
         temperature: float = 0.7 
     ):
         """
-        使用 vLLM 进行 Roll K 推理。
-        注意：如果用于 Pass@1 测试，请在调用时传入 k=1, temperature=0.0
+         vLLM  Roll K 
+         Pass@1  k=1, temperature=0.0
         """
         logger.info(f"Starting vLLM Roll-K Exam: k={k}, temp={temperature}, total_questions={len(question)}")
         
-        # 推理前重置种子
         set_all_seeds(self.seed)
         
         prompts = self._build_prompts(question)
@@ -291,7 +275,7 @@ class TakeExam:
         sampling_params = SamplingParams(
             n=k,
             temperature=temperature,
-            top_p=1.0 if temperature == 0 else 0.9,  # temperature=0 时 top_p 必须为 1
+            top_p=1.0 if temperature == 0 else 0.9,
             max_tokens=self.MAX_NEW_TOKENS,
             stop_token_ids=self.stop_token_ids,
             seed=self.seed
@@ -328,7 +312,6 @@ class TakeExam:
         logger.info(f"Roll-K Exam done! {len(results)} entries saved to {self.OUTPUT_JSON_PATH_ROLL}")
     
     # =====================================================
-    # 标准 Exam (Pass@1)
     # =====================================================
     def _exam_core(self, question, solution, answer, question_idx):
         """Core implementation of exam() that returns in-memory results.
@@ -341,11 +324,10 @@ class TakeExam:
 
         prompts = self._build_prompts(question)
 
-        # ✅ 强制 greedy search，确保确定性输出
         sampling_params = SamplingParams(
             n=1,
-            temperature=0.0,  # ✅ 必须为 0
-            top_p=1.0,        # ✅ 必须为 1.0
+            temperature=0.0,
+            top_p=1.0,
             max_tokens=self.MAX_NEW_TOKENS,
             stop_token_ids=self.stop_token_ids,
             seed=self.seed,
@@ -372,7 +354,6 @@ class TakeExam:
     def exam(self, question, solution, answer, question_idx):
         logger.info(f"Starting vLLM Standard Exam (Greedy): total_questions={len(question)}")
 
-        # 推理前重置种子
         set_all_seeds(self.seed)
 
         results = self._exam_core(question, solution, answer, question_idx)
@@ -530,28 +511,23 @@ class TakeExam:
         return merged_results
 
     # =====================================================
-    # 新增：带 Hint 的 Prefix-Forcing 考试 (Q + H -> A)
     # =====================================================
     def exam_with_hints(self, question, solution, answer, question_idx, hints):
         """
-        使用 Prefix-Forcing 模式进行推理。
+         Prefix-Forcing 
         
-        原理：
-        构造 Prompt = System + User(Question) + Assistant({Hint})
-        强制模型认为它已经输出了 Hint，从而接着生成 Answer。
+        
+         Prompt = System + User(Question) + Assistant({Hint})
+         Hint Answer
         """
         logger.info(f"Starting vLLM Exam (Prefix-Forcing): total_questions={len(question)}")
         
-        # 1. 确保随机种子一致
         set_all_seeds(self.seed)
         
-        # 2. 构建带有预填充(Pre-fill)的 Prompts
         prompts = []
-        # 必须严格匹配训练代码中的 GEN_HINTS_WIH_ANSWER 格式
         HINT_PREFIX_TEMPLATE = "{hint}"
 
         for i, q in enumerate(question):
-            # A. 构建基础 ChatML (System + User)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": str(q)}
@@ -562,20 +538,16 @@ class TakeExam:
                 add_generation_prompt=True,
             )
             
-            # B. 拼接 Hint 到 Assistant 的开头
             current_hint = hints[i] if i < len(hints) else ""
             
             if current_hint and current_hint.strip() != "":
-                # 拼接逻辑：Assistant标签 + Hint前缀
                 prefix_text = HINT_PREFIX_TEMPLATE.format(hint=current_hint)
                 full_prompt = base_prompt + prefix_text
             else:
-                # 如果没有 Hint，就按普通模式推理
                 full_prompt = base_prompt
                 
             prompts.append(full_prompt)
 
-        # 3. 设置采样参数 (Greedy Search)
         sampling_params = SamplingParams(
             n=1,
             temperature=0.0,
@@ -585,18 +557,14 @@ class TakeExam:
             seed=self.seed
         )
 
-        # 4. 执行推理
         outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
 
-        # 5. 处理结果
         results = []
         for i, output in enumerate(outputs):
-            # generated_text 仅包含模型新生成的 Answer 部分
             generated_answer = output.outputs[0].text.strip()
             
             current_hint = hints[i] if i < len(hints) else ""
             
-            # 为了数据完整性，模拟拼接出完整的 Assistant 输出
             if current_hint:
                 full_response = HINT_PREFIX_TEMPLATE.format(hint=current_hint) + generated_answer
             else:
@@ -604,16 +572,14 @@ class TakeExam:
 
             results.append({
                 "question": question[i],
-                # ✅ 【已修改】将 "model_answer" 改为 "answer"，与标准 exam() 格式保持一致
                 "answer": generated_answer,       
-                "provided_hint": current_hint,    # 保留此字段用于分析
-                "full_response": full_response,   # 保留此字段用于后续SFT或分析
+                "provided_hint": current_hint,
+                "full_response": full_response,
                 "ref_answer": answer[i].strip(),
                 "ref_solution": solution[i].strip(),
                 "question_idx": question_idx[i],
             })
 
-        # 6. 保存结果
         os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
         with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
@@ -621,9 +587,7 @@ class TakeExam:
         logger.info(f"Prefix-Forcing Exam done! Saved to {self.OUTPUT_JSON_PATH}")
 
 
-
     # =====================================================
-    # 新增：带 Hint 的 Roll-K 考试 (Prefix-Forcing + Sampling)
     # =====================================================
     def exam_roll_k_with_hints(
         self,
@@ -636,23 +600,20 @@ class TakeExam:
         temperature: float = 0.7
     ):
         """
-        使用 Prefix-Forcing 模式配合 Roll-K 采样进行推理。
+         Prefix-Forcing  Roll-K 
         
-        功能：
-        1. 强制模型基于给定的 Hint 开始生成。
-        2. 对每个问题生成 K 个不同的回答 (Sampling)。
+        
+        1.  Hint 
+        2.  K  (Sampling)
         """
         logger.info(f"Starting vLLM Roll-K Exam with Hints: k={k}, temp={temperature}, total_questions={len(question)}")
         
-        # 1. 确保随机种子一致
         set_all_seeds(self.seed)
         
-        # 2. 构建带有预填充(Pre-fill)的 Prompts
         prompts = []
         HINT_PREFIX_TEMPLATE = "{hint}"
 
         for i, q in enumerate(question):
-            # A. 构建基础 ChatML (System + User)
             messages = [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": str(q)}
@@ -663,7 +624,6 @@ class TakeExam:
                 add_generation_prompt=True,
             )
             
-            # B. 拼接 Hint
             current_hint = hints[i] if i < len(hints) else ""
             
             if current_hint and current_hint.strip() != "":
@@ -674,10 +634,8 @@ class TakeExam:
             
             prompts.append(full_prompt)
 
-        # 3. 设置采样参数 (Sampling Mode)
-        # 注意：这里 n=k，temperature > 0
         sampling_params = SamplingParams(
-            n=k,  # ✅ 每个 Prompt 生成 k 条回复
+            n=k,
             temperature=temperature,
             top_p=1.0 if temperature == 0 else 0.9,
             max_tokens=self.MAX_NEW_TOKENS,
@@ -685,26 +643,21 @@ class TakeExam:
             seed=self.seed
         )
 
-        # 4. 执行推理
         outputs = self.llm.generate(prompts, sampling_params, lora_request=self.lora_request)
 
-        # 5. 处理结果
         results = []
         logger.info("Processing Roll-K outputs...")
 
         for i, output in enumerate(outputs):
-            # 获取当前问题的元数据
             q_text = question[i]
             ref_ans = answer[i]
             ref_sol = solution[i]
             q_idx = question_idx[i]
             current_hint = hints[i] if i < len(hints) else ""
 
-            # 遍历 K 个采样结果
             for sample in output.outputs:
                 generated_answer = sample.text.strip()
                 
-                # 拼接完整回复
                 if current_hint:
                     full_response = HINT_PREFIX_TEMPLATE.format(hint=current_hint) + generated_answer
                 else:
@@ -712,15 +665,14 @@ class TakeExam:
 
                 results.append({
                     "question": q_text,
-                    "answer": generated_answer,       # ✅ 保持统一格式 "answer"
-                    "provided_hint": current_hint,    # 记录 Hint
-                    "full_response": full_response,   # 完整序列
+                    "answer": generated_answer,
+                    "provided_hint": current_hint,
+                    "full_response": full_response,
                     "ref_answer": ref_ans.strip(),
                     "ref_solution": ref_sol.strip(),
                     "question_idx": q_idx,
                 })
 
-        # 6. 保存结果
         os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
         with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
             json.dump(results, f, ensure_ascii=False, indent=2)
@@ -776,43 +728,37 @@ def _run_exam_shard_worker(args):
 
 
 # =====================================================
-# 一致性测试函数
 # =====================================================
 def test_consistency(take_exam, question, n_runs=3):
-    """测试多次运行结果是否完全一致"""
+    """"""
     logger.info(f"Testing consistency with {n_runs} runs...")
     results = []
 
     for i in range(n_runs):
-        # 每次运行前重置种子
         set_all_seeds(42)
 
         output = take_exam.answer_single_question(question)
         results.append(output)
         logger.info(f"Run {i+1} output (first 100 chars): {output[:100]}...")
 
-    # 检查一致性
     unique_results = set(results)
     if len(unique_results) == 1:
-        logger.info("✅ 结果完全一致！输出稳定可靠。")
+        logger.info("✅ ")
         return True
     else:
-        logger.error("❌ 结果不一致！")
+        logger.error("❌ ")
         for i, r in enumerate(results):
             logger.error(f"  Run {i+1}: {r[:200]}")
         return False
 
 
 if __name__ == "__main__":
-    # 修改为你的模型实际路径
     MODEL_PATH = "/root/autodl-tmp/CELPO/model/OREAL/OREAL-7B"
 
     try:
-        # --- 测试用 Mock 数据 ---
         question = ["Find the value of x if 2x + 3 = 7.", "Calculate 15 * 15."]
         solution = ["2x=4 -> x=2", "225"]
         answer = ["2", "225"]
-        # 注意：测试 hints 时需要提供 hints 列表
         hints = ["First subtract 3 from both sides.", "Multiply 10 by 15 first then add 5 times 15."] 
         question_idx = list(range(len(question)))
 
@@ -824,13 +770,11 @@ if __name__ == "__main__":
             adapter_path=None  
         )
         
-        # ✅ 先进行一致性测试
         logger.info("=" * 60)
         logger.info("Running consistency test...")
         logger.info("=" * 60)
         test_consistency(take_exam, question[0], n_runs=3)
         
-        # ✅ 然后运行正式考试 (这里示例运行带 Hint 的模式)
         logger.info("=" * 60)
         logger.info("Running Exam with Hints...")
         logger.info("=" * 60)

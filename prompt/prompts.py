@@ -77,18 +77,17 @@ JUDGER_GEN_REASON_PROMPT= """
 
 
 #############################################################################################
-# Mode A: 输入包含 Hint
+# Mode A:  Hint
 GEN_ENHANCE_PROMPT = """{question}{hints}
 """
 
-# Mode B: 输入只包含 Question
+# Mode B:  Question
 GEN_PROMPT = """{question}
 """
 
-# Mode B: 模型的输出目标 (Hint + Answer)
-# 注意：这里开头补上了 prompt 结尾可能需要的换行或标识
+# Mode B:  (Hint + Answer)
+#  prompt 
 GEN_HINTS_WIH_ANSWER = """{hints}{answer}"""
-
 
 
 TEACHER_CORRECT_PROMPT = """
@@ -134,7 +133,6 @@ Provide the student with the necessary "Knowledge Hints" so that, based on their
 For any two events $A$ and $B$, the probability of their union is $P(A \cup B) = P(A) + P(B) - P(A \cap B)$.
 </hints>
 """
-
 
 
 OREAL_CORRECT_PROMPT = """You are a helpful assistant who evaluates the correctness and quality of models' outputs.

@@ -42,18 +42,16 @@ class GSM8K():
             if not question or not answer_text:
                 continue
             
-            # 初始化为空，防止读取上一轮的数据
             solution_text = None
             final_answer = None
 
             if "####" in answer_text:
                 parts = answer_text.split("####")
-                if len(parts) >= 2: # 增加安全性检查，防止 split 后长度不足
+                if len(parts) >= 2:
                     final_answer = parts[1].strip()  
             else:
                 print("error:" + answer_text)
 
-            # 只有当本次循环成功提取到内容时才追加
             if final_answer:
                 problems.append(question)
                 solutions.append(answer_text)

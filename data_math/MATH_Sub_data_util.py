@@ -16,7 +16,6 @@ class Math_Subset():
         
         if train:
             target_split = 'train'
-            # 区分路径以避免缓存冲突
             local_path = os.path.join('./datasets/data/MATH/train', subset)
         else:
             target_split = 'test'
@@ -28,7 +27,7 @@ class Math_Subset():
             dataset_name='HuggingFaceH4/MATH',
             split=target_split,
             local_path=local_path,
-            config=subset  # 传入子集名称作为 config
+            config=subset
         )
 
         self.problems, self.solutions, self.answers, self.data_len = self.extract_data(
@@ -47,7 +46,6 @@ class Math_Subset():
             solution = data.get("solution", "").strip()
             answer = data.get("answer", "")
 
-            # 如果 dataset 中没有直接提供 answer，尝试从 solution 中提取 boxed 内容
             if not answer and solution:
                 answer = extract_boxed_content(solution)
 
@@ -66,7 +64,6 @@ class Math_Subset():
             )
 
 def main():
-    # 示例：只加载 number_theory 的测试集
     subset_name = "prealgebra"
     print(f"Loading subset: {subset_name}...")
     

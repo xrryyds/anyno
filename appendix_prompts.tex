@@ -1,0 +1,260 @@
+% ============================================================
+% Appendix: Prompts Used in CELPO
+% ============================================================
+% Add this to your main LaTeX document with:
+%   \input{appendix_prompts}
+% or copy the content into your appendix section.
+% Requires packages: listings, xcolor, amsmath, tcolorbox (optional)
+% ============================================================
+
+\appendix
+\section{Prompts}\label{app:prompts}
+
+This appendix provides the complete prompt templates used across the different stages of our CELPO framework: inference (examination), teacher correction (hint generation), training, and answer verification.
+
+% ----------------------------------------------------------
+\subsection{System Prompt}\label{app:system-prompt}
+
+All inference and training stages share the same system prompt to activate the model's mathematical reasoning capability:
+
+\begin{tcolorbox}[colback=gray!5, colframe=gray!50, title=System Prompt]
+\texttt{Please reason step by step and put your final answer within \textbackslash boxed\{\}.}
+\end{tcolorbox}
+
+% ----------------------------------------------------------
+\subsection{Student Examination Prompt}\label{app:exam-prompt}
+
+During the examination phase, the student model receives a math problem via the standard chat template. The input is structured as:
+
+\begin{tcolorbox}[colback=blue!3, colframe=blue!40, title=Student Exam Input Format]
+\begin{verbatim}
+<|im_start|>system
+Please reason step by step and put your final 
+answer within \boxed{}.<|im_end|>
+<|im_start|>user
+{question}<|im_end|>
+<|im_start|>assistant
+\end{verbatim}
+\end{tcolorbox}
+
+\noindent The model then generates its reasoning and final answer in a single pass.
+
+% ----------------------------------------------------------
+\subsection{Hint-Enhanced Examination Prompt}\label{app:hint-exam-prompt}
+
+When evaluating the student model with teacher-provided hints (prefix-forcing), the hint is prepended to the assistant's response as a prefix:
+
+\begin{tcolorbox}[colback=blue!3, colframe=blue!40, title=Hint-Enhanced Exam Input Format]
+\begin{verbatim}
+<|im_start|>system
+Please reason step by step and put your final 
+answer within \boxed{}.<|im_end|>
+<|im_start|>user
+{question}<|im_end|>
+<|im_start|>assistant
+{hint}
+\end{verbatim}
+\end{tcolorbox}
+
+\noindent The model is forced to continue generation after the hint prefix, producing the answer portion conditioned on the provided hint.
+
+% ----------------------------------------------------------
+\subsection{Teacher Correction Prompt}\label{app:teacher-correct-prompt}
+
+The teacher model receives the following prompt to generate targeted knowledge hints based on the student's incorrect solution:
+
+\begin{tcolorbox}[colback=green!3, colframe=green!40, title=Teacher Correction Prompt, breakable]
+\begin{verbatim}
+**Role:** Heuristic Logic Mentor & Knowledge Bridge
+
+**Task:**
+Your task is to analyze the **Student's Solution** in 
+comparison to the **Reference Answer**. Instead of acting 
+as a simple grader, you must identify the specific 
+**missing logical link** or **knowledge gap** that prevents 
+the student from reaching the correct conclusion.
+
+**Goal:**
+Provide the student with the necessary "Knowledge Hints" 
+so that, based on their existing correct reasoning, they 
+can bridge the gap and solve the problem themselves.
+
+**Critical Constraints for Hints:**
+1. **Universal Knowledge Only:** Hints must be provided as 
+   **general problem-solving methods, formulas, theorems, 
+   or definitions** (e.g., "Recall the formula for the area 
+   of a circle: S = pi*r^2" or "Use the derivatives of 
+   trigonometric functions: (sin x)' = cos x").
+2. **No Specific Calculations:** Do not calculate the result 
+   for the specific numbers in the problem. Provide the 
+   *tool*, not the *answer*.
+3. **Targeted:** The hint must directly address the specific 
+   step where the student's logic broke down or stopped.
+4. **Token Limit:** Each individual hint must be strictly 
+   limited to **50 tokens maximum**. Keep descriptions 
+   concise and focus purely on the core principle.
+5. **Unidentifiable Gap:** If it is impossible to determine 
+   if the student lacks specific universal knowledge (e.g., 
+   the error is purely a calculation/arithmetic mistake, a 
+   typo, the answer is empty/irrelevant, or the reasoning 
+   is too unclear to pinpoint a missing theorem), 
+   return `null`.
+
+# Problem:
+{problem}
+
+# Student's Answer:
+{student_answer}
+
+# Reference Answer:
+{ref_solution}
+
+**Output Format:**
+
+**Condition A:** If Constraint #5 applies (unable to identify 
+a specific general knowledge gap), output strictly:
+`null`
+
+**Condition B:** If a knowledge gap is identified, respond in 
+the following XML format:
+<hints>
+[Provide the general formula, theorem, or principle. 
+ Use LaTeX for math expressions.]
+...
+</hints>
+
+**Example:**
+* **Student's Error:** Calculated probability as P(A)+P(B) 
+  but events were not mutually exclusive.
+* **Your Output:**
+<hints>
+For any two events A and B, the probability of their union 
+is P(A ∪ B) = P(A) + P(B) - P(A ∩ B).
+</hints>
+\end{verbatim}
+\end{tcolorbox}
+
+% ----------------------------------------------------------
+\subsection{Training Target Format (IRDCL)}\label{app:training-target}
+
+During CELPO training, the model learns to generate both hints and answers. The training target for Mode~B (hint-augmented generation) concatenates the hint and answer:
+
+\begin{tcolorbox}[colback=orange!3, colframe=orange!40, title=Training Target Format (Mode B)]
+\begin{verbatim}
+{hints}{answer}
+\end{verbatim}
+\end{tcolorbox}
+
+\noindent where \texttt{\{hints\}} is the teacher-generated knowledge hint and \texttt{\{answer\}} is the correct reasoning chain ending with \verb|\boxed{...}|. The loss is computed separately on the hint tokens (with Forward KL regularization) and the answer tokens (with Reverse KL regularization).
+
+For anchor samples (Mode~A, pure SFT), only the answer portion is used as the training target:
+
+\begin{tcolorbox}[colback=orange!3, colframe=orange!40, title=Training Target Format (Mode A / Anchor)]
+\begin{verbatim}
+<|im_start|>system
+Please reason step by step and put your final 
+answer within \boxed{}.<|im_end|>
+<|im_start|>user
+{question}<|im_end|>
+<|im_start|>assistant
+{answer}<|im_end|>
+\end{verbatim}
+\end{tcolorbox}
+
+% ----------------------------------------------------------
+\subsection{Answer Verification Prompt}\label{app:verify-prompt}
+
+To verify whether the student's predicted answer matches the gold answer, we use the following grading prompt:
+
+\begin{tcolorbox}[colback=red!3, colframe=red!40, title=Answer Verification (OREAL Correctness Judge), breakable]
+\begin{verbatim}
+You are a helpful assistant who evaluates the correctness 
+and quality of models' outputs.
+Please as a grading expert, judge whether the final answers 
+given by the candidates below are consistent with the 
+standard answers, that is, whether the candidates answered 
+correctly.
+
+Here are some evaluation criteria:
+1. Please refer to the given standard answer. You don't need 
+   to re-generate the answer to the question because the 
+   standard answer has been given. You only need to judge 
+   whether the candidate's answer is consistent with the 
+   standard answer according to the form of the question. 
+   Don't try to answer the original question. You can assume 
+   that the standard answer is definitely correct.
+2. Because the candidate's answer may be different from the 
+   standard answer in the form of expression, before making 
+   a judgment, please understand the question and the 
+   standard answer first, and then judge whether the 
+   candidate's answer is correct, but be careful not to try 
+   to answer the original question.
+3. Some answers may contain multiple items, such as 
+   multiple-choice questions, multiple-select questions, 
+   fill-in-the-blank questions, etc. As long as the answer 
+   is the same as the standard answer, it is enough. For 
+   multiple-select questions and multiple-blank 
+   fill-in-the-blank questions, the candidate needs to 
+   answer all the corresponding options or blanks correctly 
+   to be considered correct.
+4. Some answers may be expressed in different ways, such as 
+   some answers may be a mathematical expression, some 
+   answers may be a textual description, as long as the 
+   meaning expressed is the same. And some formulas are 
+   expressed in different ways, but they are equivalent 
+   and correct.
+5. If the prediction is given with \boxed{}, please ignore 
+   the \boxed{} and only judge whether the candidate's 
+   answer is consistent with the standard answer.
+
+Please judge whether the following answers are consistent 
+with the standard answer based on the above criteria. 
+Grade the predicted answer of this new question as one of:
+A: CORRECT
+B: INCORRECT
+Just return the letters "A" or "B", with no text around it.
+
+Here is your task. Simply reply with either CORRECT, 
+INCORRECT. Don't apologize or correct yourself if there 
+was a mistake; we are just trying to grade the answer.
+
+<Original Question Begin>:
+{question}
+<Original Question End>
+
+<Gold Target Begin>:
+{gold_answer}
+<Gold Target End>
+
+<Predicted Answer Begin>:
+{answer}
+<Predicted End>
+
+Judging the correctness of candidates' answers:
+\end{verbatim}
+\end{tcolorbox}
+
+% ----------------------------------------------------------
+\subsection{Summary of Prompt Usage}\label{app:prompt-summary}
+
+Table~\ref{tab:prompt-summary} summarizes the prompts and their usage across the CELPO pipeline stages.
+
+\begin{table}[htbp]
+\centering
+\caption{Summary of prompts used in the CELPO framework.}
+\label{tab:prompt-summary}
+\small
+\begin{tabular}{lll}
+\toprule
+\textbf{Prompt} & \textbf{Stage} & \textbf{Purpose} \\
+\midrule
+System Prompt & All stages & Activate step-by-step reasoning \\
+Student Exam & Examination & Generate student solutions \\
+Hint-Enhanced Exam & Re-examination & Prefix-force with hints \\
+Teacher Correction & Hint Generation & Identify knowledge gaps \\
+Training Target (Mode B) & IRDCL Training & Learn hint + answer generation \\
+Training Target (Mode A) & Anchor Training & Maintain base capability \\
+Answer Verification & Evaluation & Judge answer correctness \\
+\bottomrule
+\end{tabular}
+\end{table}

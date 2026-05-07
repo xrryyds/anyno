@@ -8,7 +8,6 @@ class TrainingLogger:
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.train_log_file = self.log_dir / "train_metrics.jsonl"
         self.eval_log_file = self.log_dir / "eval_metrics.jsonl"
-        # 初始化清空
         with open(self.train_log_file, "w") as f: pass
         with open(self.eval_log_file, "w") as f: pass
     
@@ -21,7 +20,6 @@ class TrainingLogger:
             "reward": float(reward), 
             "timestamp": time.time()
         }
-        # 强制写盘，防止数据丢失
         with open(self.train_log_file, "a") as f:
             f.write(json.dumps(data) + "\n")
             f.flush()

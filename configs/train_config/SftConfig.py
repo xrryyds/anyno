@@ -31,7 +31,7 @@ class SftConfig:
 
     @classmethod
     def load_yaml(cls, yaml_path: str):
-        """从YAML文件加载并映射到Config类"""
+        """YAMLConfig"""
         logger.info(f"Loading config from {yaml_path}")
         with open(yaml_path, 'r', encoding='utf-8') as f:
             cfg = yaml.safe_load(f)

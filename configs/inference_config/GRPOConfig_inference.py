@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class GRPOConfigInference:
     model_path: str = ".../outputs/grpo_qwen/final_model"
-    base_model: str = "Qwen/Qwen2-1.5B-Instruct"  # 基础模型
+    base_model: str = "Qwen/Qwen2-1.5B-Instruct"
     max_length: int = 1024
     max_new_tokens: int = 512
     temperature: float = 0.8

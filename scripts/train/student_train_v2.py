@@ -1,5 +1,4 @@
 import os
-# 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 import sys
@@ -26,7 +25,6 @@ from transformers import (
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
-# Logger 配置
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
 SAVE_TOTAL = 2
 
@@ -49,7 +46,6 @@ except ImportError:
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # ==========================================
-# 1. 配置与工具类 (已精简)
 # save_total_limit=2
 # ==========================================
 
@@ -60,15 +56,11 @@ class HintSFTConfig:
     gate_slope: float = 3.0
     split_r: float = 0.5
     
-    # 核心超参
     anchor_loss_weight_k: float = 0.2
     suppress_max_scale: float = 1.0
     anchor_sigmoid_slope: float = 100.0
     anchor_loss_tolerance: float = 1.00
     
-    # === [关键修改] ===
-    # 移除了 target_loss_ratio
-    # 仅保留 target_mode_b 作为早停标准
     target_mode_b: Optional[float] = None
     
     metrics_log_interval: int = 8
@@ -87,7 +79,6 @@ def setup_logging(output_dir):
     return os.path.join(output_dir, "step_metrics.jsonl"), os.path.join(output_dir, "epoch_metrics.jsonl")
 
 # ==========================================
-# 2. Metrics Tracker (保持不变)
 # ==========================================
 class TrainingMetricsTracker:
     def __init__(self):
@@ -174,7 +165,6 @@ class TrainingMetricsTracker:
 tracker = TrainingMetricsTracker()
 
 # ==========================================
-# 3. Data Collator (保持不变)
 # ==========================================
 class FixedModeCollator:
     def __init__(self, tokenizer, max_length: int = MAX_SEQ_LENGTH):
@@ -293,34 +283,27 @@ class SequentialTrainer(Trainer):
     @staticmethod
     def _per_token_kl(logits_s, logits_t, chunk_size: int = 8192):
         """KL(p_t || p_s) per token in bfloat16. Inputs: raw logits [T, V].
-        通过按 vocab 维度分块计算降低峰值显存占用。
+         vocab 
         """
-        # logits_s 需要梯度，logits_t 通常来自 no_grad 的 teacher
         T, V = logits_s.shape
 
-        # 对 student / teacher 分别做 logsumexp，保留 token 维度上的归一化常数
         logsumexp_s = torch.logsumexp(logits_s, dim=-1, keepdim=True)  # [T, 1]
         logsumexp_t = torch.logsumexp(logits_t, dim=-1, keepdim=True)  # [T, 1]
 
-        # 存每个 token 的 KL(p_t || p_s)，与原实现保持形状一致 [T]
         kl = torch.zeros(T, device=logits_s.device, dtype=logits_s.dtype)
 
-        # 沿着 vocab 维度分块，避免一次性构造 [T, V] 级别的大中间张量
         for start in range(0, V, chunk_size):
             end = min(start + chunk_size, V)
 
             s_chunk = logits_s[:, start:end]  # [T, C]
             t_chunk = logits_t[:, start:end]  # [T, C]
 
-            # 分块计算 log p_s, log p_t
             log_p_s_chunk = s_chunk - logsumexp_s      # [T, C]
             log_p_t_chunk = t_chunk - logsumexp_t      # [T, C]
             p_t_chunk     = log_p_t_chunk.exp()        # [T, C]
 
-            # 累加该 chunk 对 KL 的贡献
             kl = kl + (p_t_chunk * (log_p_t_chunk - log_p_s_chunk)).sum(dim=-1)
 
-            # 显式删除引用，帮助 PyTorch 更早释放显存
             del s_chunk, t_chunk, log_p_s_chunk, log_p_t_chunk, p_t_chunk
 
         return kl
@@ -408,7 +391,6 @@ class SequentialTrainer(Trainer):
             batch_ref_mean = batch_ref_anchor_loss_sum / valid_anchor_count
             batch_beta_val = batch_ref_mean.item()
             safe_batch_beta = batch_ref_mean.detach() + 1e-6
-            # 动态计算 split_r：根据当前 batch 中 anchor 和 mode_b 的实际数量
             total_valid = valid_anchor_count + len(gen_indices)
             r = valid_anchor_count / total_valid if total_valid > 0 else self.hint_config.split_r
             # vol_balance = (1 - r) / r
@@ -449,7 +431,6 @@ class SequentialTrainer(Trainer):
         return final_loss, debug_info_list, alpha_balance, batch_beta_val
 
 # ==========================================
-# 5. Callbacks (已修改，彻底移除 Ratio 逻辑)
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
@@ -472,14 +453,12 @@ class StepLogCallback(TrainerCallback):
                 log_parts.append(f"{k}: {val_str}")
             logger.info(" | ".join(log_parts))
             
-            # 彻底移除了这里的 Early Stopping 逻辑
-            # 现在仅负责 Log
             
             tracker.reset_window()
 
 class LogicalEpochLogCallback(TrainerCallback):
     """
-    逻辑 Epoch 的日志打印 + 绝对值早停检查 (target_mode_b)
+     Epoch  +  (target_mode_b)
     """
     def __init__(self, log_file, steps_per_logical_epoch, config: HintSFTConfig, output_dir: str): 
         self.log_file = log_file
@@ -501,7 +480,6 @@ class LogicalEpochLogCallback(TrainerCallback):
             logger.info(f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***")
             logger.info(f"  Avg ModeB (Raw):{stats['avg_mode_b_loss_raw']:.4f}")
             
-            # === 仅检查 Epoch 级别的 Mode B Loss 是否达标 (target_mode_b) ===
             epoch_mode_b_raw = stats.get('avg_mode_b_loss_raw', 999.0)
             target = self.config.target_mode_b
             
@@ -536,7 +514,6 @@ def run_sira_training_v2(
     real_data_epochs: int = 50,
     device_num: int = 1,
     spilt: float = 0.5,
-    # 默认值可以设为您期望的停止阈值
     target_mode_b: float = 0.13,
     lora_path: Optional[str] = None,
 ):
@@ -689,5 +666,5 @@ if __name__ == "__main__":
         model_path=default_model_url,
         batch_size=8,
         real_data_epochs=50,
-        target_mode_b=1.2  # 在这里修改你的目标阈值
+        target_mode_b=1.2
     )

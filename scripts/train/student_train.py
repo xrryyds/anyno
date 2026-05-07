@@ -1,5 +1,4 @@
 import os
-# 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 import sys
@@ -26,7 +25,6 @@ from transformers import (
 from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
-# Logger 配置
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
 
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -50,7 +47,6 @@ except ImportError:
     GEN_HINTS_WIH_ANSWER = "{hints}{answer}"
 
 # ==========================================
-# 1. 配置与工具类
 # ==========================================
 
 @dataclass
@@ -297,7 +293,6 @@ class SequentialTrainer(Trainer):
         else:
             scaling_gen_loss = torch.tensor(self.running_gen_loss, device=logits.device)
 
-        # Part 2: Alpha 计算
         final_losses_map = {}
         for idx, l_val in zip(gen_indices, gen_losses):
             final_losses_map[idx] = l_val
@@ -332,7 +327,6 @@ class SequentialTrainer(Trainer):
                 alpha_suppress = torch.sigmoid((ratio - 1.0) * self.hint_config.anchor_sigmoid_slope) * self.hint_config.suppress_max_scale 
                 final_alpha_val = (self.hint_config.anchor_loss_weight_k * alpha_balance * alpha_suppress).item()
         
-        # Part 3: 组合
         for idx in anchor_indices:
             a_m = shift_a_masks[idx]
             a_count = a_m.sum()
@@ -348,7 +342,6 @@ class SequentialTrainer(Trainer):
         # Part 4: Task Reweighting & Norm [MODIFIED / FIXED]
         # =========================================================================
         batch_size = token_losses.size(0)
-        # 确保按顺序堆叠
         raw_loss_vector = torch.stack([final_losses_map[i] for i in range(batch_size)])
 
         num_gen = len(gen_indices)
@@ -374,9 +367,8 @@ class SequentialTrainer(Trainer):
             
             loss_b_vec = weighted_loss_vec * is_mode_b
             norm_b = torch.norm(loss_b_vec, p=2) 
-            norm_total = torch.norm(weighted_loss_vec, p=2) + 1e-9 # 防止除0
+            norm_total = torch.norm(weighted_loss_vec, p=2) + 1e-9
             
-            # 使用 item() 进行安全除法，避免 detach 问题
             ratio = norm_b / norm_total
             scale_factor = ratio.detach()
             
@@ -387,7 +379,6 @@ class SequentialTrainer(Trainer):
             final_loss_tensor = weighted_loss_vec * scale_factor
             final_loss = final_loss_tensor.sum()
             
-            # 记录 debug 变量
             scale_factor_debug = scale_factor.item()
             norm_b_debug = norm_b.item()
             norm_total_debug = norm_total.item()
@@ -397,9 +388,7 @@ class SequentialTrainer(Trainer):
         # =========================================================================
         # >>>>>> [CRITICAL DEBUG] DIAGNOSTIC PRINT <<<<<<
         # =========================================================================
-        # 随机打印或在前几个 step 打印，用于排查 Loss 为 0 的原因
-        if self.model.training and random.random() < 0.2: # 20% 概率打印
-            # 只有当 Loss 异常小时才强制打印
+        if self.model.training and random.random() < 0.2:
             if final_loss.item() < 1e-6:
                 print("\n" + "!"*20 + " [CRITICAL DEBUG] LOSS=0 INVESTIGATION " + "!"*20)
                 print(f"  Batch Size: {batch_size}")

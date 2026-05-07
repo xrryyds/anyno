@@ -33,6 +33,9 @@ try:
 except ValueError:
     TEACHER_HINTS_CHECKPOINT_INTERVAL = 10
 
+base_url = ""
+api_key = ""
+
 
 def _is_vllm_available() -> bool:
     """Return True if vLLM is importable and CUDA is available.
@@ -46,9 +49,6 @@ def _is_vllm_available() -> bool:
     if not torch.cuda.is_available():
         return False
     return True
-
-base_url = "https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps"
-api_key = "k1y21hll8l0eurf7t3dg4enb56g0hhjjszf4"
 
 
 class TeacherCorrecter:
@@ -95,7 +95,7 @@ class TeacherCorrecter:
             while True:
                 try:
                     completion = client.chat.completions.create(
-                        model="app-xkp5mg-1764855493646070178",
+                        model="",
                         messages=[
                             {
                                 "role": "system",
@@ -118,7 +118,6 @@ class TeacherCorrecter:
 
             hints = extract_hints(response)
 
-            # 将当前结果加入列表
             h_question_idx.append(m_question_idx[idx])
             h_question.append(m_question[idx])
             h_hints.append(hints)
@@ -126,12 +125,9 @@ class TeacherCorrecter:
             h_ref_answer.append(m_ref_answer[idx])
 
             # -----------------------------------------------------------
-            # [修改部分] 每隔 10 条保存一次
             # -----------------------------------------------------------
             if (idx + 1) % 10 == 0:
                 print(f"Auto-saving checkpoint at count {idx + 1}...")
-                # 注意：m_answer 和 m_entropy 是原始完整列表，
-                # 这里使用 [:idx+1] 进行切片，确保传入的长度与当前 h_question 一致
                 self.file.save_hints(
                     h_question,
                     h_hints,
@@ -144,7 +140,6 @@ class TeacherCorrecter:
             # -----------------------------------------------------------
 
         print("saving final hints...")
-        # 循环结束后保存完整数据（防止总数不是10的倍数导致最后几条没存）
         self.file.save_hints(
             h_question,
             h_hints,
@@ -880,12 +875,9 @@ class TeacherCorrecter:
 
         print(f"generating hints({len(m_question)})...")
 
-        # 初始化 OpenAI 客户端
-        # 建议将 key 放入环境变量 OPENAI_API_KEY 中，或者在这里直接替换字符串
         client = OpenAI(
             base_url=base_url,
             api_key=api_key,
-            # 如果你使用的是国内中转/代理，取消下面这行的注释并填入地址
             # base_url="https://api.openai-proxy.com/v1"
         )
 
@@ -898,12 +890,11 @@ class TeacherCorrecter:
             )
 
             response = None
-            max_retries = 5  # 增加最大重试次数防止死循环
+            max_retries = 5
             retry_count = 0
 
             while retry_count < max_retries:
                 try:
-                    # 调用 GPT-4o
                     completion = client.chat.completions.create(
                         model="app-7c54im-1766977238437488331",
                         messages=[
@@ -913,7 +904,7 @@ class TeacherCorrecter:
                             },
                             {"role": "user", "content": prompt},
                         ],
-                        temperature=0.7,  # 适当增加一点随机性，避免过于死板，或设为0保持确定性
+                        temperature=0.7,
                     )
                     response = completion.choices[0].message.content
                     break
@@ -930,7 +921,6 @@ class TeacherCorrecter:
                     retry_count += 1
                 except Exception as e:
                     print(f"An unexpected error occurred at idx {idx}: {e}")
-                    # 如果是严重错误，可以选择 break 或者 raise
                     raise e
 
             if response:
@@ -941,7 +931,6 @@ class TeacherCorrecter:
                 h_ref_solution.append(m_ref_solution[idx])
                 h_ref_answer.append(m_ref_answer[idx])
 
-                # 打印进度，防止在此处看起来像卡死
                 if idx % 5 == 0:
                     print(f"Processed {idx + 1}/{len(m_question)}")
             else:
@@ -1115,7 +1104,6 @@ class TeacherCorrecter:
 
         data = self.file.mistakes
 
-        # ================== 1. 初始化错误数据列表 ==================
         err_question_idx = []
         err_questions = []
         err_answers = []
@@ -1124,24 +1112,22 @@ class TeacherCorrecter:
         err_entropy = []
         # ========================================================
 
-        # 确保 client 初始化
         if not hasattr(self, "client"):
             self.client = OpenAI(
                 api_key=api_key,
-                base_url="https://wanqing-api.corp.kuaishou.com/api/agent/v1/apps",
+                base_url="",
             )
 
         for idx, item in enumerate(data):
             question_idx_val = item.get("question_idx", idx)
             question_text = item.get("question", "")
             ref_answer = item.get("ref_answer", "")
-            ref_solution = item.get("ref_solution", "")  # 获取解析，保存需要用
-            entropy = item.get("entropy", 0.0)  # 获取 entropy
+            ref_solution = item.get("ref_solution", "")
+            entropy = item.get("entropy", 0.0)
 
             raw_answer = item.get("answer", "")
             student_answer_core = extract_boxed_content(raw_answer)
 
-            # 构建 Prompt
             prompt = OREAL_CORRECT_PROMPT.format(
                 question=question_text,
                 gold_answer=ref_answer,
@@ -1151,7 +1137,6 @@ class TeacherCorrecter:
             is_equivalent = False
             response_content = ""
 
-            # 调用 API
             max_retries = 5
             retry_count = 0
 
@@ -1188,7 +1173,6 @@ class TeacherCorrecter:
                     print(f"[Idx {question_idx_val}] Unexpected error: {e}")
                     break
 
-            # 解析结果
             if response_content:
                 clean_resp = response_content.upper().replace(".", "")
 
@@ -1204,13 +1188,11 @@ class TeacherCorrecter:
                             f"[Idx {question_idx_val}] Ambiguous response: {response_content}"
                         )
 
-            # 统计与记录
             if is_equivalent:
                 equivalent_count += 1
                 status = "CORRECT"
             else:
                 status = "WRONG"
-                # ================== 2. 如果错了，收集数据 ==================
                 err_question_idx.append(question_idx_val)
                 err_questions.append(question_text)
                 err_answers.append(raw_answer)
@@ -1221,7 +1203,6 @@ class TeacherCorrecter:
 
             print(f"Idx {question_idx_val}: {status} | GPT Says: {response_content}")
 
-        # 输出最终统计
         print("-" * 30)
         print("Evaluation Finished.")
         print(f"Total Questions: {total_questions}")
@@ -1231,7 +1212,6 @@ class TeacherCorrecter:
         if total_questions > 0:
             print(f"Accuracy: {equivalent_count / total_questions * 100:.2f}%")
 
-        # ================== 3. 保存错题 ==================
         if len(err_questions) > 0:
             print("Saving verified mistakes to file...")
             self.file.save_mistakes(

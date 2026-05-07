@@ -1,5 +1,4 @@
 import os
-# 设置 VLLM 环境变量
 os.environ["VLLM_WORKER_MULTIPROC_METHOD"] = "spawn"
 
 import sys
@@ -26,7 +25,6 @@ from transformers import (
 from peft import PeftModel, LoraConfig, get_peft_model, prepare_model_for_kbit_training
 
 # ==========================================
-# Logger 配置
 # ==========================================
 logging.basicConfig(
     level=logging.INFO,
@@ -34,7 +32,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 全局训练序列长度超参数（collator 截断用）
 MAX_SEQ_LENGTH = 2048
 SAVE_TOTAL = 2
 
@@ -49,25 +46,20 @@ except ImportError:
 SYSTEM_PROMPT = "Please reason step by step and put your final answer within \\boxed{}."
 
 # ==========================================
-# 1. 配置与工具类
 # ==========================================
 
 @dataclass
 class HintSFTConfig:
     split_r: float = 0.5
     
-    # KL 正则权重
-    hint_kl_beta: float = 0.3          # Hint 部分的 Forward KL 正则权重
-    answer_kl_beta: float = 1.0        # Mode B answer 部分的 Reverse KL 权重
-    anchor_kl_beta: float = 1.0        # Anchor 部分的 Reverse KL 权重
+    hint_kl_beta: float = 0.3
+    answer_kl_beta: float = 1.0
+    anchor_kl_beta: float = 1.0
     
-    # 高熵过滤：只对 student 熵最高的 top-ρ token 计算 KL loss
-    top_entropy_quantile: float = 0.2  # 保留 top 20% 高熵 token，1.0 = 不过滤
+    top_entropy_quantile: float = 0.2
     
-    # Early stop 目标
     target_mode_b: Optional[float] = None
     
-    # 训练配置
     metrics_log_interval: int = 8
     model_path: str = ""
     data_path: str = ""
@@ -85,7 +77,7 @@ def setup_logging(output_dir):
 # 2. Metrics Tracker
 # ==========================================
 class TrainingMetricsTracker:
-    """跟踪训练指标：hint_ce, hint_kl, hint_loss, answer_raw/weighted, anchor_raw/weighted, total_loss"""
+    """hint_ce, hint_kl, hint_loss, answer_raw/weighted, anchor_raw/weighted, total_loss"""
     
     _FIELDS = [
         "hint_ce", "hint_kl", "hint_loss",
@@ -249,8 +241,6 @@ class SequentialTrainer(Trainer):
         answer_masks = inputs.pop("answer_masks")
         metadata = inputs.pop("metadata")
 
-        # --- 显存优化：不再同时保存两份完整 [B, T, V] logits ---
-        # Step 1: ref 前向（no grad），只保留 shifted logits
         with torch.no_grad():
             with self.model.disable_adapter():
                 ref_outputs = model(**inputs)
@@ -258,12 +248,10 @@ class SequentialTrainer(Trainer):
                 del ref_outputs
                 torch.cuda.empty_cache()
 
-        # Step 2: student 前向
         outputs = model(**inputs)
         logits = outputs.logits
         labels = inputs.get("labels")
 
-        # Step 3: 逐样本计算 loss，计算完一个样本就释放对应 ref slice
         loss, debug_info_list = self._memory_efficient_loss(
             logits, ref_logits, labels, hint_masks, answer_masks
         )
@@ -276,29 +264,27 @@ class SequentialTrainer(Trainer):
 
     @staticmethod
     def _compute_masked_kl(logits_s, logits_t, mask, forward=True, top_entropy_quantile=1.0):
-        """显存优化版 KL 计算：只对 mask=1 的 token 计算 KL，支持高熵过滤
+        """ KL  mask=1  token  KL
         
         Args:
             logits_s: student logits [T, V]
             logits_t: ref logits [T, V]
             mask: [T] 0/1 mask
             forward: True=Forward KL(ref||student), False=Reverse KL(student||ref)
-            top_entropy_quantile: 只保留 student 熵最高的 top-ρ 比例 token 计算 KL
-                                  1.0 = 不过滤（保留全部），0.2 = 只保留 top 20%
+            top_entropy_quantile:  student  top-ρ  token  KL
+                                  1.0 = 0.2 =  top 20%
         
         Returns:
-            masked_kl_sum: KL 总和（标量）
-            effective_count: 实际参与计算的 token 数（标量）
+            masked_kl_sum: KL 
+            effective_count:  token 
         """
         valid_indices = mask.nonzero(as_tuple=True)[0]
         if len(valid_indices) == 0:
             return torch.tensor(0.0, device=logits_s.device), torch.tensor(0.0, device=logits_s.device)
         
-        # 只取有效 token 的 logits
         s_valid = logits_s[valid_indices]  # [N, V]
         t_valid = logits_t[valid_indices]  # [N, V]
         
-        # 转为 log_prob
         log_p_s = torch.log_softmax(s_valid, dim=-1)  # [N, V]
         log_p_t = torch.log_softmax(t_valid, dim=-1)  # [N, V]
         
@@ -311,13 +297,10 @@ class SequentialTrainer(Trainer):
             p_s = torch.exp(log_p_s)
             kl = (p_s * (log_p_s - log_p_t)).sum(dim=-1)  # [N]
         
-        # 高熵过滤：只保留 student 熵最高的 top-ρ token
         if top_entropy_quantile < 1.0 and len(kl) > 1:
-            # 计算 student 每个 token 的熵: H = -sum(p * log_p)
             p_s_for_entropy = torch.exp(log_p_s)
             entropy = -(p_s_for_entropy * log_p_s).sum(dim=-1)  # [N]
             
-            # 保留熵 >= (1-ρ) 分位数的 token
             threshold = torch.quantile(entropy, 1.0 - top_entropy_quantile)
             high_entropy_mask = entropy >= threshold
             kl = kl[high_entropy_mask]
@@ -328,12 +311,12 @@ class SequentialTrainer(Trainer):
         return kl.sum(), effective_count
 
     def _memory_efficient_loss(self, logits, ref_logits, labels, hint_masks, answer_masks):
-        """显存优化版 loss 计算：
-        - 只对有 mask 的 token 计算 KL（跳过 prompt 部分）
-        - 逐样本处理，避免堆积大张量
+        """ loss 
+        -  mask  token  KL prompt 
+        - 
         """
         shift_logits = logits[..., :-1, :].contiguous()
-        shift_ref_logits = ref_logits  # 已经在 compute_loss 中做过 shift
+        shift_ref_logits = ref_logits
         shift_labels = labels[..., 1:].contiguous()
         shift_h_masks = hint_masks[..., 1:].contiguous()
         shift_a_masks = answer_masks[..., 1:].contiguous()
@@ -354,31 +337,26 @@ class SequentialTrainer(Trainer):
             h_m = shift_h_masks[i]         # [T]
             a_m = shift_a_masks[i]         # [T]
 
-            # CE loss（只对有 label 的 token）
             token_ce = loss_fct(s_logits_i, labels_i)  # [T]
 
             h_count = h_m.sum()
 
             if h_count > 0:
-                # === Mode B 样本 ===
                 gen_indices.append(i)
 
                 # Hint CE
                 hint_ce = (token_ce * h_m).sum() / h_count
 
-                # Hint Forward KL（只对 hint mask 的 token 计算，高熵过滤）
                 hint_fwd_kl_sum, hint_kl_eff_count = self._compute_masked_kl(
                     s_logits_i, r_logits_i, h_m, forward=True, top_entropy_quantile=rho
                 )
                 hint_kl_raw = hint_fwd_kl_sum / (hint_kl_eff_count + eps)
 
-                # Hint 总 loss = CE + β_hint * Forward KL
                 hint_loss = hint_ce + self.hint_config.hint_kl_beta * hint_kl_raw
 
                 a_count = a_m.sum()
                 if a_count > 0:
                     answer_ce = (token_ce * a_m).sum() / a_count
-                    # Answer Reverse KL（只对 answer mask 的 token 计算，高熵过滤）
                     answer_rev_kl_sum, answer_kl_eff_count = self._compute_masked_kl(
                         s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
                     )
@@ -400,12 +378,10 @@ class SequentialTrainer(Trainer):
                     "answer_weighted": answer_weighted.item(),
                 }
             else:
-                # === Anchor 样本 ===
                 anchor_indices.append(i)
                 a_count = a_m.sum()
                 if a_count > 0:
                     anchor_ce = (token_ce * a_m).sum() / a_count
-                    # Anchor Reverse KL（只对 answer mask 的 token 计算，高熵过滤）
                     anchor_rev_kl_sum, anchor_kl_eff_count = self._compute_masked_kl(
                         s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
                     )
@@ -418,12 +394,10 @@ class SequentialTrainer(Trainer):
                         "anchor_weighted": anchor_weighted.item(),
                     }
 
-            # 释放当前样本的中间变量
             del token_ce
 
         debug_info_list = [debug_map.get(i) for i in range(batch_size)]
 
-        # 简单 batch 平均（去掉 50/50 任务加权）
         raw_loss_vector = torch.stack([
             final_losses_map.get(i, torch.tensor(0.0, device=device))
             for i in range(batch_size)

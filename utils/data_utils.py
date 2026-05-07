@@ -51,22 +51,19 @@ def extract_reason(text: str) -> Optional[str]:
 
 def extract_boxed_content(text: str) -> Optional[str]:
     """
-    提取 LaTeX 字符串中最后一个 \boxed{...} 里的内容。
-    支持嵌套括号，例如 \boxed{\frac{1}{2}}。
+     LaTeX  \boxed{...} 
+     \boxed{\frac{1}{2}}
     """
     if not text: return ""
     
-    # 找到最后一个 \boxed{ 的位置
     idx = text.rfind("\\boxed{")
     if idx == -1:
         return ""
 
-    # 移动索引到 \boxed{ 之后
     i = idx + 7 
     content_start = i
     brace_balance = 0 
     
-    # 开始遍历字符
     while i < len(text):
         char = text[i]
         
@@ -122,7 +119,6 @@ def remove_null_hints(file_path):
         print(f"error: {e}")
 
 
-
 def filter_json_by_question_idx(exam_path, hints_exam_result_path):
     try:
         with open(exam_path, 'r', encoding='utf-8') as f:
@@ -156,7 +152,7 @@ def filter_json_by_question_idx(exam_path, hints_exam_result_path):
             'question_idx_in_b': len(question_idx_in_b),
             'remaining_count': len(data_c),
             'removed_count': removed_count,
-            'message': f'finished! from{len(data_a)}del{removed_count}items，remains{len(data_c)}items to{corr_path}'
+            'message': f'finished! from{len(data_a)}del{removed_count}itemsremains{len(data_c)}items to{corr_path}'
         }
         
         print(result['message'])
@@ -275,7 +271,6 @@ def generate_irdcl_dataset_syn(corr_path, adv_hints_path, disadv_hints_path, out
     print(f"Saved to {output_path}")
 
 
-
 def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
     """
     Construct IRDCL training data (v2).
@@ -284,7 +279,6 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
     and a global index advances across all epochs without resetting.
     When the pool is exhausted, it reshuffles and restarts.
     """
-    # 计算标准的 batch 分配
     std_num_anchors = int(batch_size * anchor_k)
     std_num_hints = batch_size - std_num_anchors
     
@@ -310,28 +304,21 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
 
     final_dataset = []
 
-    # 全 epoch 共享的 anchor 池：初始打乱一次，全局索引跨 epoch 不重置
     shuffled_anchors = corr_data.copy()
     random.shuffle(shuffled_anchors)
     anchor_pool_idx = 0
 
-    # --- 开始 Epoch 循环 ---
     for ep in range(epoch):
         print(f"Processing Epoch {ep + 1}/{epoch}...")
         
-        # 每个 epoch 开始前打乱 hints 数据的顺序
-        # 这样每个 epoch 的 batch 组合都会不同
         random.shuffle(combined_hints_data)
 
-        # 遍历 hints 数据生成 batch
         for i in range(0, total_hints, std_num_hints):
             current_batch = []
             
-            # 切片获取当前的 hints 块
             hints_chunk = combined_hints_data[i : i + std_num_hints]
             actual_hint_count = len(hints_chunk)
             
-            # 添加 hints 数据
             for item in hints_chunk:
                 entry = {
                     "question_idx": item.get("question_idx"),
@@ -344,26 +331,20 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
                 }
                 current_batch.append(entry)
             
-            # 计算需要补充的 anchor 数量
-            # 如果是最后一个 batch，hints 数量可能少于 std_num_hints，所以按比例重新计算
             if anchor_k >= 1.0 or anchor_k <= 0.0:
                 needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
             else:
                 ratio_factor = anchor_k / (1.0 - anchor_k)
                 needed_anchor_count = int(round(actual_hint_count * ratio_factor))
             
-            # 跨 epoch 不放回抽样 anchor 数据
-            # 当池用完时，重新打乱并从头开始
             anchors_chunk = []
             for _ in range(needed_anchor_count):
                 if anchor_pool_idx >= len(shuffled_anchors):
-                    # 池耗尽，重新打乱并重置索引
                     random.shuffle(shuffled_anchors)
                     anchor_pool_idx = 0
                 anchors_chunk.append(shuffled_anchors[anchor_pool_idx])
                 anchor_pool_idx += 1
 
-            # 添加 anchor 数据
             for item in anchors_chunk:
                 entry = {
                     "question_idx": item.get("question_idx"),
@@ -377,13 +358,10 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
                 }
                 current_batch.append(entry)
             
-            # 打乱当前 batch 内部顺序
             random.shuffle(current_batch)
             
-            # 将当前 batch 加入总数据集
             final_dataset.extend(current_batch)
 
-    # --- 保存结果 ---
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -393,7 +371,6 @@ def generate_irdcl_datase_v2(corr_path, adv_hints_path, disadv_hints_path, outpu
 
     print(f"Done. Generated total {len(final_dataset)} items over {epoch} epochs.")
     print(f"Saved to {output_path}")
-
 
 
 def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_path, batch_size, anchor_k=0.5, epoch=3):
@@ -402,7 +379,6 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
     # Logic: Repeat the generation process for 'epoch' times.
     # In each epoch, shuffle hints, split into chunks, and pair with randomly sampled Corr data.
     """
-    # 计算标准的 batch 分配
     std_num_anchors = int(batch_size * anchor_k)
     std_num_hints = batch_size - std_num_anchors
 
@@ -428,28 +404,21 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
 
     final_dataset = []
 
-    # --- 开始 Epoch 循环 ---
     for ep in range(epoch):
         print(f"Processing Epoch {ep + 1}/{epoch}...")
 
-        # 每个 epoch 开始前打乱 hints 数据的顺序
-        # 这样每个 epoch 的 batch 组合都会不同
         random.shuffle(combined_hints_data)
 
-        # 每个 epoch 开始前打乱 anchor 数据池，用于无放回抽样
         shuffled_anchors = corr_data.copy()
         random.shuffle(shuffled_anchors)
         anchor_pool_idx = 0
 
-        # 遍历 hints 数据生成 batch
         for i in range(0, total_hints, std_num_hints):
             current_batch = []
 
-            # 切片获取当前的 hints 块
             hints_chunk = combined_hints_data[i : i + std_num_hints]
             actual_hint_count = len(hints_chunk)
 
-            # 添加 hints 数据
             for item in hints_chunk:
                 entry = {
                     "question_idx": item.get("question_idx"),
@@ -462,21 +431,17 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
                 }
                 current_batch.append(entry)
 
-            # 计算需要补充的 anchor 数量
-            # 如果是最后一个 batch，hints 数量可能少于 std_num_hints，所以按比例重新计算
             if anchor_k >= 1.0 or anchor_k <= 0.0:
                 needed_anchor_count = 0 if anchor_k <= 0 else actual_hint_count
             else:
                 ratio_factor = anchor_k / (1.0 - anchor_k)
                 needed_anchor_count = int(round(actual_hint_count * ratio_factor))
 
-            # 无放回抽样 anchor 数据，如果不够则循环使用
             anchors_chunk = []
             for _ in range(needed_anchor_count):
                 anchors_chunk.append(shuffled_anchors[anchor_pool_idx % len(corr_data)])
                 anchor_pool_idx += 1
 
-            # 添加 anchor 数据
             for item in anchors_chunk:
                 entry = {
                     "question_idx": item.get("question_idx"),
@@ -490,13 +455,10 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
                 }
                 current_batch.append(entry)
 
-            # 打乱当前 batch 内部顺序
             random.shuffle(current_batch)
 
-            # 将当前 batch 加入总数据集
             final_dataset.extend(current_batch)
 
-    # --- 保存结果 ---
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -506,7 +468,6 @@ def generate_irdcl_dataset(corr_path, adv_hints_path, disadv_hints_path, output_
 
     print(f"Done. Generated total {len(final_dataset)} items over {epoch} epochs.")
     print(f"Saved to {output_path}")
-
 
 
 def generate_sft_data(adv_hints_path: str, corr_path: str, output_path: str, epoch: int):
@@ -575,8 +536,6 @@ def generate_sft_data(adv_hints_path: str, corr_path: str, output_path: str, epo
     
 
 
-
-
 def remove_null_hints(file_path):
     if not os.path.exists(file_path):
         print(f"erro, can not find: {file_path}")
@@ -587,7 +546,7 @@ def remove_null_hints(file_path):
             data = json.load(f)
 
         if not isinstance(data, list):
-            print("error: JSON not (List)。")
+            print("error: JSON not (List)")
             return
 
         original_count = len(data)
@@ -599,13 +558,13 @@ def remove_null_hints(file_path):
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(cleaned_data, f, ensure_ascii=False, indent=4)
 
-        print(f"finished！")
-        print(f"文件路径: {file_path}")
-        print(f"原始数据条数: {original_count}")
-        print(f"剩余数据条数: {filtered_count}")
-        print(f"删除了 {original_count - filtered_count} 条数据。")
+        print(f"finished")
+        print(f": {file_path}")
+        print(f": {original_count}")
+        print(f": {filtered_count}")
+        print(f" {original_count - filtered_count} ")
 
     except json.JSONDecodeError:
-        print("错误: 文件格式不是有效的 JSON。")
+        print(":  JSON")
     except Exception as e:
-        print(f"发生未知错误: {e}")
+        print(f": {e}")

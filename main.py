@@ -88,11 +88,9 @@ model_path_1_5b = "/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CEL
 def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_token_limit: int = None):
     try:
         logger.info("Step 1: Loading Dataset...")
-        # 虽然这里读取了data_a，但在后续逻辑中主要使用 exam_paper.parse_hints_exam 解析出的数据
         with open(exam_paper.disadv_hints_dataset_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
             
-        # 解析原始输入数据，获取元数据（hints, from_entropy等）
         question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(data)
         
         # Truncate hints if hint_token_limit is specified
@@ -100,7 +98,6 @@ def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_t
             logger.info(f"Truncating hints to {hint_token_limit} tokens...")
             hints = truncate_hints_by_tokens(hints, hint_token_limit)
         
-        # 建立元数据映射字典，方便后续根据ID找回 hints 和 原始熵
         # Key: question_idx, Value: {hints, entropy}
         meta_map = {}
         for q_id, h, ent in zip(question_idx, hints, from_entropy):
@@ -115,50 +112,42 @@ def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_t
 
         logger.info("Step 3: Teacher Grading...")
         teacher = TeacherCorrecter()
-        # 获取批改结果
         _, correct_data = teacher.teacher_mark_paper(True)
 
-        # Step 4: 处理 Correct Data (去重 + 保留最短答案)
-        # 解包 correct_data: [ids, questions, student_answers, ref_solutions, ref_answers, entropies]
         c_ids, c_qs, c_ans, c_sols, c_refs, c_ents = correct_data
         
-        best_candidates = {} # 用于去重的字典: {question_idx: data_item}
+        best_candidates = {}
 
         for i in range(len(c_ids)):
             qid = c_ids[i]
             curr_ans = c_ans[i]
             
-            # 构造要保存的数据项
             item = {
                 "question_idx": qid,
                 "question": c_qs[i],
-                "hints": meta_map.get(qid, {}).get('hints', []),  # 找回对应的提示
+                "hints": meta_map.get(qid, {}).get('hints', []),
                 "student_answer": curr_ans,
                 "ref_solution": c_sols[i],
                 "ref_answer": c_refs[i],
-                "entropy_original": meta_map.get(qid, {}).get('orig_ent', 0.0), # 找回原始熵
+                "entropy_original": meta_map.get(qid, {}).get('orig_ent', 0.0),
                 "entropy_with_hints": c_ents[i],
                 "success": True
             }
             
-            # 去重逻辑：如果ID已存在，比较答案长度，保留更短的
             if qid not in best_candidates:
                 best_candidates[qid] = item
             else:
                 prev_len = len(best_candidates[qid]["student_answer"])
                 curr_len = len(curr_ans)
                 if curr_len < prev_len:
-                    best_candidates[qid] = item # 更新为更短的答案
+                    best_candidates[qid] = item
 
-        # 将字典转回列表
         new_data_to_append = list(best_candidates.values())
         logger.info(f"Filtered {len(c_ids)} correct samples down to {len(new_data_to_append)} unique items (shortest answer strategy).")
 
-        # Step 5: 追加写入文件
         target_path = exam_paper.adv_hints_dataset_path
         existing_data = []
 
-        # 读取现有数据
         if os.path.exists(target_path):
             try:
                 with open(target_path, 'r', encoding='utf-8') as f:
@@ -170,7 +159,6 @@ def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_t
                 logger.warning(f"Could not decode {target_path}. Starting with empty list.")
                 existing_data = []
 
-        # 合并数据
         final_data = existing_data + new_data_to_append
 
         exam_paper.save_results_to_json(final_data, exam_paper.adv_hints_dataset_path)
@@ -209,26 +197,18 @@ def exam_roll_recheck_hints(lora_path: str = None, max_token: int = 2048, hint_t
         }
 
 
-
-
-
 def process_exam_file_batch(file_path, lora_path:str = None, max_token: int = 2048):
     """
-    读取JSON文件，提取所有字段为列表，然后一次性调用 student_exam.exam
+    JSON student_exam.exam
     """
     try:
-        # 1. 读取 JSON 文件
         with open(file_path, 'r', encoding='utf-8') as f:
             data = json.load(f)
         
-        # 2. 使用列表推导式提取各列数据
-        # 确保如果某个字段缺失，能有默认值（这里假设数据是完整的，或者用空字符串代替）
         questions = [item.get('question', '') for item in data]
         
-        # 注意：JSON中的 key 是 'ref_solution'，参数名是 'solution'
         solutions = [item.get('ref_solution', '') for item in data]
         
-        # 注意：JSON中的 key 是 'ref_answer'，参数名是 'answer'
         answers = [item.get('ref_answer', '') for item in data]
         
         indices = [item.get('question_idx', 0) for item in data]
@@ -239,7 +219,6 @@ def process_exam_file_batch(file_path, lora_path:str = None, max_token: int = 20
             student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path = lora_path, max_seq_length=max_token)
         else:
             student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
-        # 3. 一次性调用 exam 方法，传入数组
         student_exam.exam(
             question=questions, 
             solution=solutions, 
@@ -247,23 +226,19 @@ def process_exam_file_batch(file_path, lora_path:str = None, max_token: int = 20
             question_idx=indices
         )
         
-        print(f"成功加载并发送了 {len(data)} 条数据进行测试。")
+        print(f" {len(data)} ")
 
     except FileNotFoundError:
-        print(f"错误：找不到文件 {file_path}")
+        print(f" {file_path}")
     except json.JSONDecodeError:
-        print("错误：JSON 文件格式不正确")
+        print("JSON ")
     except Exception as e:
-        print(f"发生错误：{e}")
-
-
+        print(f"{e}")
 
 
 def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_limit: int = None):
     logger.info("Step 1: Loading Dataset...")
-    # 1. 加载原始带有提示的数据
     exam_paper.load_question_with_hints()
-    # 解析数据：注意这里最后获取了 from_entropy (原始熵)
     question_idx, question, question_with_hint, ref_solution, ref_answer, _, hints, from_entropy = exam_paper.parse_hints_exam(exam_paper.question_with_hints)
     
     # Truncate hints if hint_token_limit is specified
@@ -271,53 +246,40 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
         logger.info(f"Truncating hints to {hint_token_limit} tokens...")
         hints = truncate_hints_by_tokens(hints, hint_token_limit)
 
-    # 2. 学生考试 (使用带提示的题目进行推理)
     logger.info("Step 2: Student Taking Exam...")
     if lora_path:
         student_exam = TakeExam(model_path=model_path, use_lora=True, adapter_path=lora_path, max_seq_length=max_token)
     else:
         student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
-    # 这里的 exam 会计算并返回新的 entropy (虽然 exam 方法本身不返回，但结果会被保存并由 Teacher 读取)
     student_exam.exam_with_hints(question=question, solution=ref_solution, answer=ref_answer, question_idx=question_idx, hints=hints)
 
-    # 3. 老师批改
     logger.info("Step 3: Teacher Grading...")
     teacher = TeacherCorrecter()
     incorrect_data, correct_data = teacher.teacher_mark_paper()
     
-    # 解包批改结果
-    # 结构: [ids, questions, student_answers, ref_solutions, ref_answers, entropies]
-    # 这里我们要获取最后一位的 entropies (这是使用 Hints 后的熵)
     err_question_idx, _, err_answers, _, _, err_entropies = incorrect_data
     correct_question_idx, _, correct_answers, _, _, correct_entropies = correct_data
 
-    # 4. 构建映射字典 (Question ID -> {Answer, Entropy})
     results_map = {}
     
-    # 存入错题信息
     for q_id, s_ans, s_ent in zip(err_question_idx, err_answers, err_entropies):
         results_map[str(q_id)] = {
             "answer": s_ans,
             "entropy": s_ent
         }
         
-    # 存入对题信息
     for q_id, s_ans, s_ent in zip(correct_question_idx, correct_answers, correct_entropies):
         results_map[str(q_id)] = {
             "answer": s_ans,
             "entropy": s_ent
         }
 
-    # 创建错题 ID 集合，用于分类
     err_ids_set = set(str(x) for x in err_question_idx)
-    # 已处理 ID 集合
     processed_ids_set = set(results_map.keys())
 
-    # 5. 分类合并
     correct_group = []
     incorrect_group = []
     
-    # 遍历原始数据，加入 from_entropy
     total_data = zip(question_idx, question, hints, ref_solution, ref_answer, from_entropy)
     
     for q_id, q, q_hints, r_sol, r_ans, orig_ent in total_data:
@@ -327,7 +289,6 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
             logger.warning(f"Question ID {q_id} missing from exam results. Skipping.")
             continue
             
-        # 获取考试结果
         exam_res = results_map[str_qid]
         s_ans = exam_res["answer"]
         hint_ent = exam_res["entropy"]
@@ -339,11 +300,10 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
             "student_answer": s_ans,
             "ref_solution": r_sol,
             "ref_answer": r_ans,
-            "entropy_original": orig_ent,   # 原始熵
-            "entropy_with_hints": hint_ent  # 使用 Hints 后的熵
+            "entropy_original": orig_ent,
+            "entropy_with_hints": hint_ent
         }
 
-        # 分类逻辑
         if str_qid in err_ids_set:
             incorrect_group.append(item)
         else:
@@ -351,12 +311,10 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
 
     logger.info(f"Classification Done. Correct: {len(correct_group)}, Incorrect: {len(incorrect_group)}")
 
-    # 6. 构造输出列表
-    # 6.1 Teacher GRPO (包含 success 标记)
     data_for_teacher_grpo = []
     for item in correct_group:
         data_for_teacher_grpo.append({
-            **item, # 包含 entropy 信息
+            **item,
             "success": True
         })
     for item in incorrect_group:
@@ -365,13 +323,10 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
             "success": False
         })
     
-    # 6.2 Student Advantageous Hints (对题)
-    data_for_student_adv_hints = correct_group # 结构已满足要求
+    data_for_student_adv_hints = correct_group
 
-    # 6.3 Student Disadvantageous Hints (错题)
-    data_for_student_disadv_hints = incorrect_group # 结构已满足要求
+    data_for_student_disadv_hints = incorrect_group
     
-    # 7. 保存
     adv_hints_dataset_path = exam_paper.adv_hints_dataset_path
     disadv_hints_dataset_path = exam_paper.disadv_hints_dataset_path
     grpo_dataset_path = exam_paper.grpo_dataset_path
@@ -383,7 +338,6 @@ def student_correct(lora_path: str = None, max_token: int = 2048, hint_token_lim
     exam_paper.save_results_to_json(data_for_teacher_grpo, grpo_dataset_path)
     exam_paper.save_results_to_json(data_for_student_adv_hints,  adv_hints_dataset_path)
     exam_paper.save_results_to_json(data_for_student_disadv_hints, disadv_hints_dataset_path)
-
 
 
 def teacher_correct():
@@ -416,7 +370,6 @@ def student_take_exam_Math500(max_token: int = 2048):
 
 
     
-
 
 
 def student_take_exam_Math_sub(train:bool = True, subset:str="all", lora_path:str = None, max_token: int = 2048):
@@ -459,7 +412,6 @@ def student_take_exam_AIME(lora_path:str = None, year = 2024, model_path: str = 
     take_exam.exam(question, solution, answer, question_idx)
 
 
-
 def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = model_path, max_token: int = 2048):
     data = AIME_1983_2024()
     question = data.problems
@@ -478,7 +430,6 @@ def student_take_exam_AIME_1983_2024(lora_path:str = None, model_path: str = mod
     for idx in range(len(question)):
         question_idx.append(idx)
     take_exam.exam(question, solution, answer, question_idx)
-
 
 
 def student_take_exam_Math_500(train:bool = True, subset:str="all", lora_path:str = None, max_token: int = 2048):
@@ -545,7 +496,7 @@ def student_take_exam_Gsm8k(train:bool = True, lora_path:str = None, max_token: 
 
 
 def compute_and_save_ref_loss():
-    """用 ref 模型计算 corr_path 每条数据的 answer tokens 平均 CE loss，写回 ref_beta 字段。"""
+    """ ref  corr_path  answer tokens  CE loss ref_beta """
     import torch
     from tqdm import tqdm
     from transformers import AutoTokenizer, AutoModelForCausalLM
@@ -554,7 +505,6 @@ def compute_and_save_ref_loss():
     with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
-    # 已全部计算过则跳过
     if all('ref_beta' in item for item in data):
         logger.info("ref_beta already computed for all items, skipping.")
         return
@@ -569,7 +519,6 @@ def compute_and_save_ref_loss():
         for item in tqdm(data, desc="Computing ref_beta", ncols=100):
             if 'ref_beta' in item:
                 continue
-            # corr_path 的样本作为 anchor_data 处理
             sample = {"question": item["question"], "answer": item.get("answer", item.get("ref_solution", "")), "type": "anchor_data"}
             batch = collator([sample])
             input_ids = batch["input_ids"].to(ref_model.device)
@@ -704,7 +653,6 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
     correct_question_idx, correct_questions, correct_answers, correct_ref_solutions, correct_ref_answers, correct_entropy = correct_data
     solved_ids = set(correct_question_idx)
 
-    # 准备roll 8做对的题目数据
     roll8_solved_question_idx = []
     roll8_solved_questions = []
     roll8_solved_answers = []
@@ -728,13 +676,11 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
             err_ref_solutions.append(m_ref_solution[i])
             err_entropy.append(m_entropy[i])
         else:
-            # roll 8做对的题目，需要找到对应的正确答案
-            # 从correct_data中找到对应question_idx的答案
             for j, corr_idx in enumerate(correct_question_idx):
                 if corr_idx == idx:
                     roll8_solved_question_idx.append(idx)
                     roll8_solved_questions.append(m_question[i])
-                    roll8_solved_answers.append(correct_answers[j])  # 使用roll 8中的正确答案
+                    roll8_solved_answers.append(correct_answers[j])
                     roll8_solved_ref_solutions.append(m_ref_solution[i])
                     roll8_solved_ref_answers.append(m_ref_answer[i])
                     roll8_solved_entropy.append(m_entropy[i])
@@ -752,7 +698,6 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
             f.write("\n".join(log_lines) + "\n")
             f.write("#############################\n")
     
-    # 保存roll 8还没做对的题目
     exam_paper.save_mistakes(
         err_question_idx,
         err_questions,
@@ -762,11 +707,9 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
         err_entropy
     )
     
-    # 将roll 8做对的题目补充进corr_answer.json
     if len(roll8_solved_question_idx) > 0:
         logger.info(f"Adding {len(roll8_solved_question_idx)} newly solved questions to corr_answer.json")
         
-        # 读取现有的corr_answer.json
         existing_corr_data = []
         try:
             with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
@@ -775,10 +718,8 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
         except Exception as e:
             logger.warning(f"Failed to load existing corr_answer.json: {e}, will create new file")
         
-        # 获取已存在的question_idx集合，避免重复
         existing_idx_set = {item.get("question_idx") for item in existing_corr_data}
         
-        # 合并新做对的题目
         for i in range(len(roll8_solved_question_idx)):
             if roll8_solved_question_idx[i] not in existing_idx_set:
                 existing_corr_data.append({
@@ -790,7 +731,6 @@ def exam_roll_recheck_mistake(use_lora:bool=False, lora_path:str="", save_log_pa
                     "entropy": roll8_solved_entropy[i]
                 })
         
-        # 保存合并后的数据
         try:
             with open(exam_paper.corr_path, 'w', encoding='utf-8') as f:
                 json.dump(existing_corr_data, f, ensure_ascii=False, indent=2)
@@ -811,38 +751,31 @@ def sft_on_adv_Data():
 
 def count_common_questions(file_corr = exam_paper.corr_path, file_hints = exam_paper.hints_file_path):
     try:
-        # 读取 corr.json 文件
         with open(file_corr, 'r', encoding='utf-8') as f:
             corr_data = json.load(f)
             
-        # 读取 adv_hints.json 文件
         with open(file_hints, 'r', encoding='utf-8') as f:
             hints_data = json.load(f)
             
-        # 提取 question_idx 集合
-        # 假设文件结构是列表，每个元素是包含 'question_idx' 的字典
         corr_ids = {item['question_idx'] for item in corr_data if 'question_idx' in item}
         hints_ids = {item['question_idx'] for item in hints_data if 'question_idx' in item}
         
-        # 计算交集
         common_ids = corr_ids.intersection(hints_ids)
         
-        # 返回相同 question_idx 的数量
         print(len(common_ids))
 
     except FileNotFoundError as e:
-        print(f"错误: 找不到文件 - {e}")
+        print(f":  - {e}")
         return 0
     except json.JSONDecodeError:
-        print("错误: 文件不是有效的 JSON 格式")
+        print(":  JSON ")
         return 0
     except Exception as e:
-        print(f"发生未知错误: {e}")
+        print(f": {e}")
         return 0
 
 def sft_on_mistakes(model_path: str):
     
-    # 2. 加载错题
     logger.info("Loading mistakes...")
     if not exam_paper.load_mistakes():
         logger.error("Failed to load mistakes. Aborting SFT.")
@@ -867,8 +800,8 @@ def sft_on_mistakes(model_path: str):
     run_sft_training(
         model_url=model_path,
         question_list=valid_questions,
-        answer_list=valid_solutions, # 使用标准答案进行训练
-        num_train_epochs=1           # 针对少量错题，通常跑 3-5 个 epoch
+        answer_list=valid_solutions,
+        num_train_epochs=1
     )
 
 def grpo_on_MATH(lora_path:str, subset:str ="all"):
@@ -880,11 +813,11 @@ def grpo_on_MATH(lora_path:str, subset:str ="all"):
 
 def grpo_on_MATH500(lora_path: str, num_generations: int = 8):
     """
-    在 MATH500 数据集上进行 GRPO 训练
+     MATH500  GRPO 
     
     Args:
-        lora_path: SIRA 训练后的 LoRA checkpoint 路径
-        num_generations: GRPO 每个问题生成的样本数量，默认 8
+        lora_path: SIRA  LoRA checkpoint 
+        num_generations: GRPO  8
     """
     logger.info("="*60)
     logger.info("Starting GRPO Training on MATH500")
@@ -910,62 +843,54 @@ def grpo_on_MATH500(lora_path: str, num_generations: int = 8):
     logger.info("GRPO Training completed!")
 
 
-
 def test_adv_hints_accuracy(model_path: str, dataset_path: str = None, max_token: int = 2048):
     """
-    测试 Advantageous Hints 数据集的复现准确率。
-    理论上，由于这些数据是之前模型答对过的，准确率应该很高（接近 100%）。
-    但受限于采样参数（Temperature）或模型权重微调，可能会有波动。
+     Advantageous Hints 
+     100%
+    Temperature
     
     Args:
-        model_path (str): 模型路径
-        dataset_path (str, optional): adv_hints 数据集的路径。如果不传，请确保外部已定义 exam_paper.adv_hints_dataset_path
+        model_path (str): 
+        dataset_path (str, optional): adv_hints  exam_paper.adv_hints_dataset_path
     """
     
-    # 1. 确定数据集路径
     if dataset_path is None:
-        # 尝试从全局或 exam_paper 获取，这里假设 exam_paper 是可访问的对象
         try:
             dataset_path = exam_paper.adv_hints_dataset_path
         except NameError:
-            logger.error("未提供 dataset_path 且无法找到 exam_paper 对象。")
+            logger.error(" dataset_path  exam_paper ")
             return
 
     if not os.path.exists(dataset_path):
-        logger.error(f"数据集文件不存在: {dataset_path}")
+        logger.error(f": {dataset_path}")
         return
 
     logger.info(f"Step 1: Loading Advantageous Hints Dataset from {dataset_path}...")
     
-    # 2. 加载数据
     with open(dataset_path, "r", encoding="utf-8") as f:
         adv_data = json.load(f)
     
     if not adv_data:
-        logger.warning("数据集为空！")
+        logger.warning("")
         return
 
-    # 3. 解析数据，准备喂给 exam_with_hints
-    # 注意：saved data 的键名可能与 exam_with_hints 参数名不完全一致，需要映射
-    # 之前保存的 keys: question, hints, ref_answer, ref_solution, question_idx
     
     questions = []
     solutions = []
-    answers = [] # 这里指 reference answers
+    answers = []
     ids = []
     hints_list = []
 
     for item in adv_data:
         questions.append(item["question"])
-        solutions.append(item.get("ref_solution", "")) # 容错
-        answers.append(item.get("ref_answer", ""))     # 容错，exam_with_hints 需要 ground truth 来对比
+        solutions.append(item.get("ref_solution", ""))
+        answers.append(item.get("ref_answer", ""))
         ids.append(item["question_idx"])
         hints_list.append(item["hints"])
 
     total_count = len(questions)
     logger.info(f"Loaded {total_count} samples. Preparing to run exam...")
 
-    # 4. 执行考试 (Roll-8 Inference)
     logger.info("Step 2: Running exam_roll_k_with_hints (k=8)...")
     
     student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
@@ -978,14 +903,12 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None, max_token
         k=8
     )
 
-    # 5. 从 exam_roll.json 读取结果，按 question_idx 分组，任意一次正确即算通过
     logger.info("Step 3: Grading (pass if any of 8 rolls correct)...")
     roll_path = student_exam.OUTPUT_JSON_PATH_ROLL
     with open(roll_path, "r", encoding="utf-8") as f:
         roll_results = json.load(f)
 
     from utils.data_utils import extract_boxed_content, normalize_answer
-    # 按 question_idx 分组
     from collections import defaultdict
     groups = defaultdict(list)
     for item in roll_results:
@@ -997,7 +920,6 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None, max_token
     )
     num_incorrect = total_count - num_correct
 
-    # 6. 计算统计指标
     accuracy = 0.0
     if total_count > 0:
         accuracy = (num_correct / total_count) * 100.0
@@ -1012,69 +934,61 @@ def test_adv_hints_accuracy(model_path: str, dataset_path: str = None, max_token
     print("="*40 + "\n")
 
     if accuracy < 95.0:
-        logger.warning("警告：Advantageous Hints 的复现准确率低于 95%。可能原因：")
-        logger.warning("1. 推理参数 (Temperature) 不为 0。")
-        logger.warning("2. 模型权重发生了变化。")
-        logger.warning("3. input prompt 格式在保存数据后被修改。")
+        logger.warning("Advantageous Hints  95%")
+        logger.warning("1.  (Temperature)  0")
+        logger.warning("2. ")
+        logger.warning("3. input prompt ")
     
     return accuracy
 
 
 def analyze_knowledge_change(corr_pre: str):
     """
-    分析 SIRA 训练前后的知识变化，识别遗忘的知识和新学到的知识。
+     SIRA 
     
-    遗忘的知识: mistake_collection_book.json 中的题目，如果在 corr_pre 中存在，
-                说明模型之前做对了但现在做错了（遗忘）。
-    新学到的知识: corr_answer.json 中的题目，如果在 adv_hints.json 中存在，
-                说明模型之前需要提示才能做对，现在不需要提示也能做对（新学到）。
+    : mistake_collection_book.json  corr_pre 
+                
+    : corr_answer.json  adv_hints.json 
+                
     
     Args:
-        corr_pre (str): JSON 文件路径，代表模型在 SIRA 训练前做对的题目，
-                        格式与 corr_answer.json 一致。
+        corr_pre (str): JSON  SIRA 
+                         corr_answer.json 
     
     Returns:
-        dict: 包含处理结果的字典
+        dict: 
     """
     try:
         # =====================================================
-        # Step 1: 读取所有需要的数据文件
         # =====================================================
         logger.info("Step 1: Loading data files...")
 
-        # 读取 corr_pre (SIRA 前做对的题目)
         with open(corr_pre, 'r', encoding='utf-8') as f:
             corr_pre_data = json.load(f)
         logger.info(f"Loaded corr_pre: {len(corr_pre_data)} items from {corr_pre}")
 
-        # 读取 corr_answer.json (SIRA 后做对的题目)
         with open(exam_paper.corr_path, 'r', encoding='utf-8') as f:
             corr_answer_data = json.load(f)
         logger.info(f"Loaded corr_answer: {len(corr_answer_data)} items from {exam_paper.corr_path}")
 
-        # 读取 adv_hints.json
         with open(exam_paper.adv_hints_dataset_path, 'r', encoding='utf-8') as f:
             adv_hints_data = json.load(f)
         logger.info(f"Loaded adv_hints: {len(adv_hints_data)} items from {exam_paper.adv_hints_dataset_path}")
 
-        # 读取 mistake_collection_book.json
         exam_paper.load_mistakes()
         mistake_data = exam_paper.mistakes
         logger.info(f"Loaded mistake_collection_book: {len(mistake_data)} items from {exam_paper.mistake_file_path}")
 
         # =====================================================
-        # Step 2: 构建索引映射
         # =====================================================
         logger.info("Step 2: Building index maps...")
 
-        # corr_pre 按 question_idx 建立映射
         corr_pre_map = {}
         for item in corr_pre_data:
             qid = item.get("question_idx")
             if qid is not None:
                 corr_pre_map[qid] = item
 
-        # adv_hints 按 question_idx 建立映射
         adv_hints_map = {}
         for item in adv_hints_data:
             qid = item.get("question_idx")
@@ -1082,7 +996,6 @@ def analyze_knowledge_change(corr_pre: str):
                 adv_hints_map[qid] = item
 
         # =====================================================
-        # Step 3: 识别遗忘的知识
         # =====================================================
         logger.info("Step 3: Identifying forgotten knowledge...")
 
@@ -1090,13 +1003,12 @@ def analyze_knowledge_change(corr_pre: str):
         for item in mistake_data:
             qid = item.get("question_idx")
             if qid in corr_pre_map:
-                # 该题之前做对了，现在做错了 -> 遗忘
                 pre_item = corr_pre_map[qid]
                 forgotten_item = {
                     "question_idx": qid,
                     "question": item.get("question", ""),
-                    "answer": item.get("answer", ""),           # 当前（错误的）答案
-                    "pre_answer": pre_item.get("answer", ""),   # SIRA 前的正确答案
+                    "answer": item.get("answer", ""),
+                    "pre_answer": pre_item.get("answer", ""),
                     "ref_solution": item.get("ref_solution", ""),
                     "ref_answer": item.get("ref_answer", ""),
                     "entropy": item.get("entropy", ""),
@@ -1107,7 +1019,6 @@ def analyze_knowledge_change(corr_pre: str):
                      f"(out of {len(mistake_data)} mistakes, {len(corr_pre_map)} pre-correct)")
 
         # =====================================================
-        # Step 4: 识别新学到的知识
         # =====================================================
         logger.info("Step 4: Identifying newly learned knowledge...")
 
@@ -1115,13 +1026,12 @@ def analyze_knowledge_change(corr_pre: str):
         for item in corr_answer_data:
             qid = item.get("question_idx")
             if qid in adv_hints_map:
-                # 该题之前需要提示才能做对，现在不需要提示也能做对 -> 新学到
                 adv_item = adv_hints_map[qid]
                 learned_item = {
                     "question_idx": qid,
                     "question": item.get("question", ""),
-                    "answer": item.get("answer", ""),                       # 当前正确答案
-                    "pre_answer": adv_item.get("student_answer", ""),       # 之前在 adv_hints 中的答案
+                    "answer": item.get("answer", ""),
+                    "pre_answer": adv_item.get("student_answer", ""),
                     "ref_solution": item.get("ref_solution", ""),
                     "ref_answer": item.get("ref_answer", ""),
                     "entropy": item.get("entropy", ""),
@@ -1132,7 +1042,6 @@ def analyze_knowledge_change(corr_pre: str):
                      f"(out of {len(corr_answer_data)} correct, {len(adv_hints_map)} adv_hints)")
 
         # =====================================================
-        # Step 5: 保存结果到项目目录
         # =====================================================
         logger.info("Step 5: Saving results...")
 
@@ -1185,13 +1094,13 @@ def analyze_knowledge_change(corr_pre: str):
 
 def test_grpo_on_MATH500(grpo_lora_path: str, max_token: int = 2048):
     """
-    测试 GRPO 训练后的模型在 MATH500 上的表现
+     GRPO  MATH500 
     
     Args:
-        grpo_lora_path: GRPO 训练后的 LoRA checkpoint 路径
+        grpo_lora_path: GRPO  LoRA checkpoint 
         
     Returns:
-        dict: 包含准确率等统计信息的字典
+        dict: 
     """
     logger.info("="*60)
     logger.info("Testing GRPO Model on MATH500")
@@ -1199,7 +1108,6 @@ def test_grpo_on_MATH500(grpo_lora_path: str, max_token: int = 2048):
     logger.info(f"GRPO LoRA Path: {grpo_lora_path}")
     logger.info("="*60)
     
-    # 1. 加载 MATH500 数据集
     data = Math_500()
     question = data.problems
     solution = data.solutions
@@ -1208,7 +1116,6 @@ def test_grpo_on_MATH500(grpo_lora_path: str, max_token: int = 2048):
     
     logger.info(f"Dataset size: {len(question)} questions")
     
-    # 2. 使用 GRPO LoRA 进行推理
     logger.info("Step 1: Running inference with GRPO LoRA...")
     take_exam = TakeExam(
         model_path=model_path,
@@ -1224,18 +1131,15 @@ def test_grpo_on_MATH500(grpo_lora_path: str, max_token: int = 2048):
         question_idx=question_idx
     )
     
-    # 3. 批改结果
     logger.info("Step 2: Grading results...")
     teacher = TeacherCorrecter()
     incorrect_data, correct_data = teacher.teacher_mark_paper()
     
-    # 4. 计算统计信息
     num_correct = len(correct_data[0]) if correct_data else 0
     num_incorrect = len(incorrect_data[0]) if incorrect_data else 0
     total_count = len(question)
     accuracy = (num_correct / total_count * 100.0) if total_count > 0 else 0.0
     
-    # 5. 输出结果
     print("\n" + "="*60)
     print(f"📊 GRPO MODEL PERFORMANCE ON MATH500")
     print("="*60)
@@ -1262,32 +1166,27 @@ def gen_sft_dataset(epoch):
 
 def compute_and_save_avg_loss_per_vocab(question, answer, max_token: int = 2048):
     """
-    根据给定的 (question, answer) 列表，调用 TakeExam 计算 avg_loss_per_vocab，
-    并将结果保存到:
+     (question, answer)  TakeExam  avg_loss_per_vocab
+    :
         <project_root>/CELPO/datasets/exam/avg_loss_per_vocab.pt
 
     Args:
-        question (List[str]): 题目列表
-        answer   (List[str]): 对应的标准答案列表，长度必须与 question 一致
+        question (List[str]): 
+        answer   (List[str]):  question 
     """
     if len(question) != len(answer):
-        raise ValueError(f"question 和 answer 长度不一致: {len(question)} vs {len(answer)}")
+        raise ValueError(f"question  answer : {len(question)} vs {len(answer)}")
 
     logger.info(f"[avg_loss_per_vocab] Start computing on {len(question)} QA pairs...")
 
-    # 1. 用当前全局的 model_path 初始化 TakeExam
     student_exam = TakeExam(model_path=model_path, max_seq_length=max_token)
 
-    # 2. 计算 vocab 级别的平均 loss 向量（shape = [vocab_size]）
     avg_loss_per_vocab = student_exam.compute_answer_vocab_loss_vector(
         question=question,
         answer=answer,
     )
 
-    # 3. 计算与 student_train_v3.py 一致的保存路径
     current_file_path = os.path.abspath(__file__)
-    # main.py 所在位置是 <project_root>/CELPO/main.py
-    # 向上两级得到 <project_root>
     project_root = os.path.dirname(current_file_path)      # .../project/CELPO
     project_root = os.path.dirname(project_root)           # .../project
 
@@ -1296,7 +1195,6 @@ def compute_and_save_avg_loss_per_vocab(question, answer, max_token: int = 2048)
     )
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
-    # 4. 保存到指定路径
     torch.save(avg_loss_per_vocab, save_path)
     logger.info(
         f"[avg_loss_per_vocab] Saved avg_loss_per_vocab (shape={tuple(avg_loss_per_vocab.shape)}) "
@@ -1309,8 +1207,6 @@ def gen_vocab(data_path:str):
     with open(data_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
         
-    # 2. 使用列表推导式提取各列数据
-    # 确保如果某个字段缺失，能有默认值（这里假设数据是完整的，或者用空字符串代替）
     questions = [item.get('question', '') for item in data]
     answer = [item.get('answer', '') for item in data]
     compute_and_save_avg_loss_per_vocab(question=questions, answer=answer)
@@ -1435,7 +1331,6 @@ def use_worker():
 ############################################################################################
 
 
-
 if __name__ == "__main__":
     # CUDA_VISIBLE_DEVICES=0,1,2,3  python main.py d
     # CUDA_VISIBLE_DEVICES=0  python main.py
@@ -1480,10 +1375,8 @@ if __name__ == "__main__":
     # teacher.teacher_mark_paper_with_save()
     # count_common_questions()
     # teacher.check_answers_equivalence()
-    # # 示例：使用 SIRA 训练的结果进行 GRPO
     # grpo_on_MATH500(lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     
-    # 示例：测试 GRPO 后的模型
     # test_grpo_on_MATH500(grpo_lora_path="/root/autodl-tmp/CELPO/output/sira_sft_50ep_0306_2012/checkpoint-target-reached-epoch-9")
     
     # grpo_on_MATH("/root/autodl-tmp/CELPO/output/sira_sft_0207_0905", subset="prealgebra") 
@@ -1506,7 +1399,6 @@ if __name__ == "__main__":
     # ########################################################################################################################################################################
 
     # try:
-    #     # 优先执行主训练函数
     #     # run_sdpo_training_baseline(
     #     #     model_path=model_path,
     #     #     data_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/CELPO/datasets/exam/adv_DS_MATH_7B.json",
@@ -1531,14 +1423,12 @@ if __name__ == "__main__":
     #                             log_prompt="sdcl_2048_MATH",
     #                             save_log_path="/mnt/shared-storage-gpfs2/labutopia-shared/wanhaiyuan/xxr/env5/CELPO/exam_result.txt")
     # except Exception as e:
-    #     # 上方函数执行失败（报错）时，自动运行备用函数
-    #     print(f"主函数执行报错：{str(e)}，正在执行备用函数 use_worker()")
     #     use_worker()
     use_worker()
 
 
 def ca_answer_length(log_path: str):
-    """统计 exam.json 中模型输出(answer字段)的平均 token 数，写入指定文件。"""
+    """ exam.json (answer) token """
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=False)
     exam_path = exam_paper.exam_file_path
     try:

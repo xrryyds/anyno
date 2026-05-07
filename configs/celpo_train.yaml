@@ -1,48 +1,40 @@
-# ================= 4090 24GB 优化配置 =================
 
-# 模型相关配置
 model:
   # name: "Qwen/Qwen2-1.5B-Instruct"    
   name: "/home/xrrfolder/models/Qwen2.5-3B-Instruct" 
-  max_length: 512             # 输入最大长度
-  max_new_tokens: 512          # 生成最大长度
-  # 量化配置 (开启8bit可节省显存，但略微降低速度)
+  max_length: 512
+  max_new_tokens: 512
   quantization:
     use_8bit: true
     use_4bit: false
 
-# LoRA 微调配置 (显存优化核心)
 lora:
   enable: true
-  r: 8                        # LoRA 秩
+  r: 8
   alpha: 16                    # LoRA Alpha
   dropout: 0.05
 
-# 训练超参数
 training:
-  learning_rate: 5.0e-6        # 学习率 (注意yaml中科学计数法的写法)
-  batch_size: 6           # 4090上设为2-4，配合梯度累积
-  gradient_accumulation_steps: 8 # 累积步数，实际batch = 2 * 8 = 16
+  learning_rate: 5.0e-6
+  batch_size: 6
+  gradient_accumulation_steps: 8
   num_epochs: 10
   max_grad_norm: 1.0
-  gradient_checkpointing: true # 必须开启以节省显存
-  fp16: true                   # 开启混合精度
+  gradient_checkpointing: true
+  fp16: true
   top_p: 0.9
 
-# GRPO 算法特定参数
 grpo:
-  num_samples_per_prompt: 4   # 每个Prompt采样的回复数
+  num_samples_per_prompt: 4
   temperature: 0.8
-  beta: 0.1                    # KL散度惩罚系数
-  gamma: 1.0                   # 优势归一化系数
+  beta: 0.1
+  gamma: 1.0
 
-# 数据集配置
 data:
-  max_samples: 500             # 调试时设小一点，正式训练设大
+  max_samples: 500
   train_split: ""
   num_workers: 4
 
-# 系统与日志
 system:
   seed: 42
   device: "cuda"
