@@ -53,9 +53,36 @@ class HintSFTConfig:
     split_r: float = 0.5
     
     hint_kl_beta: float = 0.3
-    answer_kl_beta: float = 1.0
-    anchor_kl_beta: float = 1.0
-    
+
+    # ── answer_kl_beta / anchor_kl_beta ──────────────────────────────────
+    # 两种设置方式（二选一）：
+    #
+    # 方式 A：固定值（简单基线）
+    #   经验推荐范围：
+    #     answer_kl_beta  ∈ [0.05, 0.5]
+    #       - answer 部分用 Reverse KL 防止答案区域坍缩，但不能压制 hint_loss
+    #       - 目标：answer_kl_beta * answer_KL_raw ≈ 0.05~0.15 × hint_loss
+    #       - 若 answer_KL_raw 典型值 ≈ 2~5，hint_loss ≈ 1~3，则 beta ≈ 0.05~0.2
+    #     anchor_kl_beta  ∈ [0.5, 3.0]
+    #       - anchor 样本无 CE，只有 KL；需使 anchor loss 量级 ≈ mode_b loss 量级
+    #       - 若 anchor_KL_raw 典型值 ≈ 2~5，mode_b loss ≈ 1~3，则 beta ≈ 0.3~1.5
+    #
+    # 方式 B：自适应（adaptive=True，推荐）
+    #   用 EMA 追踪各 KL 项的滑动均值，动态计算 beta 使加权 KL 保持在
+    #   目标比例 answer_kl_target_ratio / anchor_kl_target_ratio 处。
+    #   公式：beta_t = target_ratio * ema_hint_loss / (ema_kl + eps)
+    # ─────────────────────────────────────────────────────────────────────
+    answer_kl_beta: float = 0.1          # 方式 A 固定值（adaptive=False 时生效）
+    anchor_kl_beta: float = 1.0          # 方式 A 固定值（adaptive=False 时生效）
+
+    # 自适应开关与超参
+    adaptive_kl_beta: bool = True        # True = 方式 B 自适应
+    answer_kl_target_ratio: float = 0.1  # 目标：answer_weighted ≈ ratio × hint_loss
+    anchor_kl_target_ratio: float = 1.0  # 目标：anchor_weighted ≈ ratio × hint_loss
+    adaptive_ema_alpha: float = 0.05     # EMA 平滑系数（越小越稳定，越大越敏感）
+    adaptive_beta_min: float = 0.01      # beta 下界，防止过小
+    adaptive_beta_max: float = 20.0      # beta 上界，防止梯度爆炸
+
     top_entropy_quantile: float = 0.2
     
     target_mode_b: Optional[float] = None
@@ -223,6 +250,53 @@ class SequentialTrainer(Trainer):
         super().__init__(*args, **kwargs)
         self.hint_config = hint_config
 
+        # ── 自适应 beta 的 EMA 状态 ──────────────────────────────────────
+        # 追踪三个量的指数移动平均：
+        #   _ema_hint_loss    : hint_loss（CE + hint_kl）的均值，作为"参考量级"
+        #   _ema_answer_kl    : answer 部分 raw KL 的均值
+        #   _ema_anchor_kl    : anchor 部分 raw KL 的均值
+        # 初始值设为 1.0，避免冷启动时 beta 爆炸
+        self._ema_hint_loss: float = 1.0
+        self._ema_answer_kl: float = 1.0
+        self._ema_anchor_kl: float = 1.0
+        self._ema_initialized: bool = False   # 第一个 batch 后用真实值覆盖
+
+    def _update_adaptive_betas(self, hint_loss_val: float, answer_kl_val: float, anchor_kl_val: float):
+        """用 EMA 追踪各项均值，动态计算 answer_kl_beta / anchor_kl_beta。
+
+        公式（每个 batch 更新一次）：
+            ema_x  ← α * x + (1-α) * ema_x
+            beta   = clamp(target_ratio * ema_hint_loss / (ema_kl + ε),
+                           beta_min, beta_max)
+
+        目标语义：
+            answer_weighted  ≈ answer_kl_target_ratio  × hint_loss
+            anchor_weighted  ≈ anchor_kl_target_ratio  × hint_loss
+        """
+        cfg = self.hint_config
+        α = cfg.adaptive_ema_alpha
+        eps = 1e-8
+
+        if not self._ema_initialized:
+            # 冷启动：直接用第一个 batch 的真实值初始化，避免 1.0 偏差
+            self._ema_hint_loss = hint_loss_val if hint_loss_val > 0 else 1.0
+            self._ema_answer_kl = answer_kl_val if answer_kl_val > 0 else 1.0
+            self._ema_anchor_kl = anchor_kl_val if anchor_kl_val > 0 else 1.0
+            self._ema_initialized = True
+        else:
+            if hint_loss_val > 0:
+                self._ema_hint_loss = α * hint_loss_val + (1 - α) * self._ema_hint_loss
+            if answer_kl_val > 0:
+                self._ema_answer_kl = α * answer_kl_val + (1 - α) * self._ema_answer_kl
+            if anchor_kl_val > 0:
+                self._ema_anchor_kl = α * anchor_kl_val + (1 - α) * self._ema_anchor_kl
+
+        new_answer_beta = cfg.answer_kl_target_ratio * self._ema_hint_loss / (self._ema_answer_kl + eps)
+        new_anchor_beta = cfg.anchor_kl_target_ratio * self._ema_hint_loss / (self._ema_anchor_kl + eps)
+
+        cfg.answer_kl_beta = float(max(cfg.adaptive_beta_min, min(cfg.adaptive_beta_max, new_answer_beta)))
+        cfg.anchor_kl_beta = float(max(cfg.adaptive_beta_min, min(cfg.adaptive_beta_max, new_anchor_beta)))
+
     def get_train_dataloader(self) -> DataLoader:
         if self.train_dataset is None:
             raise ValueError("Trainer: training requires a train_dataset.")
@@ -259,6 +333,16 @@ class SequentialTrainer(Trainer):
 
         if self.model.training:
             tracker.update(loss.item(), metadata, debug_info_list)
+
+            # ── 自适应 beta 更新 ──────────────────────────────────────────
+            if self.hint_config.adaptive_kl_beta:
+                hint_loss_vals  = [d["hint_loss"]      for d in debug_info_list if d and "hint_loss"      in d]
+                answer_kl_vals  = [d["answer_kl_raw"]  for d in debug_info_list if d and "answer_kl_raw"  in d]
+                anchor_kl_vals  = [d["anchor_kl_raw"]  for d in debug_info_list if d and "anchor_kl_raw"  in d]
+                avg_hint_loss   = sum(hint_loss_vals)  / len(hint_loss_vals)  if hint_loss_vals  else 0.0
+                avg_answer_kl   = sum(answer_kl_vals)  / len(answer_kl_vals)  if answer_kl_vals  else 0.0
+                avg_anchor_kl   = sum(anchor_kl_vals)  / len(anchor_kl_vals)  if anchor_kl_vals  else 0.0
+                self._update_adaptive_betas(avg_hint_loss, avg_answer_kl, avg_anchor_kl)
 
         return (loss, outputs) if return_outputs else loss
 
@@ -361,6 +445,7 @@ class SequentialTrainer(Trainer):
                         s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
                     )
                     answer_kl_raw = answer_rev_kl_sum / (answer_kl_eff_count + eps)
+                    # answer_kl_beta 在 adaptive 模式下由 _update_adaptive_betas() 动态更新
                     answer_weighted = self.hint_config.answer_kl_beta * answer_kl_raw
                 else:
                     answer_ce = torch.tensor(0.0, device=device)
@@ -386,6 +471,7 @@ class SequentialTrainer(Trainer):
                         s_logits_i, r_logits_i, a_m, forward=False, top_entropy_quantile=rho
                     )
                     anchor_kl_raw = anchor_rev_kl_sum / (anchor_kl_eff_count + eps)
+                    # anchor_kl_beta 在 adaptive 模式下由 _update_adaptive_betas() 动态更新
                     anchor_weighted = self.hint_config.anchor_kl_beta * anchor_kl_raw
                     final_losses_map[i] = anchor_weighted
                     debug_map[i] = {
@@ -411,15 +497,20 @@ class SequentialTrainer(Trainer):
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
-    def __init__(self, log_file, log_interval, config: HintSFTConfig, output_dir: str):
+    def __init__(self, log_file, log_interval, config: HintSFTConfig, output_dir: str, trainer_ref=None):
         self.log_file = log_file
         self.log_interval = log_interval
         self.config = config
         self.output_dir = output_dir
+        self.trainer_ref = trainer_ref  # 用于读取自适应 beta 的当前值
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
         if state.global_step > 0 and state.global_step % self.log_interval == 0:
-            stats = tracker.get_window_stats() 
+            stats = tracker.get_window_stats()
+            # 若开启自适应，把当前 beta 值也写入日志
+            if self.config.adaptive_kl_beta and self.trainer_ref is not None:
+                stats["answer_kl_beta"] = self.config.answer_kl_beta
+                stats["anchor_kl_beta"] = self.config.anchor_kl_beta
             json_stats = stats.copy()
             json_stats.update({"epoch": state.epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
             with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(json_stats) + "\n")
@@ -456,6 +547,8 @@ class LogicalEpochLogCallback(TrainerCallback):
             logger.info(f"  Hint CE: {stats['avg_hint_ce']:.4f} | Hint KL: {stats['avg_hint_kl']:.4f} | Hint Loss: {stats['avg_hint_loss']:.4f}")
             logger.info(f"  Answer Raw(CE): {stats['avg_answer_raw']:.4f} | Answer Weighted(βKL): {stats['avg_answer_weighted']:.4f}")
             logger.info(f"  Anchor Raw(CE): {stats['avg_anchor_raw']:.4f} | Anchor Weighted(βKL): {stats['avg_anchor_weighted']:.4f}")
+            if self.config.adaptive_kl_beta:
+                logger.info(f"  [Adaptive β] answer_kl_beta={self.config.answer_kl_beta:.4f} | anchor_kl_beta={self.config.anchor_kl_beta:.4f}")
             
             epoch_hint_ce = stats.get('avg_hint_ce', 999.0)
             target = self.config.target_mode_b
@@ -615,6 +708,8 @@ def run_sira_training_v3(
         data_collator=collator,
         callbacks=[step_callback, epoch_callback]
     )
+    # 把 trainer 引用回传给 step_callback，用于读取自适应 beta 当前值
+    step_callback.trainer_ref = trainer
 
     logger.info(f"Starting SIRA training...")
     trainer.train()
