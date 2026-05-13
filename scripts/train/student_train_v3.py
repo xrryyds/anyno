@@ -732,10 +732,3 @@ if __name__ == "__main__":
     project_root = os.path.dirname(os.path.dirname(project_root))
     default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
-
-    run_sira_training_v2(
-        model_path=default_model_url,
-        batch_size=8,
-        real_data_epochs=50,
-        target_mode_b=1.2 
-    )
