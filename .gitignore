@@ -1,0 +1,28 @@
+# Python 字节码缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+
+# --- Python 编译文件/缓存 ---
+# 忽略 Python 3 的缓存目录
+__pycache__/
+
+# 忽略旧版 Python 或 C 扩展的编译文件 (.pyc, .pyo, .pyd)
+*.py[cod]
+
+# --- 你的产出文件夹 ---
+# 忽略 outputs 文件夹及其下的所有内容
+outputs/
+miniconda.sh
+.vscode/
+output/
+model/
+
+exam_roll.json
+
+workflow.txt
+exam_result.txt
+
+exam_result.txt
