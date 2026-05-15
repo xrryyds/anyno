@@ -727,23 +727,8 @@ class LogicalEpochLogCallback(TrainerCallback):
             f"No-improve streak: {self._no_improve_count}/{cfg.val_patience}"
         )
 
-        # ── 独立写入验证日志文件 ──────────────────────────────────────────
-        val_record = {
-            "logical_epoch": self.current_logical_epoch,
-            "val_accuracy": acc,
-            "correct": detail["correct"],
-            "total": detail["total"],
-            "best_val_acc": self._best_val_acc,   # 写入前的历史最优（本轮结果尚未更新）
-            "no_improve_count": self._no_improve_count,
-            "timestamp": datetime.now().isoformat(),
-        }
-        try:
-            with open(self.val_log_file, "a", encoding="utf-8") as _vf:
-                _vf.write(json.dumps(val_record) + "\n")
-        except Exception as _e:
-            logger.warning(f"  [Val] Failed to write val_log_file: {_e}")
-
-        if acc > self._best_val_acc:
+        is_new_best = acc > self._best_val_acc
+        if is_new_best:
             self._best_val_acc = acc
             self._no_improve_count = 0
             # 保存当前最优 checkpoint
@@ -771,6 +756,24 @@ class LogicalEpochLogCallback(TrainerCallback):
                 )
                 self.early_stopped = True
                 control.should_training_stop = True
+
+        # ── 独立写入验证日志文件（状态已更新，记录最终值）────────────────
+        val_record = {
+            "logical_epoch": self.current_logical_epoch,
+            "val_accuracy": acc,
+            "correct": detail["correct"],
+            "total": detail["total"],
+            "best_val_acc": self._best_val_acc,      # 已更新后的历史最优
+            "no_improve_count": self._no_improve_count,  # 已更新后的连续未提升计数
+            "is_new_best": is_new_best,
+            "early_stopped": self.early_stopped,
+            "timestamp": datetime.now().isoformat(),
+        }
+        try:
+            with open(self.val_log_file, "a", encoding="utf-8") as _vf:
+                _vf.write(json.dumps(val_record) + "\n")
+        except Exception as _e:
+            logger.warning(f"  [Val] Failed to write val_log_file: {_e}")
 
         return acc
 
