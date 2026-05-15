@@ -68,9 +68,14 @@ class LiveMathBench:
                     logger.warning(f"[LiveMathBench] Failed to remove cache: {rm_e}")
 
         # ── 第二次尝试：从 HuggingFace 下载（parquet → arrow 缓存）──────
+        # 优先使用 HF_ENDPOINT 镜像（如 https://hf-mirror.com），若未设置则尝试设置默认镜像
+        if not os.environ.get("HF_ENDPOINT"):
+            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+            logger.info("[LiveMathBench] HF_ENDPOINT not set, using https://hf-mirror.com")
+
         logger.info(
             f"[LiveMathBench] Downloading {_LIVEMATHBENCH_HF_NAME} (split={split}) "
-            "from HuggingFace..."
+            f"from {os.environ.get('HF_ENDPOINT', 'https://huggingface.co')}..."
         )
         from datasets import load_dataset as _load_dataset
         dataset = _load_dataset(
