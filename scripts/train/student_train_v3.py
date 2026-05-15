@@ -564,11 +564,16 @@ def evaluate_on_livemathbench(
         s = _re.sub(r'[^0-9a-zA-Z\+\-\*/=\.\,]', '', s)
         return s
 
+    # ── 关闭 gradient checkpointing，避免 generate() 时 hook 导致卡死 ──────
+    _gc_was_enabled = getattr(model, "is_gradient_checkpointing", False)
+    if _gc_was_enabled:
+        model.gradient_checkpointing_disable()
+
     model.eval()
     correct = 0
     total = len(val_problems)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for question, ref_ans in zip(val_problems, val_answers):
             messages = [
                 {"role": "system", "content": system_prompt},
@@ -577,12 +582,12 @@ def evaluate_on_livemathbench(
             prompt_str = tokenizer.apply_chat_template(
                 messages, tokenize=False, add_generation_prompt=True
             )
-            # prompt 截断到 1024 tokens，与训练侧 MAX_SEQ_LENGTH=2048 中 prompt 占位对齐
+            # prompt 截断到 512 tokens，验证阶段不需要超长 prompt
             inputs = tokenizer(
                 prompt_str,
                 return_tensors="pt",
                 add_special_tokens=False,
-                max_length=1024,
+                max_length=512,
                 truncation=True,
             ).to(model.device)
 
@@ -593,6 +598,8 @@ def evaluate_on_livemathbench(
                     **inputs,
                     max_new_tokens=max_new_tokens,
                     do_sample=False,          # greedy，与 take_exam temperature=0.0 对齐
+                    temperature=None,         # 显式置 None，避免 transformers 警告
+                    top_p=None,               # 显式置 None，避免 transformers 警告
                     pad_token_id=tokenizer.eos_token_id,
                     eos_token_id=stop_ids,
                 )
@@ -608,7 +615,10 @@ def evaluate_on_livemathbench(
             if _normalize(pred) == _normalize(str(ref_ans)) and ref_ans:
                 correct += 1
 
+    # ── 恢复训练模式与 gradient checkpointing ────────────────────────────
     model.train()
+    if _gc_was_enabled:
+        model.gradient_checkpointing_enable()
     accuracy = correct / total if total > 0 else 0.0
     detail = {"correct": correct, "total": total, "accuracy": accuracy}
     return accuracy, detail
