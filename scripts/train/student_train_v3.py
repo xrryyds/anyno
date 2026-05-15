@@ -10,14 +10,14 @@ import logging
 import warnings
 from datetime import datetime
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from datasets import Dataset
 from torch.utils.data import DataLoader, SequentialSampler
 from transformers import (
-    AutoTokenizer, 
-    AutoModelForCausalLM, 
-    Trainer, 
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    Trainer,
     TrainingArguments,
     TrainerCallback,
     set_seed
@@ -92,6 +92,20 @@ class HintSFTConfig:
     data_path: str = ""
     output_base_dir: str = "/root/autodl-tmp/output"
     real_data_epochs: int = 50
+
+    # ── 验证集早停（LiveMathBench）────────────────────────────────────────
+    # use_val_early_stop: 总开关，True = 每个逻辑 epoch 结束后在 LiveMathBench
+    #   上做 greedy decode 评估，以验证集准确率作为早停依据。
+    # val_max_size: 每次评估使用的题目数量（None = 全量，建议 100~300 加速）
+    # val_max_new_tokens: 生成时最大 token 数
+    # val_patience: 连续多少个逻辑 epoch 准确率不提升则触发早停
+    # val_min_epochs: 至少跑多少个逻辑 epoch 后才允许早停（冷启动保护）
+    # ─────────────────────────────────────────────────────────────────────
+    use_val_early_stop: bool = True
+    val_max_size: Optional[int] = 200
+    val_max_new_tokens: int = 2048   # 与训练 MAX_SEQ_LENGTH 对齐（prompt ≤ 1024 + gen ≤ 2048）
+    val_patience: int = 3
+    val_min_epochs: int = 3
 
 def setup_logging(output_dir):
     os.makedirs(output_dir, exist_ok=True)
@@ -493,7 +507,115 @@ class SequentialTrainer(Trainer):
         return final_loss, debug_info_list
 
 # ==========================================
-# 5. Callbacks
+# 5. LiveMathBench 验证集评估
+# ==========================================
+
+def evaluate_on_livemathbench(
+    model,
+    tokenizer,
+    val_problems: List[str],
+    val_answers: List[str],
+    max_new_tokens: int = 1024,
+    system_prompt: str = SYSTEM_PROMPT,
+) -> Tuple[float, Dict]:
+    """在 LiveMathBench 验证集上做 greedy decode，返回答题准确率。
+
+    Args:
+        model: 当前训练中的 PeftModel（已在 GPU 上）。
+        tokenizer: 对应的 tokenizer。
+        val_problems: 题目列表。
+        val_answers: 标准答案列表（纯数字/表达式字符串）。
+        max_new_tokens: 生成最大 token 数。
+        system_prompt: 系统提示词。
+
+    Returns:
+        accuracy: 正确率 ∈ [0, 1]。
+        detail: 包含 correct/total/accuracy 的字典。
+    """
+    import re as _re
+
+    def _extract_boxed(text: str) -> str:
+        """提取 \\boxed{...} 中的内容，支持嵌套花括号。"""
+        if not text:
+            return ""
+        idx = text.rfind("\\boxed{")
+        if idx == -1:
+            return ""
+        i = idx + 7
+        content_start = i
+        depth = 0
+        while i < len(text):
+            if text[i] == '{':
+                depth += 1
+            elif text[i] == '}':
+                if depth == 0:
+                    return text[content_start:i].strip()
+                depth -= 1
+            i += 1
+        return ""
+
+    def _normalize(s: str) -> str:
+        if not s:
+            return ""
+        s = s.strip().lower().replace(" ", "")
+        # 去掉 LaTeX 命令
+        s = _re.sub(r'\\[a-zA-Z]+', '', s)
+        # 只保留数字、字母、基本运算符
+        s = _re.sub(r'[^0-9a-zA-Z\+\-\*/=\.\,]', '', s)
+        return s
+
+    model.eval()
+    correct = 0
+    total = len(val_problems)
+
+    with torch.no_grad():
+        for question, ref_ans in zip(val_problems, val_answers):
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": str(question)},
+            ]
+            prompt_str = tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            # prompt 截断到 1024 tokens，与训练侧 MAX_SEQ_LENGTH=2048 中 prompt 占位对齐
+            inputs = tokenizer(
+                prompt_str,
+                return_tensors="pt",
+                add_special_tokens=False,
+                max_length=1024,
+                truncation=True,
+            ).to(model.device)
+
+            # stop token ids 与 take_exam.py 对齐：eos + <|endoftext|>(151643) + <|im_end|>(151645)
+            stop_ids = list({tokenizer.eos_token_id, 151643, 151645} - {None})
+            try:
+                output_ids = model.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=False,          # greedy，与 take_exam temperature=0.0 对齐
+                    pad_token_id=tokenizer.eos_token_id,
+                    eos_token_id=stop_ids,
+                )
+            except Exception as e:
+                logger.warning(f"[Val] generate failed: {e}")
+                continue
+
+            # 只解码新生成的部分
+            new_ids = output_ids[0][inputs["input_ids"].shape[-1]:]
+            generated = tokenizer.decode(new_ids, skip_special_tokens=True)
+
+            pred = _extract_boxed(generated)
+            if _normalize(pred) == _normalize(str(ref_ans)) and ref_ans:
+                correct += 1
+
+    model.train()
+    accuracy = correct / total if total > 0 else 0.0
+    detail = {"correct": correct, "total": total, "accuracy": accuracy}
+    return accuracy, detail
+
+
+# ==========================================
+# 6. Callbacks
 # ==========================================
 
 class StepLogCallback(TrainerCallback):
@@ -524,7 +646,16 @@ class StepLogCallback(TrainerCallback):
             tracker.reset_window()
 
 class LogicalEpochLogCallback(TrainerCallback):
-    def __init__(self, log_file, steps_per_logical_epoch, config: HintSFTConfig, output_dir: str): 
+    def __init__(
+        self,
+        log_file,
+        steps_per_logical_epoch,
+        config: HintSFTConfig,
+        output_dir: str,
+        val_problems: Optional[List[str]] = None,
+        val_answers: Optional[List[str]] = None,
+        tokenizer=None,                            # Bug1 fix: 存入 tokenizer 实例
+    ):
         self.log_file = log_file
         self.steps_per_epoch = steps_per_logical_epoch
         self.config = config
@@ -532,16 +663,107 @@ class LogicalEpochLogCallback(TrainerCallback):
         self.current_logical_epoch = 0
         self.early_stopped = False
         self.saved_model_dir = None
+        self.tokenizer = tokenizer                 # Bug1 fix: 持久化 tokenizer
+
+        # ── 验证集早停状态 ────────────────────────────────────────────────
+        self.val_problems = val_problems or []
+        self.val_answers  = val_answers  or []
+        self._best_val_acc: float = -1.0          # 历史最优验证集准确率
+        self._no_improve_count: int = 0            # 连续未提升计数
+
+    def _try_val_early_stop(self, model, tokenizer_kwarg, control) -> Optional[float]:
+        """在验证集上评估，根据 patience 决定是否早停。
+
+        tokenizer 优先使用构造时传入的 self.tokenizer，
+        其次才用 HF Trainer callback 传来的 tokenizer_kwarg（可能为 None）。
+
+        Returns:
+            当前验证集准确率（若未评估则返回 None）。
+        """
+        cfg = self.config
+        if not cfg.use_val_early_stop or not self.val_problems:
+            return None
+
+        # Bug1 fix: 优先用实例持有的 tokenizer，避免 HF Trainer 不传 tokenizer 的问题
+        tok = self.tokenizer or tokenizer_kwarg
+        if tok is None:
+            logger.error("  [Val] tokenizer is None, skipping validation evaluation.")
+            return None
+
+        # 冷启动保护：至少跑 val_min_epochs 个逻辑 epoch 后才开始评估
+        if self.current_logical_epoch < cfg.val_min_epochs:
+            logger.info(
+                f"  [Val] Skipping evaluation (epoch {self.current_logical_epoch} < "
+                f"val_min_epochs {cfg.val_min_epochs})"
+            )
+            return None
+
+        logger.info(f"  [Val] Evaluating on LiveMathBench ({len(self.val_problems)} samples)...")
+        try:
+            acc, detail = evaluate_on_livemathbench(
+                model=model,
+                tokenizer=tok,
+                val_problems=self.val_problems,
+                val_answers=self.val_answers,
+                max_new_tokens=cfg.val_max_new_tokens,
+            )
+        except Exception as e:
+            logger.error(f"  [Val] Evaluation failed: {e}")
+            return None
+
+        logger.info(
+            f"  [Val] Accuracy: {acc:.4f} ({detail['correct']}/{detail['total']}) | "
+            f"Best so far: {self._best_val_acc:.4f} | "
+            f"No-improve streak: {self._no_improve_count}/{cfg.val_patience}"
+        )
+
+        if acc > self._best_val_acc:
+            self._best_val_acc = acc
+            self._no_improve_count = 0
+            # 保存当前最优 checkpoint
+            best_dir = os.path.join(self.output_dir, "checkpoint-best-val")
+            logger.info(f"  [Val] New best! Saving model to {best_dir}...")
+            try:
+                if model is not None:
+                    model.save_pretrained(best_dir)
+                    if tok is not None:
+                        tok.save_pretrained(best_dir)
+                    self.saved_model_dir = best_dir
+            except Exception as e:
+                logger.error(f"  [Val] Failed to save best model: {e}")
+        else:
+            self._no_improve_count += 1
+            logger.info(
+                f"  [Val] No improvement for {self._no_improve_count} epoch(s). "
+                f"Patience={cfg.val_patience}."
+            )
+            if self._no_improve_count >= cfg.val_patience:
+                logger.info(
+                    f"!!! VAL EARLY STOP: accuracy did not improve for "
+                    f"{cfg.val_patience} consecutive epochs. "
+                    f"Best val acc = {self._best_val_acc:.4f} !!!"
+                )
+                self.early_stopped = True
+                control.should_training_stop = True
+
+        return acc
 
     def on_step_end(self, args, state, control, model=None, tokenizer=None, **kwargs):
         if state.global_step > 0 and state.global_step % self.steps_per_epoch == 0:
             self.current_logical_epoch += 1
-            
+
+            # Bug1 fix: 若 HF Trainer 传来了 tokenizer，更新实例持有的引用
+            if tokenizer is not None:
+                self.tokenizer = tokenizer
+
             stats = tracker.get_epoch_stats()
-            stats.update({"logical_epoch": self.current_logical_epoch, "global_step": state.global_step, "timestamp": datetime.now().isoformat()})
-            with open(self.log_file, "a", encoding="utf-8") as f: f.write(json.dumps(stats) + "\n")
-                
-            logger.info(f"="*60)
+            stats.update({
+                "logical_epoch": self.current_logical_epoch,
+                "global_step": state.global_step,
+                "timestamp": datetime.now().isoformat(),
+            })
+
+            logger.info("=" * 60)
             logger.info(f"*** LOGICAL EPOCH {self.current_logical_epoch} FINISHED ***")
             logger.info(f"  Total Loss: {stats['total_loss']:.4f}")
             logger.info(f"  Hint CE: {stats['avg_hint_ce']:.4f} | Hint KL: {stats['avg_hint_kl']:.4f} | Hint Loss: {stats['avg_hint_loss']:.4f}")
@@ -549,32 +771,56 @@ class LogicalEpochLogCallback(TrainerCallback):
             logger.info(f"  Anchor Raw(CE): {stats['avg_anchor_raw']:.4f} | Anchor Weighted(βKL): {stats['avg_anchor_weighted']:.4f}")
             if self.config.adaptive_kl_beta:
                 logger.info(f"  [Adaptive β] answer_kl_beta={self.config.answer_kl_beta:.4f} | anchor_kl_beta={self.config.anchor_kl_beta:.4f}")
-            
+
+            # ── Bug2 fix: 先做验证集评估，再把 val_accuracy 写入 stats，最后写文件 ──
+            val_acc = self._try_val_early_stop(model, tokenizer, control)
+            if val_acc is not None:
+                stats["val_accuracy"] = val_acc
+
+            # 写 epoch 日志文件（包含 val_accuracy）
+            with open(self.log_file, "a", encoding="utf-8") as f:
+                f.write(json.dumps(stats) + "\n")
+
+            # 若验证集早停已触发，跳过训练集损失阈值判断
+            if self.early_stopped:
+                logger.info("=" * 60)
+                tracker.reset_epoch()
+                return
+
+            # ── 训练集损失阈值早停（兜底，use_val_early_stop=False 时生效）────
             epoch_hint_ce = stats.get('avg_hint_ce', 999.0)
             target = self.config.target_mode_b
-            
+
             if target is not None and epoch_hint_ce <= target:
-                logger.info(f"!!! TARGET REACHED: Epoch Hint CE ({epoch_hint_ce:.4f}) <= Target ({target}) !!!")
-                
-                early_stop_dir = os.path.join(self.output_dir, f"checkpoint-target-reached-epoch-{self.current_logical_epoch}")
+                # Bug5 fix: 明确标注是 target-loss 早停
+                logger.info(
+                    f"!!! TRAIN LOSS EARLY STOP: Epoch Hint CE ({epoch_hint_ce:.4f}) "
+                    f"<= Target ({target}) !!!"
+                )
+                early_stop_dir = os.path.join(
+                    self.output_dir,
+                    f"checkpoint-target-reached-epoch-{self.current_logical_epoch}"
+                )
                 logger.info(f"Saving model to {early_stop_dir}...")
-                
+                # Bug1 fix: 用 self.tokenizer 保存，不依赖 callback kwarg
+                tok_to_save = self.tokenizer
                 try:
                     if model is not None:
                         model.save_pretrained(early_stop_dir)
-                        if tokenizer is not None: tokenizer.save_pretrained(early_stop_dir)
+                        if tok_to_save is not None:
+                            tok_to_save.save_pretrained(early_stop_dir)
                         self.saved_model_dir = early_stop_dir
                 except Exception as e:
                     logger.error(f"Failed to save model: {e}")
-                
+
                 self.early_stopped = True
                 control.should_training_stop = True
-            
-            logger.info(f"="*60)
+
+            logger.info("=" * 60)
             tracker.reset_epoch()
 
 # ==========================================
-# 6. Main Execution Function
+# 7. Main Execution Function
 # ==========================================
 
 def run_sira_training_v3(
@@ -587,6 +833,11 @@ def run_sira_training_v3(
     spilt: float = 0.5,
     target_mode_b: float = 0.16,
     lora_path: Optional[str] = None,
+    use_val_early_stop: bool = True,
+    val_max_size: Optional[int] = 200,
+    val_max_new_tokens: int = 2048,
+    val_patience: int = 3,
+    val_min_epochs: int = 3,
 ):
     current_file_path = os.path.abspath(__file__)
     project_root = os.path.dirname(os.path.dirname(current_file_path)) 
@@ -602,13 +853,18 @@ def run_sira_training_v3(
     tracker.reset_epoch()
 
     hint_config = HintSFTConfig(
-        model_path=model_path, 
-        data_path=data_path, 
+        model_path=model_path,
+        data_path=data_path,
         output_base_dir=output_base_dir,
         split_r=spilt,
         metrics_log_interval=batch_size,
         real_data_epochs=real_data_epochs,
-        target_mode_b=target_mode_b 
+        target_mode_b=target_mode_b,
+        use_val_early_stop=use_val_early_stop,
+        val_max_size=val_max_size,
+        val_max_new_tokens=val_max_new_tokens,
+        val_patience=val_patience,
+        val_min_epochs=val_min_epochs,
     )
     
     output_dir = f"{hint_config.output_base_dir}/sira_sft_{real_data_epochs}ep_{datetime.now().strftime('%m%d_%H%M')}"
@@ -626,6 +882,30 @@ def run_sira_training_v3(
     if not os.path.exists(hint_config.data_path):
         raise FileNotFoundError(f"Dataset not found at {hint_config.data_path}")
     dataset = Dataset.from_json(hint_config.data_path)
+
+    # ── 加载 LiveMathBench 验证集 ─────────────────────────────────────────
+    val_problems: List[str] = []
+    val_answers:  List[str] = []
+    if hint_config.use_val_early_stop:
+        try:
+            import sys as _sys
+            _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if _project_root not in _sys.path:
+                _sys.path.insert(0, _project_root)
+            from data_math.LiveMath_data_util import LiveMathBench
+            _lmb = LiveMathBench(split="test", max_size=hint_config.val_max_size)
+            val_problems = _lmb.problems
+            val_answers  = _lmb.answers
+            logger.info(
+                f"[Val] LiveMathBench loaded: {len(val_problems)} samples "
+                f"(max_size={hint_config.val_max_size})"
+            )
+        except Exception as e:
+            logger.warning(
+                f"[Val] Failed to load LiveMathBench: {e}. "
+                "Validation early stopping will be disabled."
+            )
+            hint_config.use_val_early_stop = False
 
     collator = FixedModeCollator(tokenizer)
 
@@ -698,7 +978,15 @@ def run_sira_training_v3(
     )
 
     step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)
-    epoch_callback = LogicalEpochLogCallback(epoch_log_file, steps_per_logical_epoch, hint_config, output_dir)
+    epoch_callback = LogicalEpochLogCallback(
+        log_file=epoch_log_file,
+        steps_per_logical_epoch=steps_per_logical_epoch,
+        config=hint_config,
+        output_dir=output_dir,
+        val_problems=val_problems,
+        val_answers=val_answers,
+        tokenizer=tokenizer,               # Bug1 fix: 确保 callback 持有 tokenizer 引用
+    )
 
     trainer = SequentialTrainer(
         hint_config=hint_config,
@@ -720,7 +1008,7 @@ def run_sira_training_v3(
         logger.info(f"Training finished normally (max epochs reached). Model saved to {output_dir}")
         final_lora_path = output_dir
     else:
-        logger.info(f"Training finished with early stopping (Target Loss reached).")
+        logger.info(f"Training finished with early stopping.")
         final_lora_path = epoch_callback.saved_model_dir or output_dir
 
     logger.info(f"Final LoRA path: {final_lora_path}")
@@ -732,3 +1020,10 @@ if __name__ == "__main__":
     project_root = os.path.dirname(os.path.dirname(project_root))
     default_model_dir = os.path.join(project_root, "CELPO", "model", "OREAL")
     default_model_url = os.path.join(default_model_dir, "OREAL-7B")
+
+    run_sira_training_v3(
+        model_path=default_model_url,
+        batch_size=8,
+        real_data_epochs=50,
+        target_mode_b=1.2
+    )
