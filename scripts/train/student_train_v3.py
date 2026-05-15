@@ -665,6 +665,16 @@ class LogicalEpochLogCallback(TrainerCallback):
         self.saved_model_dir = None
         self.tokenizer = tokenizer                 # Bug1 fix: 持久化 tokenizer
 
+        # ── 独立验证日志文件（与 train.log 解耦，output_dir 被删也不影响写入）──
+        # 写到 output_dir 的父目录，文件名带时间戳，避免多次训练互相覆盖
+        _val_log_dir = os.path.dirname(output_dir) if output_dir else "."
+        _ts = datetime.now().strftime("%m%d_%H%M%S")
+        self.val_log_file = os.path.join(_val_log_dir, f"val_metrics_{_ts}.jsonl")
+        try:
+            os.makedirs(_val_log_dir, exist_ok=True)
+        except Exception:
+            self.val_log_file = f"val_metrics_{_ts}.jsonl"  # fallback 到当前目录
+
         # ── 验证集早停状态 ────────────────────────────────────────────────
         self.val_problems = val_problems or []
         self.val_answers  = val_answers  or []
@@ -716,6 +726,22 @@ class LogicalEpochLogCallback(TrainerCallback):
             f"Best so far: {self._best_val_acc:.4f} | "
             f"No-improve streak: {self._no_improve_count}/{cfg.val_patience}"
         )
+
+        # ── 独立写入验证日志文件 ──────────────────────────────────────────
+        val_record = {
+            "logical_epoch": self.current_logical_epoch,
+            "val_accuracy": acc,
+            "correct": detail["correct"],
+            "total": detail["total"],
+            "best_val_acc": self._best_val_acc,   # 写入前的历史最优（本轮结果尚未更新）
+            "no_improve_count": self._no_improve_count,
+            "timestamp": datetime.now().isoformat(),
+        }
+        try:
+            with open(self.val_log_file, "a", encoding="utf-8") as _vf:
+                _vf.write(json.dumps(val_record) + "\n")
+        except Exception as _e:
+            logger.warning(f"  [Val] Failed to write val_log_file: {_e}")
 
         if acc > self._best_val_acc:
             self._best_val_acc = acc
