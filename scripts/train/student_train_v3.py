@@ -520,6 +520,8 @@ def evaluate_on_livemathbench(
 ) -> Tuple[float, Dict]:
     """在 LiveMathBench 验证集上做 greedy decode，返回答题准确率。
 
+    使用全量 batch generate（H200 140G 显存充足），速度比逐条串行快 10-20x。
+
     Args:
         model: 当前训练中的 PeftModel（已在 GPU 上）。
         tokenizer: 对应的 tokenizer。
@@ -558,67 +560,122 @@ def evaluate_on_livemathbench(
         if not s:
             return ""
         s = s.strip().lower().replace(" ", "")
-        # 去掉 LaTeX 命令
         s = _re.sub(r'\\[a-zA-Z]+', '', s)
-        # 只保留数字、字母、基本运算符
         s = _re.sub(r'[^0-9a-zA-Z\+\-\*/=\.\,]', '', s)
         return s
 
-    # ── 关闭 gradient checkpointing，避免 generate() 时 hook 导致卡死 ──────
-    _gc_was_enabled = getattr(model, "is_gradient_checkpointing", False)
-    if _gc_was_enabled:
-        model.gradient_checkpointing_disable()
+    # ── 关闭 gradient checkpointing ──────────────────────────────────────
+    # PeftModel 的 is_gradient_checkpointing 在 base_model.model 上，需逐层检查
+    def _gc_disable(m):
+        """递归关闭所有子模块的 gradient checkpointing，返回哪些被关闭了。"""
+        disabled = []
+        for name in ("base_model", "model", "base_model.model"):
+            sub = m
+            for part in name.split("."):
+                sub = getattr(sub, part, None)
+                if sub is None:
+                    break
+            if sub is not None and getattr(sub, "is_gradient_checkpointing", False):
+                try:
+                    sub.gradient_checkpointing_disable()
+                    disabled.append(sub)
+                except Exception:
+                    pass
+        # 顶层自身也检查一次
+        if getattr(m, "is_gradient_checkpointing", False):
+            try:
+                m.gradient_checkpointing_disable()
+                disabled.append(m)
+            except Exception:
+                pass
+        return disabled
+
+    def _gc_enable(disabled_list):
+        for sub in disabled_list:
+            try:
+                sub.gradient_checkpointing_enable()
+            except Exception:
+                pass
+
+    _disabled_modules = _gc_disable(model)
+
+    # stop token ids 与 take_exam.py 对齐
+    stop_ids = list({tokenizer.eos_token_id, 151643, 151645} - {None})
+    total = len(val_problems)
+    correct = 0
+
+    # ── 构建全量 prompt 列表 ──────────────────────────────────────────────
+    all_prompts = []
+    for question in val_problems:
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": str(question)},
+        ]
+        all_prompts.append(
+            tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        )
+
+    # left-padding：generate 时 padding 在左侧，新生成 token 在右侧对齐
+    _orig_padding_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    # mini-batch 大小：H200 140G 跑 16 条 × 2048 tokens 完全没问题
+    VAL_BATCH_SIZE = 16
 
     model.eval()
-    correct = 0
-    total = len(val_problems)
+    try:
+        from tqdm import tqdm as _tqdm
+        pbar = _tqdm(
+            range(0, total, VAL_BATCH_SIZE),
+            desc="[Val] LiveMathBench",
+            unit="batch",
+            leave=False,
+        )
+        with torch.inference_mode():
+            for batch_start in pbar:
+                batch_end = min(batch_start + VAL_BATCH_SIZE, total)
+                batch_prompts  = all_prompts[batch_start:batch_end]
+                batch_answers  = val_answers[batch_start:batch_end]
 
-    with torch.inference_mode():
-        for question, ref_ans in zip(val_problems, val_answers):
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": str(question)},
-            ]
-            prompt_str = tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            # prompt 截断到 512 tokens，验证阶段不需要超长 prompt
-            inputs = tokenizer(
-                prompt_str,
-                return_tensors="pt",
-                add_special_tokens=False,
-                max_length=512,
-                truncation=True,
-            ).to(model.device)
+                batch_inputs = tokenizer(
+                    batch_prompts,
+                    return_tensors="pt",
+                    padding=True,
+                    truncation=True,
+                    max_length=1024,
+                    add_special_tokens=False,
+                ).to(model.device)
 
-            # stop token ids 与 take_exam.py 对齐：eos + <|endoftext|>(151643) + <|im_end|>(151645)
-            stop_ids = list({tokenizer.eos_token_id, 151643, 151645} - {None})
-            try:
                 output_ids = model.generate(
-                    **inputs,
+                    **batch_inputs,
                     max_new_tokens=max_new_tokens,
-                    do_sample=False,          # greedy，与 take_exam temperature=0.0 对齐
-                    temperature=None,         # 显式置 None，避免 transformers 警告
-                    top_p=None,               # 显式置 None，避免 transformers 警告
+                    do_sample=False,
+                    temperature=None,
+                    top_p=None,
                     pad_token_id=tokenizer.eos_token_id,
                     eos_token_id=stop_ids,
                 )
-            except Exception as e:
-                logger.warning(f"[Val] generate failed: {e}")
-                continue
 
-            # 只解码新生成的部分
-            new_ids = output_ids[0][inputs["input_ids"].shape[-1]:]
-            generated = tokenizer.decode(new_ids, skip_special_tokens=True)
+                prompt_len = batch_inputs["input_ids"].shape[1]
+                for i, ref_ans in enumerate(batch_answers):
+                    new_ids = output_ids[i][prompt_len:]
+                    generated = tokenizer.decode(new_ids, skip_special_tokens=True)
+                    pred = _extract_boxed(generated)
+                    if _normalize(pred) == _normalize(str(ref_ans)) and ref_ans:
+                        correct += 1
 
-            pred = _extract_boxed(generated)
-            if _normalize(pred) == _normalize(str(ref_ans)) and ref_ans:
-                correct += 1
+                pbar.set_postfix({"correct": correct, "done": batch_end})
 
-    # ── 恢复训练模式与 gradient checkpointing ────────────────────────────
-    model.train()
-    if _gc_was_enabled:
-        model.gradient_checkpointing_enable()
+    except Exception as e:
+        logger.error(f"[Val] batch generate failed: {e}")
+    finally:
+        # ── 恢复训练模式与 gradient checkpointing ────────────────────────
+        tokenizer.padding_side = _orig_padding_side
+        model.train()
+        _gc_enable(_disabled_modules)
+
     accuracy = correct / total if total > 0 else 0.0
     detail = {"correct": correct, "total": total, "accuracy": accuracy}
     return accuracy, detail
