@@ -2,6 +2,7 @@ import gc
 import os
 import json
 import logging
+import queue as _queue_mod
 import random
 import numpy as np
 import torch
@@ -497,14 +498,56 @@ class TakeExam:
                 )
             )
 
-        try:
-            ctx = mp.get_context("spawn")
-            with ctx.Pool(processes=len(args_list)) as pool:
-                shard_results = pool.map(_run_exam_shard_worker, args_list)
+        # 使用 Process + Queue 而非 Pool，避免 daemon 进程无法 spawn 子进程的问题
+        # （vLLM v1 的 LLM() 内部会再 spawn CoreEngineProcManager，
+        #  Pool 的 worker 是 daemon 进程，daemon 进程不允许有子进程）
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue()
 
-            merged_results = []
-            for part in shard_results:
-                merged_results.extend(part)
+        processes = [
+            ctx.Process(
+                target=_run_exam_shard_worker_queue,
+                args=(args, result_queue),
+                daemon=False,
+            )
+            for args in args_list
+        ]
+
+        merged_results = []
+        try:
+            for p in processes:
+                p.start()
+
+            # 按 local_rank 收集结果，保持顺序
+            # 使用带超时的轮询，避免 worker 在 queue.put 之前崩溃导致主进程永久阻塞
+            shard_map = {}
+            collected = 0
+            while collected < len(processes):
+                # 检查是否有 worker 已死且未放结果
+                all_dead = all(not p.is_alive() for p in processes)
+                try:
+                    local_rank, part = result_queue.get(timeout=5.0)
+                    if isinstance(part, BaseException):
+                        raise RuntimeError(
+                            f"exam_multi_gpu worker rank={local_rank} raised an exception"
+                        ) from part
+                    shard_map[local_rank] = part
+                    collected += 1
+                except _queue_mod.Empty:
+                    if all_dead and collected < len(processes):
+                        raise RuntimeError(
+                            "exam_multi_gpu: all worker processes died before returning results"
+                        )
+
+            for p in processes:
+                p.join()
+                if p.exitcode != 0:
+                    raise RuntimeError(
+                        f"exam_multi_gpu worker (pid={p.pid}) exited with code {p.exitcode}"
+                    )
+
+            for rank in range(len(args_list)):
+                merged_results.extend(shard_map[rank])
 
             # Because we use contiguous shards and _exam_core preserves input
             # ordering within each shard, merged_results is already aligned with
@@ -518,6 +561,9 @@ class TakeExam:
                     "Multi-GPU Standard Exam done! Saved to %s", self.OUTPUT_JSON_PATH
                 )
         finally:
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
             # 无论成功或异常，都重新加载 vLLM 引擎，确保实例始终可用
             logger.info("Reloading vLLM engine in main process after multi-GPU exam...")
             self.llm = LLM(
@@ -842,14 +888,51 @@ class TakeExam:
                 )
             )
 
+        # 使用 Process + Queue 而非 Pool，避免 daemon 进程无法 spawn 子进程的问题
+        ctx = mp.get_context("spawn")
+        result_queue = ctx.Queue()
+
+        processes = [
+            ctx.Process(
+                target=_run_roll_k_shard_worker_queue,
+                args=(args, result_queue),
+                daemon=False,
+            )
+            for args in args_list
+        ]
+
         merged_results = []
         try:
-            ctx = mp.get_context("spawn")
-            with ctx.Pool(processes=len(args_list)) as pool:
-                shard_results = pool.map(_run_roll_k_shard_worker, args_list)
+            for p in processes:
+                p.start()
 
-            for part in shard_results:
-                merged_results.extend(part)
+            shard_map = {}
+            collected = 0
+            while collected < len(processes):
+                all_dead = all(not p.is_alive() for p in processes)
+                try:
+                    local_rank, part = result_queue.get(timeout=5.0)
+                    if isinstance(part, BaseException):
+                        raise RuntimeError(
+                            f"exam_roll_k_multi_gpu worker rank={local_rank} raised an exception"
+                        ) from part
+                    shard_map[local_rank] = part
+                    collected += 1
+                except _queue_mod.Empty:
+                    if all_dead and collected < len(processes):
+                        raise RuntimeError(
+                            "exam_roll_k_multi_gpu: all worker processes died before returning results"
+                        )
+
+            for p in processes:
+                p.join()
+                if p.exitcode != 0:
+                    raise RuntimeError(
+                        f"exam_roll_k_multi_gpu worker (pid={p.pid}) exited with code {p.exitcode}"
+                    )
+
+            for rank in range(len(args_list)):
+                merged_results.extend(shard_map[rank])
 
             if write_output:
                 os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
@@ -861,6 +944,9 @@ class TakeExam:
                     self.OUTPUT_JSON_PATH_ROLL,
                 )
         finally:
+            for p in processes:
+                if p.is_alive():
+                    p.terminate()
             # 无论是否异常，都重新加载 vLLM 引擎，恢复实例可用状态
             logger.info("Reloading vLLM engine in main process after multi-GPU roll-k exam...")
             self.llm = LLM(
@@ -877,6 +963,36 @@ class TakeExam:
             )
 
         return merged_results
+
+
+def _run_exam_shard_worker_queue(args, queue):
+    """exam_multi_gpu 的 queue-wrapper。
+
+    将 _run_exam_shard_worker 的返回值连同 local_rank 一起放入 queue，
+    供主进程按顺序收集。使用 Process 而非 Pool 以避免 daemon 进程限制。
+    """
+    local_rank = args[0]
+    try:
+        result = _run_exam_shard_worker(args)
+        queue.put((local_rank, result))
+    except Exception as exc:
+        queue.put((local_rank, exc))
+        raise
+
+
+def _run_roll_k_shard_worker_queue(args, queue):
+    """exam_roll_k_multi_gpu 的 queue-wrapper。
+
+    将 _run_roll_k_shard_worker 的返回值连同 local_rank 一起放入 queue，
+    供主进程按顺序收集。使用 Process 而非 Pool 以避免 daemon 进程限制。
+    """
+    local_rank = args[0]
+    try:
+        result = _run_roll_k_shard_worker(args)
+        queue.put((local_rank, result))
+    except Exception as exc:
+        queue.put((local_rank, exc))
+        raise
 
 
 def _run_roll_k_shard_worker(args):
