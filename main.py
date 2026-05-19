@@ -37,7 +37,7 @@ from data_math import (
     AIME_1983_2024,
 )
 
-model_path = ""
+model_path = "/workspace/CELPO_model/model/DS/Llama-3-8B-Inst"
 
 
 # =====================================================
@@ -447,7 +447,7 @@ def student_take_exam_Math_sub(
     question_idx = []
     for idx in range(len(question)):
         question_idx.append(idx)
-    take_exam.exam(question, solution, answer, question_idx)
+    take_exam.exam_multi_gpu(question, solution, answer, question_idx)
 
 
 def student_take_exam_AIME(
@@ -769,7 +769,7 @@ def exam_roll_recheck_mistake(
         )
     else:
         take_exam = TakeExam(model_path, max_seq_length=max_token)
-    take_exam.exam_roll_k(
+    take_exam.exam_roll_k_multi_gpu(
         m_question, m_ref_solution, m_ref_answer, m_question_idx, 8, 0.7
     )
 
@@ -1392,7 +1392,7 @@ import time
 import random
 import math
 
-NUM_GPUS = 1
+NUM_GPUS = 2
 
 
 def gpu_worker(gpu_id):
@@ -1707,14 +1707,14 @@ if __name__ == "__main__":
     # student_take_exam_Math500()
     # student_take_exam_Math500()
     # student_take_exam_Gsm8k(True)
-    # student_take_exam_Math_sub(train=True)
+    student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    # teacher.teacher_mark_paper_with_save()
+    teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake()
+    exam_roll_recheck_mistake()
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1731,8 +1731,8 @@ if __name__ == "__main__":
 
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 10)
-    gen_IRDCL_dataset_v2(4, 0.75, 10)
-    run_sira_training_v3(model_path=model_path, real_data_epochs=10)
+    # gen_IRDCL_dataset_v2(4, 0.75, 10)
+    # run_sira_training_v3(model_path=model_path, real_data_epochs=10)
     # 4. check
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
