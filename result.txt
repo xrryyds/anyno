@@ -92,3 +92,6 @@ MATH + GSM8K train 上分别做训练和测试
 
 
 conda env create -f environment.yml
+
+########################################################
+Original: 4966, Solved: 2105, Remaining: 2861
