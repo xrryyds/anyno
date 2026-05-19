@@ -1,3 +1,4 @@
+import gc
 import os
 import json
 import logging
@@ -453,6 +454,14 @@ class TakeExam:
             f"Running exam_multi_gpu with {num_workers} workers on devices {device_ids[:num_workers]}"
         )
 
+        # 释放主进程持有的 vLLM 引擎显存，避免与 worker 进程争抢同一张卡的显存
+        # worker 进程会在各自的 GPU 上重新加载模型
+        del self.llm
+        self.llm = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
         # Build contiguous index shards to preserve original ordering
         indices = list(range(total))
         shard_size = (total + num_workers - 1) // num_workers
@@ -488,24 +497,40 @@ class TakeExam:
                 )
             )
 
-        ctx = mp.get_context("spawn")
-        with ctx.Pool(processes=len(args_list)) as pool:
-            shard_results = pool.map(_run_exam_shard_worker, args_list)
+        try:
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(processes=len(args_list)) as pool:
+                shard_results = pool.map(_run_exam_shard_worker, args_list)
 
-        merged_results = []
-        for part in shard_results:
-            merged_results.extend(part)
+            merged_results = []
+            for part in shard_results:
+                merged_results.extend(part)
 
-        # Because we use contiguous shards and _exam_core preserves input
-        # ordering within each shard, merged_results is already aligned with
-        # the original question order. No extra sorting is required.
+            # Because we use contiguous shards and _exam_core preserves input
+            # ordering within each shard, merged_results is already aligned with
+            # the original question order. No extra sorting is required.
 
-        if write_output:
-            os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
-            with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
-                json.dump(merged_results, f, ensure_ascii=False, indent=2)
-            logger.info(
-                "Multi-GPU Standard Exam done! Saved to %s", self.OUTPUT_JSON_PATH
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH, "w", encoding="utf-8") as f:
+                    json.dump(merged_results, f, ensure_ascii=False, indent=2)
+                logger.info(
+                    "Multi-GPU Standard Exam done! Saved to %s", self.OUTPUT_JSON_PATH
+                )
+        finally:
+            # 无论成功或异常，都重新加载 vLLM 引擎，确保实例始终可用
+            logger.info("Reloading vLLM engine in main process after multi-GPU exam...")
+            self.llm = LLM(
+                model=self.LOCAL_MODEL_PATH,
+                trust_remote_code=True,
+                tensor_parallel_size=1,
+                gpu_memory_utilization=0.9,
+                max_model_len=self.MAX_MODEL_LEN,
+                enable_lora=self.use_lora,
+                max_lora_rank=64,
+                enforce_eager=True,
+                seed=self.seed,
+                dtype="bfloat16",
             )
 
         return merged_results
@@ -679,6 +704,266 @@ class TakeExam:
 
         logger.info(f"Roll-K Exam with Hints done! {len(results)} entries saved to {self.OUTPUT_JSON_PATH_ROLL}")
 
+    # =====================================================
+    # =====================================================
+    def exam_roll_k_multi_gpu(
+        self,
+        question,
+        solution,
+        answer,
+        question_idx,
+        k: int = 8,
+        temperature: float = 0.7,
+        device_ids=None,
+        num_workers=None,
+        write_output=True,
+    ):
+        """数据并行多卡版本的 exam_roll_k()。
+
+        将问题列表均匀分片到多张 GPU 上，每张卡在独立子进程中加载模型并
+        执行 roll-k 采样，最后合并结果。不改变原有单卡 exam_roll_k() 的行为。
+
+        Args:
+            question, solution, answer, question_idx: 按索引对齐的列表。
+            k: 每道题采样次数。
+            temperature: 采样温度。
+            device_ids: 可选的 CUDA 设备编号列表。None 表示使用全部可用 GPU。
+            num_workers: 可选的 worker 进程数，默认为 min(len(device_ids), len(question))。
+            write_output: 若为 True，将合并结果写入 OUTPUT_JSON_PATH_ROLL。
+
+        Returns:
+            List[dict]: 与输入列表顺序一致的合并结果。
+        """
+        total = len(question)
+        if total == 0:
+            logger.warning("exam_roll_k_multi_gpu 收到空问题列表。")
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
+                    json.dump([], f, ensure_ascii=False, indent=2)
+            return []
+
+        def _single_gpu_fallback(reason):
+            """单卡回退：直接在当前进程内存中完成 roll-k，可选写文件。"""
+            logger.warning("%s，回退到单卡 exam_roll_k()。", reason)
+            set_all_seeds(self.seed)
+            prompts = self._build_prompts(question)
+            sp = SamplingParams(
+                n=k,
+                temperature=temperature,
+                top_p=1.0 if temperature == 0 else 0.9,
+                max_tokens=self.MAX_NEW_TOKENS,
+                stop_token_ids=self.stop_token_ids,
+                seed=self.seed,
+            )
+            outputs = self.llm.generate(prompts, sp, lora_request=self.lora_request)
+            results = []
+            for i, output in enumerate(outputs):
+                for sample in output.outputs:
+                    results.append({
+                        "question": question[i],
+                        "answer": sample.text.strip(),
+                        "ref_answer": answer[i].strip(),
+                        "ref_solution": solution[i].strip(),
+                        "question_idx": question_idx[i],
+                    })
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
+                    json.dump(results, f, ensure_ascii=False, indent=2)
+            return results
+
+        if device_ids is None:
+            if not torch.cuda.is_available():
+                return _single_gpu_fallback("没有可用的 CUDA 设备")
+            n_gpus = torch.cuda.device_count()
+            device_ids = list(range(n_gpus))
+
+        if isinstance(device_ids, int):
+            device_ids = [device_ids]
+
+        if not device_ids:
+            return _single_gpu_fallback("device_ids 为空")
+
+        if num_workers is None:
+            num_workers = min(len(device_ids), total)
+        else:
+            num_workers = min(num_workers, len(device_ids), total)
+
+        if num_workers <= 1:
+            return _single_gpu_fallback("只有单个 worker")
+
+        logger.info(
+            f"exam_roll_k_multi_gpu: {num_workers} 个 worker，设备 {device_ids[:num_workers]}，"
+            f"k={k}，temperature={temperature}，共 {total} 道题"
+        )
+
+        # 释放主进程持有的 vLLM 引擎显存，避免与 worker 进程争抢同一张卡的显存
+        del self.llm
+        self.llm = None
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # 构建连续分片以保持原始顺序
+        indices = list(range(total))
+        shard_size = (total + num_workers - 1) // num_workers
+        index_shards = [
+            indices[i * shard_size : min((i + 1) * shard_size, total)]
+            for i in range(num_workers)
+            if i * shard_size < total
+        ]
+
+        args_list = []
+        for local_rank, (device_id, idx_shard) in enumerate(
+            zip(device_ids, index_shards)
+        ):
+            if not idx_shard:
+                continue
+            q_shard = [question[i] for i in idx_shard]
+            s_shard = [solution[i] for i in idx_shard]
+            a_shard = [answer[i] for i in idx_shard]
+            qi_shard = [question_idx[i] for i in idx_shard]
+            args_list.append(
+                (
+                    local_rank,
+                    device_id,
+                    self.LOCAL_MODEL_PATH,
+                    self.use_lora,
+                    self.adapter_path,
+                    self.max_seq_length,
+                    self.seed,
+                    k,
+                    temperature,
+                    q_shard,
+                    s_shard,
+                    a_shard,
+                    qi_shard,
+                )
+            )
+
+        merged_results = []
+        try:
+            ctx = mp.get_context("spawn")
+            with ctx.Pool(processes=len(args_list)) as pool:
+                shard_results = pool.map(_run_roll_k_shard_worker, args_list)
+
+            for part in shard_results:
+                merged_results.extend(part)
+
+            if write_output:
+                os.makedirs(os.path.dirname(self.OUTPUT_JSON_PATH_ROLL), exist_ok=True)
+                with open(self.OUTPUT_JSON_PATH_ROLL, "w", encoding="utf-8") as f:
+                    json.dump(merged_results, f, ensure_ascii=False, indent=2)
+                logger.info(
+                    "多卡 Roll-K Exam 完成！共 %d 条结果，已保存到 %s",
+                    len(merged_results),
+                    self.OUTPUT_JSON_PATH_ROLL,
+                )
+        finally:
+            # 无论是否异常，都重新加载 vLLM 引擎，恢复实例可用状态
+            logger.info("Reloading vLLM engine in main process after multi-GPU roll-k exam...")
+            self.llm = LLM(
+                model=self.LOCAL_MODEL_PATH,
+                trust_remote_code=True,
+                tensor_parallel_size=1,
+                gpu_memory_utilization=0.9,
+                max_model_len=self.MAX_MODEL_LEN,
+                enable_lora=self.use_lora,
+                max_lora_rank=64,
+                enforce_eager=True,
+                seed=self.seed,
+                dtype="bfloat16",
+            )
+
+        return merged_results
+
+
+def _run_roll_k_shard_worker(args):
+    """exam_roll_k_multi_gpu 的 worker 函数。
+
+    定义在模块级别以便 multiprocessing 可以 pickle。
+    在指定 GPU 上重建 TakeExam 实例，对分片执行 roll-k 采样，
+    将结果以列表形式返回（不做文件 I/O）。
+    """
+    (
+        local_rank,
+        device_id,
+        model_path,
+        use_lora,
+        adapter_path,
+        max_seq_length,
+        seed,
+        k,
+        temperature,
+        question_shard,
+        solution_shard,
+        answer_shard,
+        question_idx_shard,
+    ) = args
+
+    # 将当前 worker 进程绑定到指定 CUDA 设备
+    # 多进程并行推理时去掉会拖慢速度的确定性约束环境变量
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    os.environ.pop("CUDA_LAUNCH_BLOCKING", None)
+    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
+    logger.info(
+        "[roll_k worker %d] 使用 CUDA 设备 %s，处理 %d 道题（k=%d，temp=%.2f）。",
+        local_rank,
+        device_id,
+        len(question_shard),
+        k,
+        temperature,
+    )
+
+    # 构造前先关闭确定性算法约束，避免 __init__ 内 set_all_seeds 开启后拖慢推理
+    torch.use_deterministic_algorithms(False)
+
+    worker = TakeExam(
+        model_path=model_path,
+        use_lora=use_lora,
+        adapter_path=adapter_path,
+        max_seq_length=max_seq_length,
+    )
+    worker.seed = seed
+    # worker 进程只需固定随机种子，不需要 torch.use_deterministic_algorithms
+    # （该选项会让部分 CUDA 算子走更慢的确定性路径，影响推理吞吐）
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(False)
+
+    prompts = worker._build_prompts(question_shard)
+
+    sampling_params = SamplingParams(
+        n=k,
+        temperature=temperature,
+        top_p=1.0 if temperature == 0 else 0.9,
+        max_tokens=worker.MAX_NEW_TOKENS,
+        stop_token_ids=worker.stop_token_ids,
+        seed=worker.seed,
+    )
+
+    outputs = worker.llm.generate(
+        prompts,
+        sampling_params,
+        lora_request=worker.lora_request,
+    )
+
+    results = []
+    for i, output in enumerate(outputs):
+        for sample in output.outputs:
+            results.append({
+                "question": question_shard[i],
+                "answer": sample.text.strip(),
+                "ref_answer": answer_shard[i].strip(),
+                "ref_solution": solution_shard[i].strip(),
+                "question_idx": question_idx_shard[i],
+            })
+
+    return results
+
 
 def _run_exam_shard_worker(args):
     """Worker function for exam_multi_gpu.
@@ -702,13 +987,19 @@ def _run_exam_shard_worker(args):
     ) = args
 
     # Pin this worker process to a single CUDA device.
+    # Remove determinism-enforcement env vars to allow full async/parallel execution.
     os.environ["CUDA_VISIBLE_DEVICES"] = str(device_id)
+    os.environ.pop("CUDA_LAUNCH_BLOCKING", None)
+    os.environ.pop("CUBLAS_WORKSPACE_CONFIG", None)
     logger.info(
         "[exam worker %d] Using CUDA device %s for %d questions.",
         local_rank,
         device_id,
         len(question_shard),
     )
+
+    # 构造前先关闭确定性算法约束
+    torch.use_deterministic_algorithms(False)
 
     worker = TakeExam(
         model_path=model_path,
@@ -717,7 +1008,12 @@ def _run_exam_shard_worker(args):
         max_seq_length=max_seq_length,
     )
     worker.seed = seed
-    set_all_seeds(worker.seed)
+    # worker 进程只需固定随机种子，不需要 torch.use_deterministic_algorithms
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    torch.use_deterministic_algorithms(False)
 
     return worker._exam_core(
         question_shard,
