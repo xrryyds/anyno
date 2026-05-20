@@ -1020,7 +1020,7 @@ def run_sira_training_v3(
         trust_remote_code=True
     )
     model.config.use_cache = False
-    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
+    model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=False)
 
     use_existing_lora = False
     if lora_path is not None and str(lora_path).strip():
@@ -1067,10 +1067,9 @@ def run_sira_training_v3(
         save_steps=steps_per_logical_epoch * (real_data_epochs/SAVE_TOTAL),
         save_total_limit=SAVE_TOTAL,
         fp16=False, bf16=True,
-        gradient_checkpointing=True,
-        gradient_checkpointing_kwargs={"use_reentrant": False},
+        gradient_checkpointing=False,
         remove_unused_columns=False,
-        dataloader_drop_last=True, report_to="none"                 
+        dataloader_drop_last=True, report_to="none"
     )
 
     step_callback = StepLogCallback(step_log_file, hint_config.metrics_log_interval, hint_config, output_dir)

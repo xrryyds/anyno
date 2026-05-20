@@ -6,17 +6,12 @@ import torch
 import numpy as np
 import logging
 from tqdm import tqdm
-from scripts import (
-    run_sira_training_v3,
-    run_sft_training_baseline,
-    run_sdft_training_baseline,
-    run_sdpo_training_baseline,
-)
+# 
 from transformers import AutoTokenizer, AutoModelForCausalLM, set_seed
 from peft import PeftModel
 
 
-from scripts import TakeExam, TeacherCorrecter
+from scripts import TeacherCorrecter
 from utils import (
     FileIOUtils,
     remove_null_hints,
@@ -1392,7 +1387,7 @@ import time
 import random
 import math
 
-NUM_GPUS = 1
+NUM_GPUS = 2
 
 
 def gpu_worker(gpu_id):
@@ -1706,19 +1701,19 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Math500()
-    # student_take_exam_Gsm8k(train=False, max_token=2048)
-    # student_take_exam_Math_sub(train=False, max_token=2048)
+    # student_take_exam_Gsm8k(True)
+    # student_take_exam_Math_sub(train=True)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
     # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    # exam_roll_recheck_mistake(max_token=2048)
-    # teacher.check_answers_equivalence()
+    # exam_roll_recheck_mistake()
+    teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
-    # teacher.teacher_hints()
+    teacher.teacher_hints()
     # or
     # teacher.teacher_hints_self(model_path=model_path)
 
@@ -1731,8 +1726,8 @@ if __name__ == "__main__":
 
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 10)
-    gen_IRDCL_dataset_v2(4, 0.75, 10)
-    run_sira_training_v3(model_path=model_path, real_data_epochs=10, batch_size=48)
+    # gen_IRDCL_dataset_v2(4, 0.75, 10)
+    # run_sira_training_v3(model_path=model_path, real_data_epochs=10)
     # 4. check
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)
