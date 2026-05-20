@@ -1392,7 +1392,7 @@ import time
 import random
 import math
 
-NUM_GPUS = 2
+NUM_GPUS = 1
 
 
 def gpu_worker(gpu_id):
@@ -1706,15 +1706,15 @@ if __name__ == "__main__":
     # #1. student first take exam
     # student_take_exam_Math500()
     # student_take_exam_Math500()
-    # student_take_exam_Gsm8k(True)
-    student_take_exam_Math_sub(train=True)
+    # student_take_exam_Gsm8k(train=False, max_token=2048)
+    # student_take_exam_Math_sub(train=False, max_token=2048)
 
     # #2. teacher judges
     teacher = TeacherCorrecter()
-    teacher.teacher_mark_paper_with_save()
+    # teacher.teacher_mark_paper_with_save()
 
     # 3. student roll on mistake
-    exam_roll_recheck_mistake()
+    # exam_roll_recheck_mistake(max_token=2048)
     # teacher.check_answers_equivalence()
 
     # 4. teacher_give_hints
@@ -1731,8 +1731,8 @@ if __name__ == "__main__":
 
     # 3. gen dataset
     # gen_IRDCL_dataset(8, 0.875, 10)
-    # gen_IRDCL_dataset_v2(4, 0.75, 10)
-    # run_sira_training_v3(model_path=model_path, real_data_epochs=10)
+    gen_IRDCL_dataset_v2(4, 0.75, 10)
+    run_sira_training_v3(model_path=model_path, real_data_epochs=10)
     # 4. check
     # student_take_exam_LiveMath()
     # student_take_exam_Math_sub(train=False, lora_path=lora_path, max_token=4096)

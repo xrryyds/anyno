@@ -94,4 +94,28 @@ MATH + GSM8K train 上分别做训练和测试
 conda env create -f environment.yml
 
 ########################################################
+MATH
+2048
+train
 Original: 4966, Solved: 2105, Remaining: 2861
+test
+Recheck Result -> Original: 3885, Solved: 1483, Remaining: 2402
+
+
+4096
+[2026-05-19 12:14:49] INFO main.py:823: Recheck Result -> Original: 3885, Solved: 1508, Remaining: 2377
+
+
+
+8192
+[2026-05-19 13:35:59] INFO main.py:823: Recheck Result -> Original: 3885, Solved: 1509, Remaining: 2376
+######################################################
+GSM8K
+2048
+[2026-05-19 14:10:31] INFO main.py:823: Recheck Result -> Original: 2927, Solved: 2057, Remaining: 870
+
+8192
+[2026-05-19 13:58:58] INFO main.py:823: Recheck Result -> Original: 2927, Solved: 2058, Remaining: 869
+
+test
+[2026-05-19 15:18:31] INFO main.py:823: Recheck Result -> Original: 608, Solved: 371, Remaining: 237
